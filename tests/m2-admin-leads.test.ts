@@ -53,7 +53,8 @@ describe("M2 admin lead management", () => {
 
   it("allows only admin-role authenticated users to select and update enquiries", () => {
     expect(m2Migration).toContain("create or replace function public.is_admin()");
-    expect(m2Migration).toContain("role in ('owner', 'admin')");
+    expect(m2Migration).toContain("role = 'admin'");
+    expect(m2Migration).not.toContain("role in ('owner', 'admin')");
     expect(m2Migration).toMatch(/for\s+select\s+to\s+authenticated/i);
     expect(m2Migration).toMatch(/for\s+update\s+to\s+authenticated/i);
     expect(m2Migration).toMatch(/using\s+\(public\.is_admin\(\)\)/i);

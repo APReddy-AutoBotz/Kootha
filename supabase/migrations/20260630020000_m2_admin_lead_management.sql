@@ -49,7 +49,7 @@ as $$
     select 1
     from public.user_profiles
     where auth_user_id = auth.uid()
-      and role in ('owner', 'admin')
+      and role = 'admin'
   );
 $$;
 

@@ -70,7 +70,7 @@ type AdminDraft = {
 
 const adminSessionKey = "kootha-admin-session";
 const publicKeyHeader = ["api", "key"].join("");
-const adminRoles = new Set(["owner", "admin"]);
+const adminRoles = new Set(["admin"]);
 const emptyFilters: AdminFilters = {
   status: "all",
   city: "all",
