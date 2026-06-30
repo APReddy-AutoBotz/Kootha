@@ -38,7 +38,7 @@ Status values:
 
 ## Milestone M1 - Public Website and Enquiries
 
-- [ ] Build public home page, website sections, contact CTA, enquiry form, and source tracking.
+- [x] Build public home page, website sections, contact CTA, enquiry form, and source tracking.
 
 ## Milestone M2 - Admin Foundation
 

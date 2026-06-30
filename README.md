@@ -67,6 +67,18 @@ pnpm test
 pnpm build
 ```
 
+
+## Public Enquiry Form
+
+M1 includes a public enquiry form. It submits to Supabase only when these values are configured:
+
+```bash
+VITE_SUPABASE_URL=
+VITE_SUPABASE_ANON_KEY=
+```
+
+If they are left as placeholders, the website still builds and shows a safe not-configured message on submit.
+
 ## Supabase Migration Note
 
 M0 includes a baseline migration and seed data:
