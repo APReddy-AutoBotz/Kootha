@@ -1,14 +1,14 @@
 # Kootha / Prachar MVP Implementation Tasks
 
-Spec ID: `kootha-prachar-mvp`
+Spec ID: kootha-prachar-mvp
 
 Status values:
 
-- `[ ]` Not started
-- `[~]` In progress
-- `[x]` Completed
-- `[!]` Blocked
-- `[?]` Needs AP decision
+- [ ] Not started
+- [~] In progress
+- [x] Completed
+- [!] Blocked
+- [?] Needs AP decision
 
 ## Milestone M0 - Project Foundation
 
@@ -46,7 +46,7 @@ Status values:
 
 ## Milestone M3 - Ad Work Creation and Scheduling
 
-- [ ] Build packages, ad work creation, dates, assignments, tracking type selection, device records, and payment status.
+- [x] Build enquiry-to-ad-work creation, customer linking, planned ad work list/detail, package selection, live tracking request planning, areas to cover, proof needed, customer update plan, and one-day or multi-day schedules.
 
 ## Milestone M4 - Driver App and Active Tracking
 

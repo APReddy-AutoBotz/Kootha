@@ -8,7 +8,17 @@ const blockedCustomerDriverWordParts = [[
   "ing", "estion"
 ]] as const;
 
+const blockedCustomerAdminWordParts = [
+  ...blockedCustomerDriverWordParts,
+  ["a", "pi"],
+  ["r", "ls"],
+  ["back", "end"],
+  ["data", "base"],
+  ["device", " ", "stream"]
+] as const;
+
 export const blockedCustomerDriverWords = blockedCustomerDriverWordParts.map((parts) => parts.join(""));
+export const blockedCustomerAdminWords = blockedCustomerAdminWordParts.map((parts) => parts.join(""));
 
 export const businessLabels = {
   driver: {
@@ -36,6 +46,11 @@ export const businessLabels = {
     enquiries: "Enquiries",
     customers: "Customers",
     adWorks: "Ad Works",
+    advertisementWork: "Advertisement Work",
+    plannedWork: "Planned Work",
+    areasToCover: "Areas to Cover",
+    customerUpdates: "Customer Updates",
+    proofNeeded: "Proof Needed",
     drivers: "Drivers",
     vehicles: "Vehicles",
     citiesAndAreas: "Cities and Areas",
@@ -63,4 +78,9 @@ export function flattenLabels(audiences: readonly LabelAudience[] = ["driver", "
 export function hasBlockedCustomerDriverWord(label: string): boolean {
   const normalizedLabel = label.toLowerCase();
   return blockedCustomerDriverWords.some((word) => normalizedLabel.includes(word));
+}
+
+export function hasBlockedCustomerAdminWord(label: string): boolean {
+  const normalizedLabel = label.toLowerCase();
+  return blockedCustomerAdminWords.some((word) => normalizedLabel.includes(word));
 }

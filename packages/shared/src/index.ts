@@ -1,3 +1,4 @@
+export * from "./campaign";
 export * from "./enquiry";
 export * from "./labels";
 export * from "./product";

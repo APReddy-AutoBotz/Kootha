@@ -19,25 +19,17 @@ export const driverApprovalStatuses = [
 export const driverAvailabilityStatuses = ["available", "not_available"] as const;
 export const vehicleStatuses = ["active", "inactive"] as const;
 export const gpsDeviceStatuses = ["active", "inactive", "not_connected", "integration_pending"] as const;
-export const packageTypes = ["basic", "standard", "premium"] as const;
+export const packageTypes = ["basic", "standard", "premium", "not_sure"] as const;
 
 export const adWorkStatuses = [
-  "enquiry",
-  "scheduled",
-  "running",
-  "paused",
-  "completed",
+  "draft",
+  "planned",
+  "ready_for_driver_assignment",
+  "on_hold",
   "cancelled"
 ] as const;
 
-export const adWorkDayStatuses = [
-  "scheduled",
-  "running",
-  "paused",
-  "completed",
-  "missed",
-  "rescheduled"
-] as const;
+export const adWorkDayStatuses = ["planned"] as const;
 
 export const trackingTypes = ["mobile", "device", "both"] as const;
 export const areaCoverageStatuses = ["pending", "covered", "missed", "manual"] as const;
@@ -109,6 +101,7 @@ export type StatusGroupName = keyof typeof statusGroups;
 export type EnquiryStatus = (typeof enquiryStatuses)[number];
 export type DriverApprovalStatus = (typeof driverApprovalStatuses)[number];
 export type AdWorkStatus = (typeof adWorkStatuses)[number];
+export type AdWorkDayStatus = (typeof adWorkDayStatuses)[number];
 export type TrackingType = (typeof trackingTypes)[number];
 export type TrackingSessionStatus = (typeof trackingSessionStatuses)[number];
 
@@ -127,6 +120,24 @@ export const enquiryStatusOptions = enquiryStatuses;
 export function getEnquiryStatusLabel(status: string): string {
   return enquiryStatusLabels[status as EnquiryStatus] ?? status;
 }
+
+export const adWorkStatusLabels: Record<AdWorkStatus, string> = {
+  draft: "Draft",
+  planned: "Planned",
+  ready_for_driver_assignment: "Ready for Driver Assignment",
+  on_hold: "On Hold",
+  cancelled: "Cancelled"
+};
+
+export const adWorkStatusOptions = adWorkStatuses;
+
+export function getAdWorkStatusLabel(status: string): string {
+  return adWorkStatusLabels[status as AdWorkStatus] ?? status;
+}
+
+export const adWorkDayStatusLabels: Record<AdWorkDayStatus, string> = {
+  planned: "Planned"
+};
 
 export function hasDuplicateValues(values: readonly string[]): boolean {
   return new Set(values).size !== values.length;

@@ -687,3 +687,173 @@ textarea:focus {
     max-height: none;
   }
 }
+
+
+.admin-nav-tabs {
+  width: min(1120px, calc(100% - 36px));
+  display: flex;
+  gap: 10px;
+  margin: 18px auto 0;
+  overflow-x: auto;
+}
+
+.admin-nav-tabs button {
+  min-height: 42px;
+  border: 1px solid #cfc1ad;
+  border-radius: 8px;
+  background: #fffdf8;
+  color: #332e29;
+  padding: 0 16px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.admin-nav-tabs button.is-active {
+  border-color: #c84f20;
+  background: #fff4e9;
+  color: #c84f20;
+}
+
+.admin-dashboard-panel,
+.form-section {
+  border: 1px solid #eadfce;
+  border-radius: 8px;
+  background: #fffdf8;
+  padding: clamp(18px, 3vw, 24px);
+}
+
+.admin-dashboard-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.admin-dashboard-panel h2,
+.form-section h3 {
+  margin-bottom: 6px;
+  font-size: 22px;
+}
+
+.admin-dashboard-list,
+.ad-work-form,
+.day-schedule-list {
+  display: grid;
+  gap: 14px;
+}
+
+.dashboard-work-row,
+.ad-work-row {
+  width: 100%;
+  display: grid;
+  gap: 10px;
+  align-items: center;
+  min-height: 74px;
+  border: 1px solid #eadfce;
+  border-radius: 8px;
+  background: #fffaf1;
+  color: #332e29;
+  padding: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dashboard-work-row {
+  grid-template-columns: minmax(160px, 1.4fr) minmax(100px, 0.8fr) minmax(112px, 0.8fr) minmax(140px, 0.8fr);
+}
+
+.ad-work-row {
+  grid-template-columns: minmax(140px, 1.2fr) minmax(130px, 1fr) minmax(92px, 0.7fr) minmax(92px, 0.7fr) minmax(112px, 0.8fr) minmax(112px, 0.8fr) minmax(78px, 0.6fr) minmax(92px, 0.8fr) minmax(134px, 0.9fr) minmax(112px, 0.8fr);
+}
+
+.dashboard-work-row.is-selected,
+.ad-work-row.is-selected {
+  border-color: #c84f20;
+  background: #fff4e9;
+}
+
+.dashboard-work-row span:first-child,
+.ad-work-row span:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.dashboard-work-row small,
+.ad-work-row small {
+  color: #77695d;
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.ad-work-detail-panel {
+  max-height: 82vh;
+  overflow: auto;
+}
+
+.day-schedule-row {
+  display: grid;
+  grid-template-columns: 72px repeat(3, minmax(110px, 0.7fr)) minmax(180px, 1fr) minmax(180px, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+  border: 1px solid #eadfce;
+  border-radius: 8px;
+  background: #fffaf1;
+  padding: 14px;
+}
+
+.day-schedule-row textarea {
+  min-height: 70px;
+}
+
+.checkbox-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.checkbox-row {
+  min-height: 48px;
+  grid-template-columns: 22px 1fr;
+  align-items: center;
+  border: 1px solid #eadfce;
+  border-radius: 8px;
+  background: #fffaf1;
+  padding: 10px 12px;
+}
+
+.checkbox-row input {
+  min-height: auto;
+}
+
+.sticky-action-row {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  border-top: 1px solid #eadfce;
+  background: rgba(255, 253, 248, 0.96);
+  padding-top: 14px;
+}
+
+@media (max-width: 1180px) {
+  .dashboard-work-row,
+  .ad-work-row,
+  .day-schedule-row {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .admin-nav-tabs,
+  .checkbox-grid,
+  .dashboard-work-row,
+  .ad-work-row,
+  .day-schedule-row {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-nav-tabs {
+    flex-direction: column;
+  }
+
+  .ad-work-detail-panel {
+    max-height: none;
+  }
+}

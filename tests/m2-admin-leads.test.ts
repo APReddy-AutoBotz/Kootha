@@ -117,7 +117,7 @@ describe("M2 admin lead management", () => {
 
   it("does not mark future milestone tasks complete", () => {
     expect(tasks).toMatch(/## Milestone M2 - Admin Foundation[\s\S]*- \[x\]/);
-    expect(tasks).toMatch(/## Milestone M3 - Ad Work Creation and Scheduling[\s\S]*- \[ \]/);
+    expect(tasks).toMatch(/## Milestone M3 - Ad Work Creation and Scheduling[\s\S]*- \[x\]/);
     expect(tasks).toMatch(/## Milestone M4 - Driver App and Active Tracking[\s\S]*- \[ \]/);
     expect(tasks).toMatch(/## Milestone M5 - Customer Updates, Reports, and Operations[\s\S]*- \[ \]/);
     expect(tasks).toMatch(/## Milestone M6 - Device GPS and Data Export[\s\S]*- \[ \]/);
