@@ -48,9 +48,9 @@ Status values:
 
 - [x] Build enquiry-to-ad-work creation, customer linking, planned ad work list/detail, package selection, live tracking request planning, areas to cover, proof needed, customer update plan, and one-day or multi-day schedules.
 
-## Milestone M4 - Driver App and Active Tracking
+## Milestone M4 - Driver and Vehicle Onboarding
 
-- [ ] Build driver registration, assigned work, start/end work, active phone location proof, breaks, alerts, area coverage, and admin live status.
+- [x] Build driver registration interest, driver application review, driver approval records, vehicle approval records, Mic System details, Vehicle GPS Device readiness fields, and admin onboarding management.
 
 ## Milestone M5 - Customer Updates, Reports, and Operations
 
