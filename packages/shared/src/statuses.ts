@@ -1,4 +1,12 @@
-export const enquiryStatuses = ["new", "contacted", "converted", "rejected"] as const;
+export const enquiryStatuses = [
+  "new",
+  "contacted",
+  "quoted",
+  "follow_up_needed",
+  "converted",
+  "not_interested",
+  "invalid_spam"
+] as const;
 export const enquirySources = ["website", "phone_call", "whatsapp", "admin"] as const;
 
 export const driverApprovalStatuses = [
@@ -103,6 +111,22 @@ export type DriverApprovalStatus = (typeof driverApprovalStatuses)[number];
 export type AdWorkStatus = (typeof adWorkStatuses)[number];
 export type TrackingType = (typeof trackingTypes)[number];
 export type TrackingSessionStatus = (typeof trackingSessionStatuses)[number];
+
+export const enquiryStatusLabels: Record<EnquiryStatus, string> = {
+  new: "New",
+  contacted: "Contacted",
+  quoted: "Quoted",
+  follow_up_needed: "Follow-up Needed",
+  converted: "Converted",
+  not_interested: "Not Interested",
+  invalid_spam: "Invalid / Spam"
+};
+
+export const enquiryStatusOptions = enquiryStatuses;
+
+export function getEnquiryStatusLabel(status: string): string {
+  return enquiryStatusLabels[status as EnquiryStatus] ?? status;
+}
 
 export function hasDuplicateValues(values: readonly string[]): boolean {
   return new Set(values).size !== values.length;
