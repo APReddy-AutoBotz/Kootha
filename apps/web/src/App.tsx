@@ -1,7 +1,7 @@
 import { FormEvent, useMemo, useState } from "react";
+import { AdminLeadManagement } from "./admin";
 import {
   PublicEnquiryInput,
-  businessLabels,
   liveTrackingNeedLabels,
   packageInterestLabels,
   packageInterestOptions,
@@ -99,37 +99,6 @@ async function submitEnquiry(input: PublicEnquiryInput) {
   if (!response.ok) {
     throw new Error("Could not send enquiry right now. Please try again later.");
   }
-}
-
-function AdminPlaceholder() {
-  return (
-    <main className="page-shell admin-shell">
-      <header className="topbar">
-        <a className="brand" href="/" aria-label={`${productName} home`}>
-          {productName}
-        </a>
-        <a className="nav-link" href="/">
-          Public website
-        </a>
-      </header>
-
-      <section className="work-surface admin-surface" aria-labelledby="admin-title">
-        <div>
-          <p className="eyebrow">M1 website</p>
-          <h1 id="admin-title">{businessLabels.admin.dashboard}</h1>
-          <p>M1: Enquiries are now captured from the public website.</p>
-          <p>Real admin lead management, login, and record editing start in M2.</p>
-        </div>
-
-        <div className="summary-grid" aria-label="Admin placeholder sections">
-          <span>{businessLabels.admin.enquiries}</span>
-          <span>{businessLabels.admin.customers}</span>
-          <span>{businessLabels.admin.adWorks}</span>
-          <span>{businessLabels.admin.drivers}</span>
-        </div>
-      </section>
-    </main>
-  );
 }
 
 function EnquiryForm() {
@@ -326,7 +295,7 @@ function PublicWebsite() {
             </article>
           ))}
         </div>
-        <p className="quiet-note">Payment collection is not part of M1.</p>
+        <p className="quiet-note">Payment collection is not part of current setup.</p>
       </section>
 
       <section className="section-band two-column" aria-labelledby="cities-title">
@@ -394,7 +363,7 @@ export function App() {
   const pathname = window.location.pathname;
 
   if (pathname.startsWith("/admin")) {
-    return <AdminPlaceholder />;
+    return <AdminLeadManagement productName={productName} />;
   }
 
   return <PublicWebsite />;

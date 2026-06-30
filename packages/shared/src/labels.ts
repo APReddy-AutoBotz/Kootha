@@ -39,7 +39,14 @@ export const businessLabels = {
     drivers: "Drivers",
     vehicles: "Vehicles",
     citiesAndAreas: "Cities and Areas",
-    settings: "Settings"
+    settings: "Settings",
+    leadManagement: "Lead Management",
+    status: "Status",
+    followUpDate: "Follow-up Date",
+    internalNote: "Internal Note",
+    adminRemark: "Admin Remark",
+    packageInterest: "Package Interest",
+    liveTrackingInterest: "Live Tracking Interest"
   }
 } as const;
 

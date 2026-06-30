@@ -42,7 +42,7 @@ Status values:
 
 ## Milestone M2 - Admin Foundation
 
-- [ ] Build admin login, roles, dashboard cards, customer management, driver review, vehicles, cities, and areas.
+- [x] Build admin login, admin role checks, dashboard cards, enquiry list, filters, enquiry detail updates, follow-up dates, package interest updates, and internal notes.
 
 ## Milestone M3 - Ad Work Creation and Scheduling
 
