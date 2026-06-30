@@ -52,13 +52,13 @@ Status values:
 
 - [x] Build driver registration interest, driver application review, driver approval records, vehicle approval records, Mic System details, Vehicle GPS Device readiness fields, and admin onboarding management.
 
-## Milestone M5 - Customer Updates, Reports, and Operations
+## Milestone M5 - Driver and Vehicle Assignment to Ad Work
 
-- [ ] Build customer update messages, final report pages, proof uploads, route history, alerts, audit log, search, and Telugu-ready labels.
+- [x] Build admin assignment of approved drivers and approved vehicles to planned Ad Works, assignment status, readiness checklist, warnings, and dashboard assignment summaries.
 
-## Milestone M6 - Device GPS and Data Export
+## Milestone M6 - Ad Work Execution Without GPS
 
-- [ ] Build secure device ingest, device status, data export, and retention controls.
+- [ ] Build admin-controlled work execution steps without GPS tracking, maps, background location, or customer live links.
 
 ## Milestone M7 - Premium Features
 
