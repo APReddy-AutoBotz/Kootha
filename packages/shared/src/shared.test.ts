@@ -5,9 +5,26 @@ import {
   flattenLabels,
   getAudienceLabels,
   hasBlockedCustomerDriverWord,
+  packageInterestLabels,
   resolveProductName,
-  statusGroups
+  statusGroups,
+  validatePublicEnquiry
 } from "./index";
+
+const validEnquiry = {
+  customerName: "Asha",
+  businessName: "Asha Stores",
+  mobileNumber: "9876543210",
+  cityTown: "Ongole",
+  areasToCover: "Main Road and Market Area",
+  preferredDate: "2026-07-10",
+  numberOfDays: 1,
+  advertisementDetails: "Opening announcement",
+  packageInterest: "basic" as const,
+  liveTrackingNeeded: "no" as const,
+  notes: "Morning preferred",
+  consentToContact: true
+};
 
 describe("M0 shared foundation", () => {
   it("defaults the product name to Prachar", () => {
@@ -39,5 +56,42 @@ describe("M0 shared foundation", () => {
     for (const label of customerDriverLabels) {
       expect(hasBlockedCustomerDriverWord(label), label).toBe(false);
     }
+  });
+});
+
+describe("M1 public enquiry validation", () => {
+  it("rejects missing required enquiry fields", () => {
+    expect(validatePublicEnquiry({
+      customerName: "",
+      businessName: "",
+      mobileNumber: "",
+      cityTown: "",
+      areasToCover: "",
+      preferredDate: "",
+      numberOfDays: 0,
+      advertisementDetails: "",
+      packageInterest: "not_sure",
+      liveTrackingNeeded: "not_sure",
+      notes: "",
+      consentToContact: false
+    }).length).toBeGreaterThan(0);
+  });
+
+  it("rejects invalid enquiry mobile numbers", () => {
+    const errors = validatePublicEnquiry({ ...validEnquiry, mobileNumber: "abc" });
+    expect(errors).toContain("Enter a valid mobile number.");
+  });
+
+  it("requires enquiry contact consent", () => {
+    const errors = validatePublicEnquiry({ ...validEnquiry, consentToContact: false });
+    expect(errors).toContain("Consent is required before sending an enquiry.");
+  });
+
+  it("accepts a valid public enquiry", () => {
+    expect(validatePublicEnquiry(validEnquiry)).toEqual([]);
+  });
+
+  it("keeps package labels simple", () => {
+    expect(Object.values(packageInterestLabels)).toEqual(["Basic", "Standard", "Premium", "Not sure"]);
   });
 });
