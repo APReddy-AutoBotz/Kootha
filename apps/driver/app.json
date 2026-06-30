@@ -1,0 +1,18 @@
+{
+  "expo": {
+    "name": "Prachar Driver",
+    "slug": "prachar-driver",
+    "version": "0.0.0",
+    "orientation": "portrait",
+    "platforms": ["android"],
+    "scheme": "prachar-driver",
+    "userInterfaceStyle": "light",
+    "android": {
+      "package": "com.kootha.prachar.driver",
+      "permissions": []
+    },
+    "extra": {
+      "productName": "Prachar"
+    }
+  }
+}
