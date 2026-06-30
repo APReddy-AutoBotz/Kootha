@@ -51,6 +51,9 @@ export const adWorkAssignmentStatuses = [
   "ready_for_execution",
   "cancelled"
 ] as const;
+export const executionReleaseStatuses = ["not_released", "released_to_driver", "access_revoked"] as const;
+export const adWorkExecutionDayStatuses = ["planned", "ready", "running", "on_break", "completed", "issue_reported", "cancelled"] as const;
+export const executionProofNoteTypes = ["area_covered", "announcement_done", "customer_request", "issue", "other"] as const;
 
 export const trackingTypes = ["mobile", "device", "both"] as const;
 export const areaCoverageStatuses = ["pending", "covered", "missed", "manual"] as const;
@@ -107,6 +110,9 @@ export const statusGroups = {
   adWorkStatuses,
   adWorkDayStatuses,
   adWorkAssignmentStatuses,
+  executionReleaseStatuses,
+  adWorkExecutionDayStatuses,
+  executionProofNoteTypes,
   trackingTypes,
   areaCoverageStatuses,
   trackingSessionStatuses,
@@ -139,6 +145,9 @@ export type VehicleGpsDeviceStatus = (typeof vehicleGpsDeviceStatuses)[number];
 export type AdWorkStatus = (typeof adWorkStatuses)[number];
 export type AdWorkDayStatus = (typeof adWorkDayStatuses)[number];
 export type AdWorkAssignmentStatus = (typeof adWorkAssignmentStatuses)[number];
+export type ExecutionReleaseStatus = (typeof executionReleaseStatuses)[number];
+export type AdWorkExecutionDayStatus = (typeof adWorkExecutionDayStatuses)[number];
+export type ExecutionProofNoteType = (typeof executionProofNoteTypes)[number];
 export type TrackingType = (typeof trackingTypes)[number];
 export type TrackingSessionStatus = (typeof trackingSessionStatuses)[number];
 
@@ -269,6 +278,48 @@ export const adWorkAssignmentStatusOptions = adWorkAssignmentStatuses;
 
 export function getAdWorkAssignmentStatusLabel(status: string): string {
   return adWorkAssignmentStatusLabels[status as AdWorkAssignmentStatus] ?? status;
+}
+
+export const executionReleaseStatusLabels: Record<ExecutionReleaseStatus, string> = {
+  not_released: "Not Released",
+  released_to_driver: "Released to Driver",
+  access_revoked: "Access Revoked"
+};
+
+export const executionReleaseStatusOptions = executionReleaseStatuses;
+
+export function getExecutionReleaseStatusLabel(status: string): string {
+  return executionReleaseStatusLabels[status as ExecutionReleaseStatus] ?? status;
+}
+
+export const adWorkExecutionDayStatusLabels: Record<AdWorkExecutionDayStatus, string> = {
+  planned: "Planned",
+  ready: "Ready",
+  running: "Running",
+  on_break: "On Break",
+  completed: "Completed",
+  issue_reported: "Issue Reported",
+  cancelled: "Cancelled"
+};
+
+export const adWorkExecutionDayStatusOptions = adWorkExecutionDayStatuses;
+
+export function getAdWorkExecutionDayStatusLabel(status: string): string {
+  return adWorkExecutionDayStatusLabels[status as AdWorkExecutionDayStatus] ?? status;
+}
+
+export const executionProofNoteTypeLabels: Record<ExecutionProofNoteType, string> = {
+  area_covered: "Area Covered",
+  announcement_done: "Announcement Done",
+  customer_request: "Customer Request",
+  issue: "Issue",
+  other: "Other"
+};
+
+export const executionProofNoteTypeOptions = executionProofNoteTypes;
+
+export function getExecutionProofNoteTypeLabel(status: string): string {
+  return executionProofNoteTypeLabels[status as ExecutionProofNoteType] ?? status;
 }
 
 export function getAdWorkStatusLabel(status: string): string {

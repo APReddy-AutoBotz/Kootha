@@ -38,12 +38,17 @@ export const businessLabels = {
     serviceArea: "Service Area",
     vehicle: "Vehicle",
     vehicleGpsDevice: "Vehicle GPS Device",
-    proofOn: "Location Proof is ON",
-    proofStopped: "Location Proof stopped",
+    proofNote: "Proof Note",
+    proofNoteAdded: "Proof Note Added",
     startWork: "Start Work",
-    endWork: "End Work",
     takeBreak: "Take Break",
-    uploadPhoto: "Upload Photo"
+    resumeWork: "Resume Work",
+    endWork: "End Work",
+    addProofNote: "Add Proof Note",
+    workCompleted: "Work Completed",
+    issueReported: "Issue Reported",
+    workCode: "Work Code",
+    assignedWork: "Assigned Work"
   },
   customer: {
     home: "Home",
@@ -81,7 +86,11 @@ export const businessLabels = {
     internalNote: "Internal Note",
     adminRemark: "Admin Remark",
     packageInterest: "Package Interest",
-    liveTrackingInterest: "Live Tracking Interest"
+    liveTrackingInterest: "Live Tracking Interest",
+    executionRelease: "Execution Release",
+    workAccessCode: "Work Access Code",
+    executionTimeline: "Execution Timeline",
+    proofNotes: "Proof Notes"
   }
 } as const;
 

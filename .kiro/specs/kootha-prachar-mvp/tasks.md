@@ -58,11 +58,11 @@ Status values:
 
 ## Milestone M6 - Ad Work Execution Without GPS
 
-- [ ] Build admin-controlled work execution steps without GPS tracking, maps, background location, or customer live links.
+- [x] Build admin release, Work Code driver access, Start Work, Take Break, Resume Work, End Work, text-only Proof Notes, execution monitoring, and customer update records without GPS tracking, maps, background location, or customer live links.
 
-## Milestone M7 - Premium Features
+## Milestone M7 - Proof Upload and Customer Update Sharing
 
-- [ ] Build optional premium customer live tracking with admin control and driver consent.
+- [ ] Build secure proof upload and manual customer update sharing without live maps, payment gateway, or provider auto-send.
 
 ## Milestone M8 - Security, Privacy, and Release Readiness
 

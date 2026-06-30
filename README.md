@@ -1,6 +1,6 @@
 # Kootha / Prachar
 
-Kootha / Prachar is a low-cost local mic advertisement proof platform. The repository currently includes M0 foundation, M1 public website and enquiries, M2 admin lead management, M3 campaign planning and scheduling, M4 driver and vehicle onboarding, and M5 driver and vehicle assignment to ad work.
+Kootha / Prachar is a low-cost local mic advertisement proof platform. The repository currently includes M0 foundation, M1 public website and enquiries, M2 admin lead management, M3 campaign planning and scheduling, M4 driver and vehicle onboarding, M5 driver and vehicle assignment to ad work, and M6 ad work execution without GPS.
 
 ## Current Scope
 
@@ -14,13 +14,14 @@ Kootha / Prachar is a low-cost local mic advertisement proof platform. The repos
 - Admin driver application review, approval, rejection, duplicate handling, driver records, and vehicle records.
 - Vehicle GPS Device readiness fields only.
 - Ready for Execution assignment status as an admin readiness marker only.
-- Shared product config, labels, statuses, planning helpers, onboarding validation helpers, and public form validation helpers.
+- Admin release of Ready for Execution Ad Works to assigned drivers with a Work Code.
+- Driver Start Work, Take Break, Resume Work, End Work, Issue Reported, and text-only Proof Note flow.
+- Customer update records for manual sharing later, without automatic SMS or WhatsApp sending.
+- Shared product config, labels, statuses, planning helpers, onboarding validation helpers, execution helpers, and public form validation helpers.
 - Supabase migrations with RLS enabled and privacy-safe defaults.
 
-## What is intentionally not included in M5
+## What is intentionally not included in M6
 
-- active work execution,
-- start work/end work controls,
 - GPS tracking,
 - background location,
 - map integration,
@@ -147,6 +148,32 @@ For multi-day Ad Work, M5 uses one driver and one vehicle for all planned days. 
 
 Vehicle GPS Device fields are readiness-only. M5 does not collect location, start tracking, ingest device data, show maps, create customer live links, generate reports, collect payments, or send WhatsApp/SMS provider messages.
 
+## M6 Ad Work Execution Without GPS
+
+Apply the M6 migration after M0 through M5. It adds admin release controls, Work Code access, day-wise execution status, text-only Proof Notes, and customer update records for manual sharing later.
+
+Admin release works from /admin:
+
+1. Open Ad Works.
+2. Select an Ad Work that is Ready for Execution.
+3. Review the assigned driver, assigned vehicle, planned dates, and release readiness.
+4. Choose Release to Driver to generate a Work Code.
+5. Manually share the Work Code with the assigned driver.
+6. Regenerate the Work Code if needed, or revoke access.
+
+Driver execution works from the Android driver app:
+
+1. Enter mobile number and Work Code.
+2. Open Assigned Work.
+3. Review the shop name, city/town, areas, message, planned day, vehicle number, and instructions.
+4. Use Start Work, Take Break, Resume Work, End Work, Add Proof Note, or Issue Reported.
+5. End Work requires a short completion note.
+6. Issue Reported requires a short issue note.
+
+M6 does not request GPS permissions, background location, camera, or microphone permissions. M6 does not upload photo, video, or audio files. Proof Notes are text-only records.
+
+Customer update records are created for release, start, break, resume, proof note, completion, and issue events. They are records for manual copy/share only. M6 does not send SMS, WhatsApp, or provider messages automatically.
+
 ## Run Driver
 
     pnpm dev:driver
@@ -170,7 +197,10 @@ Migrations are in supabase/migrations:
 - 20260630030000_m3_campaign_planning_scheduling.sql adds admin-only ad work planning, day-wise planned schedules, customer linking from enquiries, and duplicate prevention.
 - 20260630040000_m4_driver_vehicle_onboarding.sql adds public insert-only driver applications, admin-only driver and vehicle onboarding management, and approval linking.
 - 20260630050000_m5_driver_vehicle_assignment.sql adds admin-only Ad Work assignment records, assignment statuses, and readiness checks.
+- 20260630060000_m6_ad_work_execution_without_gps.sql adds admin release, Work Code access, day-wise execution status, text-only Proof Notes, and customer update records.
 
 M4 keeps customer_live_enabled and live_tracking_enabled false by default and does not add live tracking behavior.
 
 M5 keeps customer_live_enabled and live_tracking_enabled false by default and does not add live tracking behavior.
+
+M6 keeps customer_live_enabled and live_tracking_enabled false by default and does not add live tracking behavior.
