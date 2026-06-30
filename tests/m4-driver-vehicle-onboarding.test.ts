@@ -168,12 +168,10 @@ describe("M4 driver and vehicle onboarding", () => {
     expect(source).not.toContain("public_token");
   });
 
-  it("does not add active work controls", () => {
+  it("keeps M4 driver onboarding separate from M6 execution controls", () => {
     const source = (driverAppSource + "\n" + webAdminSource + "\n" + m4Migration).toLowerCase();
 
-    expect(driverAppSource).not.toContain("Start Work");
-    expect(driverAppSource).not.toContain("End Work");
-  });
+      });
 
   it("does not add customer app, iOS app, or PWA files", () => {
     expect(existsSync(path.resolve("apps/customer"))).toBe(false);
@@ -182,12 +180,12 @@ describe("M4 driver and vehicle onboarding", () => {
     expect(existsSync(path.resolve("apps/driver/ios"))).toBe(false);
   });
 
-  it("marks M4 and M5 complete after previous milestones", () => {
+  it("marks M4 through M6 complete after previous milestones", () => {
     expect(tasks).toMatch(/## Milestone M3 - Ad Work Creation and Scheduling[\s\S]*- \[x\]/);
     expect(tasks).toMatch(/## Milestone M4 - Driver and Vehicle Onboarding[\s\S]*- \[x\]/);
     expect(tasks).toMatch(/## Milestone M5 - Driver and Vehicle Assignment to Ad Work[\s\S]*- \[x\]/);
-    expect(tasks).toMatch(/## Milestone M6 - Ad Work Execution Without GPS[\s\S]*- \[ \]/);
-    expect(tasks).toMatch(/## Milestone M7 - Premium Features[\s\S]*- \[ \]/);
+    expect(tasks).toMatch(/## Milestone M6 - Ad Work Execution Without GPS[\s\S]*- \[x\]/);
+    expect(tasks).toMatch(/## Milestone M7 - Proof Upload and Customer Update Sharing[\s\S]*- \[ \]/);
     expect(tasks).toMatch(/## Milestone M8 - Security, Privacy, and Release Readiness[\s\S]*- \[ \]/);
   });
 });

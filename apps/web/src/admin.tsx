@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import {
   adWorkAssignmentStatusOptions,
+  adWorkExecutionDayStatusOptions,
   adWorkStatusOptions,
   buildAssignmentReadiness,
+  buildExecutionReleaseReadiness,
   businessLabels,
   driverCanBeAssigned,
   driverApplicationStatusOptions,
@@ -11,11 +13,14 @@ import {
   driverStatusOptions,
   enquiryStatusOptions,
   getAdWorkAssignmentStatusLabel,
+  getAdWorkExecutionDayStatusLabel,
   getAdWorkStatusLabel,
   getDriverApplicationStatusLabel,
   getDriverAvailabilityStatusLabel,
   getDriverStatusLabel,
   getEnquiryStatusLabel,
+  getExecutionProofNoteTypeLabel,
+  getExecutionReleaseStatusLabel,
   getPlannedEndDate,
   getVehicleGpsDeviceStatusLabel,
   getVehicleStatusLabel,
@@ -23,6 +28,7 @@ import {
   liveTrackingNeedOptions,
   packageInterestLabels,
   packageInterestOptions,
+  executionProofNoteTypeOptions,
   vehicleCanBeAssigned,
   vehicleGpsDeviceStatusOptions,
   vehicleStatusOptions,
@@ -33,6 +39,7 @@ import {
 } from "@kootha/shared";
 import type {
   AdWorkAssignmentStatus,
+  AdWorkExecutionDayStatus,
   AdWorkStatus,
   AssignmentDriverCandidate,
   AssignmentVehicleCandidate,
@@ -40,6 +47,8 @@ import type {
   DriverAvailabilityStatus,
   DriverStatus,
   EnquiryStatus,
+  ExecutionProofNoteType,
+  ExecutionReleaseStatus,
   LiveTrackingNeed,
   PackageInterest,
   VehicleGpsDeviceStatus,
@@ -89,9 +98,6 @@ type EnquiryRecord = {
   follow_up_date: string | null;
   admin_remark: string | null;
   updated_at: string | null;
-  assignment_status: AdWorkAssignmentStatus;
-  assignment_note: string | null;
-  assignment_updated_at: string | null;
 };
 
 type AdWorkRecord = {
@@ -130,6 +136,15 @@ type AdWorkRecord = {
   customer_update_completed: boolean;
   customer_update_report_ready: boolean;
   updated_at: string | null;
+  assignment_status: AdWorkAssignmentStatus;
+  assignment_note: string | null;
+  assignment_updated_at: string | null;
+  execution_release_status: ExecutionReleaseStatus;
+  execution_overall_status: string;
+  work_access_code_hint: string | null;
+  work_access_code_created_at: string | null;
+  work_access_revoked_at: string | null;
+  execution_completed_at: string | null;
 };
 
 type AdWorkDayRecord = {
@@ -141,6 +156,14 @@ type AdWorkDayRecord = {
   planning_status: "planned";
   areas_to_cover: string | null;
   day_note: string | null;
+  execution_status: AdWorkExecutionDayStatus;
+  execution_started_at: string | null;
+  break_started_at: string | null;
+  last_resumed_at: string | null;
+  execution_completed_at: string | null;
+  completion_note: string | null;
+  issue_note: string | null;
+  execution_updated_at: string | null;
   created_at: string;
   updated_at: string | null;
 };
@@ -221,6 +244,13 @@ type DayDraft = {
   areasToCover: string;
   dayNote: string;
   planningStatus: "planned";
+  executionStatus: AdWorkExecutionDayStatus;
+  executionStartedAt: string | null;
+  breakStartedAt: string | null;
+  lastResumedAt: string | null;
+  executionCompletedAt: string | null;
+  completionNote: string;
+  issueNote: string;
 };
 
 type AdWorkAssignmentRecord = {
@@ -236,6 +266,28 @@ type AdWorkAssignmentRecord = {
   updated_at: string | null;
 };
 
+
+type ExecutionProofNoteRecord = {
+  id: string;
+  ad_work_id: string;
+  ad_work_day_id: string;
+  driver_id: string;
+  proof_type: ExecutionProofNoteType;
+  area_place_name: string | null;
+  note_text: string;
+  created_at: string;
+};
+
+type CustomerUpdateRecord = {
+  id: string;
+  ad_work_id: string | null;
+  ad_work_day_id: string | null;
+  type: string;
+  message: string;
+  channel: string;
+  sent_status: string;
+  created_at: string;
+};
 
 type DriverApplicationRecord = {
   id: string;
@@ -481,7 +533,13 @@ const adWorkSelectColumns = [
   "updated_at",
   "assignment_status",
   "assignment_note",
-  "assignment_updated_at"
+  "assignment_updated_at",
+  "execution_release_status",
+  "execution_overall_status",
+  "work_access_code_hint",
+  "work_access_code_created_at",
+  "work_access_revoked_at",
+  "execution_completed_at"
 ].join(",");
 
 const adWorkDaySelectColumns = [
@@ -493,6 +551,14 @@ const adWorkDaySelectColumns = [
   "planning_status",
   "areas_to_cover",
   "day_note",
+  "execution_status",
+  "execution_started_at",
+  "break_started_at",
+  "last_resumed_at",
+  "execution_completed_at",
+  "completion_note",
+  "issue_note",
+  "execution_updated_at",
   "created_at",
   "updated_at"
 ].join(",");
@@ -508,6 +574,28 @@ const adWorkAssignmentSelectColumns = [
   "warning_confirmation",
   "created_at",
   "updated_at"
+].join(",");
+
+const executionProofNoteSelectColumns = [
+  "id",
+  "ad_work_id",
+  "ad_work_day_id",
+  "driver_id",
+  "proof_type",
+  "area_place_name",
+  "note_text",
+  "created_at"
+].join(",");
+
+const customerUpdateSelectColumns = [
+  "id",
+  "ad_work_id",
+  "ad_work_day_id",
+  "type",
+  "message",
+  "channel",
+  "sent_status",
+  "created_at"
 ].join(",");
 
 const driverApplicationSelectColumns = [
@@ -736,6 +824,59 @@ async function fetchAdWorkAssignments(config: SupabaseConfig, session: AuthSessi
   }
 
   return await response.json() as AdWorkAssignmentRecord[];
+}
+
+async function fetchExecutionProofNotes(config: SupabaseConfig, session: AuthSession, adWorkId: string): Promise<ExecutionProofNoteRecord[]> {
+  const response = await fetch(config.url + "/rest/v1/execution_proof_notes?select=" + executionProofNoteSelectColumns + "&ad_work_id=eq." + encodeURIComponent(adWorkId) + "&order=created_at.desc", {
+    headers: createHeaders(config, session.accessToken)
+  });
+
+  if (!response.ok) {
+    throw new Error("Could not load proof notes.");
+  }
+
+  return await response.json() as ExecutionProofNoteRecord[];
+}
+
+async function fetchCustomerUpdates(config: SupabaseConfig, session: AuthSession, adWorkId: string): Promise<CustomerUpdateRecord[]> {
+  const response = await fetch(config.url + "/rest/v1/customer_updates?select=" + customerUpdateSelectColumns + "&ad_work_id=eq." + encodeURIComponent(adWorkId) + "&order=created_at.desc", {
+    headers: createHeaders(config, session.accessToken)
+  });
+
+  if (!response.ok) {
+    throw new Error("Could not load customer update records.");
+  }
+
+  return await response.json() as CustomerUpdateRecord[];
+}
+
+async function releaseAdWorkToDriver(
+  config: SupabaseConfig,
+  session: AuthSession,
+  adWorkId: string,
+  revoke: boolean
+) {
+  const response = await fetch(config.url + "/rest/v1/rpc/release_ad_work_to_driver", {
+    method: "POST",
+    headers: createHeaders(config, session.accessToken, true),
+    body: JSON.stringify({
+      p_ad_work_id: adWorkId,
+      p_plain_work_code: null,
+      p_revoke: revoke
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(revoke ? "Could not revoke work access." : "Could not release Ad Work.");
+  }
+
+  return await response.json() as {
+    ad_work_id: string;
+    work_access_code: string | null;
+    work_access_code_hint: string | null;
+    release_status: ExecutionReleaseStatus;
+    result_message: string;
+  }[];
 }
 
 async function fetchDriverApplications(config: SupabaseConfig, session: AuthSession): Promise<DriverApplicationRecord[]> {
@@ -1282,7 +1423,14 @@ function toDayDraft(day: AdWorkDayRecord): DayDraft {
     plannedEndTime: toTimeInput(day.planned_end_time),
     areasToCover: day.areas_to_cover ?? "",
     dayNote: day.day_note ?? "",
-    planningStatus: "planned"
+    planningStatus: "planned",
+    executionStatus: day.execution_status ?? "planned",
+    executionStartedAt: day.execution_started_at,
+    breakStartedAt: day.break_started_at,
+    lastResumedAt: day.last_resumed_at,
+    executionCompletedAt: day.execution_completed_at,
+    completionNote: day.completion_note ?? "",
+    issueNote: day.issue_note ?? ""
   };
 }
 
@@ -1514,6 +1662,19 @@ function getDriverReference(id: string) {
 
 function getVehicleReference(id: string) {
   return "VH-" + id.slice(0, 8).toUpperCase();
+}
+
+function formatDateTime(value: string | null | undefined) {
+  if (!value) {
+    return "Not set";
+  }
+
+  return new Intl.DateTimeFormat("en-IN", {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(new Date(value));
 }
 
 function DashboardCards({ adWorks }: { adWorks: AdWorkRecord[] }) {
@@ -2841,6 +3002,209 @@ function AdWorkAssignmentPanel({
   );
 }
 
+function M6SummaryCards({ adWorks, adWorkDays }: { adWorks: AdWorkRecord[]; adWorkDays: AdWorkDayRecord[] }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const todayRows = adWorkDays.filter((day) => day.work_date === today);
+  const cards = [
+    {
+      label: "Released Ad Works",
+      value: adWorks.filter((adWork) => adWork.execution_release_status === "released_to_driver").length
+    },
+    {
+      label: "Running Ad Works",
+      value: adWorks.filter((adWork) => adWork.execution_overall_status === "running").length
+    },
+    {
+      label: "On Break",
+      value: adWorkDays.filter((day) => day.execution_status === "on_break").length
+    },
+    {
+      label: "Completed Today",
+      value: todayRows.filter((day) => day.execution_status === "completed").length
+    },
+    {
+      label: "Issue Reported",
+      value: adWorkDays.filter((day) => day.execution_status === "issue_reported").length
+    },
+    {
+      label: "Not Started Today",
+      value: todayRows.filter((day) => day.execution_status === "planned" || day.execution_status === "ready").length
+    }
+  ];
+
+  return (
+    <div className="admin-summary-grid" aria-label="Ad Work execution summary">
+      {cards.map((card) => (
+        <div className="admin-summary-card" key={card.label}>
+          <span>{card.label}</span>
+          <strong>{card.value}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AdminExecutionPanel({
+  config,
+  session,
+  adWork,
+  dayDrafts,
+  onReleased
+}: {
+  config: SupabaseConfig;
+  session: AuthSession;
+  adWork: AdWorkRecord;
+  dayDrafts: DayDraft[];
+  onReleased: () => Promise<void>;
+}) {
+  const [assignment, setAssignment] = useState<AdWorkAssignmentRecord | null>(null);
+  const [drivers, setDrivers] = useState<DriverRecord[]>([]);
+  const [vehicles, setVehicles] = useState<VehicleRecord[]>([]);
+  const [proofNotes, setProofNotes] = useState<ExecutionProofNoteRecord[]>([]);
+  const [customerUpdates, setCustomerUpdates] = useState<CustomerUpdateRecord[]>([]);
+  const [generatedCode, setGeneratedCode] = useState("");
+  const [message, setMessage] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+
+  const assignedDriver = assignment ? drivers.find((driver) => driver.id === assignment.driver_id) ?? null : null;
+  const assignedVehicle = assignment ? vehicles.find((vehicle) => vehicle.id === assignment.vehicle_id) ?? null : null;
+  const readiness = buildExecutionReleaseReadiness({
+    assignmentStatus: adWork.assignment_status,
+    releaseStatus: adWork.execution_release_status,
+    startDate: adWork.start_date,
+    areasToCover: adWork.areas_to_cover,
+    packageInterest: adWork.package_interest,
+    driverAssigned: Boolean(assignedDriver),
+    vehicleAssigned: Boolean(assignedVehicle)
+  });
+
+  async function loadExecutionData() {
+    try {
+      const [assignmentRows, driverRows, vehicleRows, proofRows, updateRows] = await Promise.all([
+        fetchAdWorkAssignments(config, session, adWork.id),
+        fetchDrivers(config, session),
+        fetchVehicles(config, session),
+        fetchExecutionProofNotes(config, session, adWork.id),
+        fetchCustomerUpdates(config, session, adWork.id)
+      ]);
+      setAssignment(assignmentRows[0] ?? null);
+      setDrivers(driverRows);
+      setVehicles(vehicleRows);
+      setProofNotes(proofRows);
+      setCustomerUpdates(updateRows);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not load execution details.");
+    }
+  }
+
+  useEffect(() => {
+    setGeneratedCode("");
+    setMessage("");
+    void loadExecutionData();
+  }, [adWork.id]);
+
+  async function handleRelease(revoke: boolean) {
+    setIsSaving(true);
+    setMessage("");
+
+    try {
+      const result = await releaseAdWorkToDriver(config, session, adWork.id, revoke);
+      setGeneratedCode(result[0]?.work_access_code ?? "");
+      setMessage(result[0]?.result_message ?? (revoke ? "Work access revoked." : "Ad Work released to driver."));
+      await onReleased();
+      await loadExecutionData();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not update execution release.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  return (
+    <section className="form-section" aria-labelledby="execution-title">
+      <div className="panel-heading">
+        <div>
+          <h3 id="execution-title">Execution Release</h3>
+          <p>Release assigned work to the driver with a simple Work Code for manual sharing.</p>
+        </div>
+        <span className="status-pill">{getExecutionReleaseStatusLabel(adWork.execution_release_status)}</span>
+      </div>
+
+      {message && <p className="form-status admin-message" role="status">{message}</p>}
+
+      <div className="lead-detail-grid">
+        <div>
+          <dt>Assigned driver</dt>
+          <dd>{assignedDriver ? assignedDriver.name + " - " + assignedDriver.phone : "Not selected"}</dd>
+        </div>
+        <div>
+          <dt>Assigned vehicle</dt>
+          <dd>{assignedVehicle ? assignedVehicle.vehicle_number : "Not selected"}</dd>
+        </div>
+        <div>
+          <dt>Planned dates</dt>
+          <dd>{formatDate(adWork.start_date)} to {formatDate(adWork.end_date)}</dd>
+        </div>
+        <div>
+          <dt>Work Access Code</dt>
+          <dd>{generatedCode || (adWork.work_access_code_hint ? "Code ending " + adWork.work_access_code_hint : "Not generated")}</dd>
+        </div>
+      </div>
+
+      <div className="lead-submitted-copy">
+        <h3>Release readiness</h3>
+        {readiness.checks.map((check) => (
+          <p key={check.label}>{check.passed ? "OK" : "Needed"} - {check.label}</p>
+        ))}
+      </div>
+
+      <div className="admin-action-row">
+        <button className="primary-button" type="button" onClick={() => void handleRelease(false)} disabled={isSaving || !readiness.ready}>
+          {isSaving ? "Saving..." : adWork.execution_release_status === "released_to_driver" ? "Regenerate Work Code" : "Release to Driver"}
+        </button>
+        <button className="secondary-button" type="button" onClick={() => void handleRelease(true)} disabled={isSaving || adWork.execution_release_status !== "released_to_driver"}>
+          Revoke Work Code
+        </button>
+      </div>
+
+      <div className="lead-submitted-copy">
+        <h3>Execution timeline</h3>
+        {dayDrafts.map((day, index) => (
+          <p key={day.id}>
+            Day {index + 1}: {formatDate(day.workDate)} - {getAdWorkExecutionDayStatusLabel(day.executionStatus)}
+            {" | Start: "}{formatDateTime(day.executionStartedAt)}
+            {" | Break: "}{formatDateTime(day.breakStartedAt)}
+            {" | Resume: "}{formatDateTime(day.lastResumedAt)}
+            {" | End: "}{formatDateTime(day.executionCompletedAt)}
+          </p>
+        ))}
+      </div>
+
+      <div className="lead-submitted-copy">
+        <h3>Proof Notes</h3>
+        {proofNotes.length === 0 ? (
+          <p>No proof notes yet.</p>
+        ) : (
+          proofNotes.map((note) => (
+            <p key={note.id}>{formatDateTime(note.created_at)} - {getExecutionProofNoteTypeLabel(note.proof_type)} - {note.area_place_name || "Area not set"} - {note.note_text}</p>
+          ))
+        )}
+      </div>
+
+      <div className="lead-submitted-copy">
+        <h3>Customer update records</h3>
+        {customerUpdates.length === 0 ? (
+          <p>No customer update records yet.</p>
+        ) : (
+          customerUpdates.map((update) => (
+            <p key={update.id}>{formatDateTime(update.created_at)} - {update.message}</p>
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
+
 function AdminShell({
   productName,
   children,
@@ -3293,6 +3657,7 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
         {activeView === "dashboard" && <DashboardCards adWorks={adWorks} />}
         {activeView === "dashboard" && <M4SummaryCards config={config} session={session} />}
         {activeView === "dashboard" && <M5SummaryCards config={config} session={session} adWorks={adWorks} />}
+        {activeView === "dashboard" && <M6SummaryCards adWorks={adWorks} adWorkDays={adWorkDays} />}
         {activeView === "enquiries" && <EnquirySummaryCards enquiries={enquiries} />}
 
         {loadError && <p className="form-alert admin-message" role="alert">{loadError}</p>}
@@ -3961,6 +4326,14 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
                     session={session}
                     adWork={selectedAdWork}
                     dayDrafts={dayDrafts}
+                  />
+
+                  <AdminExecutionPanel
+                    config={config}
+                    session={session}
+                    adWork={selectedAdWork}
+                    dayDrafts={dayDrafts}
+                    onReleased={loadData}
                   />
 
                   <section className="form-section" aria-labelledby="proof-plan-title">

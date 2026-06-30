@@ -180,7 +180,7 @@ describe("M3 campaign planning and scheduling", () => {
     expect(existsSync(path.resolve("apps/driver/ios"))).toBe(false);
   });
 
-  it("does not implement execution, tracking, or reports", () => {
+  it("does not implement tracking or reports", () => {
     const combined = (webAdminSource + "\n" + sharedSource + "\n" + m3Migration).toLowerCase();
 
     expect(combined).not.toContain("actual_start_time");
@@ -191,12 +191,12 @@ describe("M3 campaign planning and scheduling", () => {
     expect(combined).not.toContain("public_token");
   });
 
-  it("marks M3 through M5 complete in the task list", () => {
+  it("marks M3 through M6 complete in the task list", () => {
     expect(tasks).toMatch(/## Milestone M3 - Ad Work Creation and Scheduling[\s\S]*- \[x\]/);
     expect(tasks).toMatch(/## Milestone M4 - Driver and Vehicle Onboarding[\s\S]*- \[x\]/);
     expect(tasks).toMatch(/## Milestone M5 - Driver and Vehicle Assignment to Ad Work[\s\S]*- \[x\]/);
-    expect(tasks).toMatch(/## Milestone M6 - Ad Work Execution Without GPS[\s\S]*- \[ \]/);
-    expect(tasks).toMatch(/## Milestone M7 - Premium Features[\s\S]*- \[ \]/);
+    expect(tasks).toMatch(/## Milestone M6 - Ad Work Execution Without GPS[\s\S]*- \[x\]/);
+    expect(tasks).toMatch(/## Milestone M7 - Proof Upload and Customer Update Sharing[\s\S]*- \[ \]/);
     expect(tasks).toMatch(/## Milestone M8 - Security, Privacy, and Release Readiness[\s\S]*- \[ \]/);
   });
 });
