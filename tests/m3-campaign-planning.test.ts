@@ -187,15 +187,17 @@ describe("M3 campaign planning and scheduling", () => {
     expect(combined).not.toContain("actual_end_time");
     expect(combined).not.toContain("tracking_sessions");
     expect(combined).not.toContain("location_points");
-    expect(combined).not.toContain("driver_id");
-    expect(combined).not.toContain("vehicle_id");
+    expect(combined).not.toContain("assigned_driver");
+    expect(combined).not.toContain("assigned_vehicle");
+    expect(combined).not.toContain("ad_work_driver");
+    expect(combined).not.toContain("ad_work_vehicle");
     expect(combined).not.toContain("generated_at");
     expect(combined).not.toContain("public_token");
   });
 
   it("marks only M3 complete in the task list", () => {
     expect(tasks).toMatch(/## Milestone M3 - Ad Work Creation and Scheduling[\s\S]*- \[x\]/);
-    expect(tasks).toMatch(/## Milestone M4 - Driver App and Active Tracking[\s\S]*- \[ \]/);
+    expect(tasks).toMatch(/## Milestone M4 - Driver and Vehicle Onboarding[\s\S]*- \[x\]/);
     expect(tasks).toMatch(/## Milestone M5 - Customer Updates, Reports, and Operations[\s\S]*- \[ \]/);
     expect(tasks).toMatch(/## Milestone M6 - Device GPS and Data Export[\s\S]*- \[ \]/);
     expect(tasks).toMatch(/## Milestone M7 - Premium Features[\s\S]*- \[ \]/);

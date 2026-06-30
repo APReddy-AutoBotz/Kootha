@@ -6,6 +6,10 @@ const blockedCustomerDriverWordParts = [[
   "coord", "inates"
 ], [
   "ing", "estion"
+], [
+  "m", "qtt"
+], [
+  "http ", "ingestion"
 ]] as const;
 
 const blockedCustomerAdminWordParts = [
@@ -25,13 +29,21 @@ export const businessLabels = {
     welcome: "Welcome Driver",
     login: "Driver Login",
     register: "Register",
+    registerAsDriver: "Register as Driver",
+    submitDetails: "Submit Details",
+    callAdmin: "Call Admin",
+    applicationSent: "Application Sent",
+    waitingForApproval: "Waiting for Approval",
+    micSystem: "Mic System",
+    serviceArea: "Service Area",
+    vehicle: "Vehicle",
+    vehicleGpsDevice: "Vehicle GPS Device",
+    proofOn: "Location Proof is ON",
+    proofStopped: "Location Proof stopped",
     startWork: "Start Work",
     endWork: "End Work",
     takeBreak: "Take Break",
-    uploadPhoto: "Upload Photo",
-    callAdmin: "Call Admin",
-    proofOn: "Location Proof is ON",
-    proofStopped: "Location Proof stopped"
+    uploadPhoto: "Upload Photo"
   },
   customer: {
     home: "Home",
@@ -46,13 +58,15 @@ export const businessLabels = {
     enquiries: "Enquiries",
     customers: "Customers",
     adWorks: "Ad Works",
+    driverApplications: "Driver Applications",
+    drivers: "Drivers",
+    vehicles: "Vehicles",
     advertisementWork: "Advertisement Work",
     plannedWork: "Planned Work",
     areasToCover: "Areas to Cover",
     customerUpdates: "Customer Updates",
     proofNeeded: "Proof Needed",
-    drivers: "Drivers",
-    vehicles: "Vehicles",
+    vehicleGpsDevice: "Vehicle GPS Device",
     citiesAndAreas: "Cities and Areas",
     settings: "Settings",
     leadManagement: "Lead Management",

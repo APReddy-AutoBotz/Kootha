@@ -3,16 +3,42 @@ import type { FormEvent, ReactNode } from "react";
 import {
   adWorkStatusOptions,
   businessLabels,
+  driverApplicationStatusOptions,
+  driverAvailabilityStatusOptions,
+  driverStatusOptions,
   enquiryStatusOptions,
   getAdWorkStatusLabel,
+  getDriverApplicationStatusLabel,
+  getDriverAvailabilityStatusLabel,
+  getDriverStatusLabel,
   getEnquiryStatusLabel,
   getPlannedEndDate,
+  getVehicleGpsDeviceStatusLabel,
+  getVehicleStatusLabel,
   liveTrackingNeedLabels,
   liveTrackingNeedOptions,
   packageInterestLabels,
-  packageInterestOptions
+  packageInterestOptions,
+  vehicleGpsDeviceStatusOptions,
+  vehicleStatusOptions,
+  vehicleTypeLabels,
+  vehicleTypeOptions,
+  yesNoNotSureLabels,
+  yesNoNotSureOptions
 } from "@kootha/shared";
-import type { AdWorkStatus, EnquiryStatus, LiveTrackingNeed, PackageInterest } from "@kootha/shared";
+import type {
+  AdWorkStatus,
+  DriverApplicationStatus,
+  DriverAvailabilityStatus,
+  DriverStatus,
+  EnquiryStatus,
+  LiveTrackingNeed,
+  PackageInterest,
+  VehicleGpsDeviceStatus,
+  VehicleStatus,
+  VehicleType,
+  YesNoNotSure
+} from "@kootha/shared";
 
 type SupabaseConfig = {
   url: string;
@@ -121,7 +147,7 @@ type AreaRecord = {
   active: boolean;
 };
 
-type AdminView = "enquiries" | "adWorks" | "dashboard";
+type AdminView = "enquiries" | "adWorks" | "driverApplications" | "drivers" | "vehicles" | "dashboard";
 
 type AdminFilters = {
   status: string;
@@ -186,6 +212,115 @@ type DayDraft = {
   planningStatus: "planned";
 };
 
+type DriverApplicationRecord = {
+  id: string;
+  driver_name: string;
+  phone: string;
+  city: string;
+  service_areas: string | null;
+  vehicle_ownership: string;
+  vehicle_type: VehicleType;
+  vehicle_number: string | null;
+  mic_system_available: boolean;
+  gps_device_available: YesNoNotSure;
+  preferred_working_cities: string | null;
+  notes: string | null;
+  contact_consent: boolean;
+  status: DriverApplicationStatus;
+  admin_note: string | null;
+  follow_up_date: string | null;
+  rejection_reason: string | null;
+  approval_note: string | null;
+  linked_driver_id: string | null;
+  linked_vehicle_id: string | null;
+  created_at: string;
+  updated_at: string | null;
+};
+
+type DriverRecord = {
+  id: string;
+  source_application_id: string | null;
+  name: string;
+  phone: string;
+  city: string | null;
+  service_areas: string[] | null;
+  approval_status: string;
+  availability_status: string;
+  onboarding_status: DriverStatus;
+  availability_status_text: DriverAvailabilityStatus;
+  admin_note: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string | null;
+};
+
+type VehicleRecord = {
+  id: string;
+  source_application_id: string | null;
+  driver_id: string | null;
+  vehicle_number: string;
+  vehicle_type: VehicleType;
+  mic_available: boolean;
+  mic_system_available: boolean;
+  active: boolean;
+  city: string | null;
+  onboarding_status: VehicleStatus;
+  gps_device_available: YesNoNotSure;
+  gps_device_status: VehicleGpsDeviceStatus;
+  gps_provider_name: string | null;
+  gps_device_identifier: string | null;
+  admin_note: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string | null;
+};
+
+type DriverApplicationFilters = {
+  status: string;
+  city: string;
+  vehicleType: string;
+  gpsDeviceAvailable: string;
+  search: string;
+};
+
+type DriverFilters = {
+  status: string;
+  availability: string;
+  search: string;
+};
+
+type VehicleFilters = {
+  status: string;
+  vehicleType: string;
+  gpsDeviceStatus: string;
+  search: string;
+};
+
+type DriverApplicationReviewDraft = {
+  status: DriverApplicationStatus;
+  adminNote: string;
+  followUpDate: string;
+  rejectionReason: string;
+  approvalNote: string;
+};
+
+type DriverDraft = {
+  onboardingStatus: DriverStatus;
+  availabilityStatusText: DriverAvailabilityStatus;
+  adminNote: string;
+};
+
+type VehicleDraft = {
+  onboardingStatus: VehicleStatus;
+  vehicleType: VehicleType;
+  micSystemAvailable: boolean;
+  gpsDeviceAvailable: YesNoNotSure;
+  gpsDeviceStatus: VehicleGpsDeviceStatus;
+  gpsProviderName: string;
+  gpsDeviceIdentifier: string;
+  adminNote: string;
+};
+
 const adminSessionKey = "kootha-admin-session";
 const publicKeyHeader = ["api", "key"].join("");
 const adminRoles = new Set(["admin"]);
@@ -200,6 +335,24 @@ const emptyAdWorkFilters: AdWorkFilters = {
   ...emptyFilters,
   startDate: "",
   endDate: ""
+};
+const emptyDriverApplicationFilters: DriverApplicationFilters = {
+  status: "all",
+  city: "all",
+  vehicleType: "all",
+  gpsDeviceAvailable: "all",
+  search: ""
+};
+const emptyDriverFilters: DriverFilters = {
+  status: "all",
+  availability: "all",
+  search: ""
+};
+const emptyVehicleFilters: VehicleFilters = {
+  status: "all",
+  vehicleType: "all",
+  gpsDeviceStatus: "all",
+  search: ""
 };
 
 const enquirySelectColumns = [
@@ -272,6 +425,69 @@ const adWorkDaySelectColumns = [
   "planning_status",
   "areas_to_cover",
   "day_note",
+  "created_at",
+  "updated_at"
+].join(",");
+
+const driverApplicationSelectColumns = [
+  "id",
+  "driver_name",
+  "phone",
+  "city",
+  "service_areas",
+  "vehicle_ownership",
+  "vehicle_type",
+  "vehicle_number",
+  "mic_system_available",
+  "gps_device_available",
+  "preferred_working_cities",
+  "notes",
+  "contact_consent",
+  "status",
+  "admin_note",
+  "follow_up_date",
+  "rejection_reason",
+  "approval_note",
+  "linked_driver_id",
+  "linked_vehicle_id",
+  "created_at",
+  "updated_at"
+].join(",");
+
+const driverSelectColumns = [
+  "id",
+  "source_application_id",
+  "name",
+  "phone",
+  "city",
+  "service_areas",
+  "approval_status",
+  "availability_status",
+  "onboarding_status",
+  "availability_status_text",
+  "admin_note",
+  "notes",
+  "created_at",
+  "updated_at"
+].join(",");
+
+const vehicleSelectColumns = [
+  "id",
+  "source_application_id",
+  "driver_id",
+  "vehicle_number",
+  "vehicle_type",
+  "mic_available",
+  "mic_system_available",
+  "active",
+  "city",
+  "onboarding_status",
+  "gps_device_available",
+  "gps_device_status",
+  "gps_provider_name",
+  "gps_device_identifier",
+  "admin_note",
+  "notes",
   "created_at",
   "updated_at"
 ].join(",");
@@ -426,6 +642,42 @@ async function fetchAdminAdWorkDays(config: SupabaseConfig, session: AuthSession
   }
 
   return await response.json() as AdWorkDayRecord[];
+}
+
+async function fetchDriverApplications(config: SupabaseConfig, session: AuthSession): Promise<DriverApplicationRecord[]> {
+  const response = await fetch(config.url + "/rest/v1/driver_applications?select=" + driverApplicationSelectColumns + "&order=created_at.desc", {
+    headers: createHeaders(config, session.accessToken)
+  });
+
+  if (!response.ok) {
+    throw new Error("Could not load driver applications.");
+  }
+
+  return await response.json() as DriverApplicationRecord[];
+}
+
+async function fetchDrivers(config: SupabaseConfig, session: AuthSession): Promise<DriverRecord[]> {
+  const response = await fetch(config.url + "/rest/v1/drivers?select=" + driverSelectColumns + "&order=created_at.desc", {
+    headers: createHeaders(config, session.accessToken)
+  });
+
+  if (!response.ok) {
+    throw new Error("Could not load drivers.");
+  }
+
+  return await response.json() as DriverRecord[];
+}
+
+async function fetchVehicles(config: SupabaseConfig, session: AuthSession): Promise<VehicleRecord[]> {
+  const response = await fetch(config.url + "/rest/v1/vehicles?select=" + vehicleSelectColumns + "&order=created_at.desc", {
+    headers: createHeaders(config, session.accessToken)
+  });
+
+  if (!response.ok) {
+    throw new Error("Could not load vehicles.");
+  }
+
+  return await response.json() as VehicleRecord[];
 }
 
 async function fetchCities(config: SupabaseConfig, session: AuthSession): Promise<CityRecord[]> {
@@ -609,6 +861,95 @@ async function updateAdminAdWorkDay(
   }
 }
 
+async function reviewDriverApplication(
+  config: SupabaseConfig,
+  session: AuthSession,
+  applicationId: string,
+  draft: DriverApplicationReviewDraft
+) {
+  const response = await fetch(config.url + "/rest/v1/rpc/review_driver_application", {
+    method: "POST",
+    headers: createHeaders(config, session.accessToken, true),
+    body: JSON.stringify({
+      p_application_id: applicationId,
+      p_status: draft.status,
+      p_admin_note: draft.adminNote.trim() || null,
+      p_follow_up_date: draft.followUpDate || null,
+      p_rejection_reason: draft.rejectionReason.trim() || null,
+      p_approval_note: draft.approvalNote.trim() || null
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error("Could not save driver application review.");
+  }
+
+  return await response.json() as {
+    application_id: string;
+    driver_id: string | null;
+    vehicle_id: string | null;
+    duplicate_found: boolean;
+    result_message: string;
+  }[];
+}
+
+async function updateDriverRecord(
+  config: SupabaseConfig,
+  session: AuthSession,
+  driverId: string,
+  draft: DriverDraft
+) {
+  const response = await fetch(config.url + "/rest/v1/drivers?id=eq." + encodeURIComponent(driverId), {
+    method: "PATCH",
+    headers: {
+      ...createHeaders(config, session.accessToken, true),
+      Prefer: "return=minimal"
+    },
+    body: JSON.stringify({
+      onboarding_status: draft.onboardingStatus,
+      availability_status_text: draft.availabilityStatusText,
+      admin_note: draft.adminNote.trim() || null,
+      updated_at: new Date().toISOString()
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error("Could not save driver record.");
+  }
+}
+
+async function updateVehicleRecord(
+  config: SupabaseConfig,
+  session: AuthSession,
+  vehicleId: string,
+  draft: VehicleDraft
+) {
+  const response = await fetch(config.url + "/rest/v1/vehicles?id=eq." + encodeURIComponent(vehicleId), {
+    method: "PATCH",
+    headers: {
+      ...createHeaders(config, session.accessToken, true),
+      Prefer: "return=minimal"
+    },
+    body: JSON.stringify({
+      onboarding_status: draft.onboardingStatus,
+      vehicle_type: draft.vehicleType,
+      mic_available: draft.micSystemAvailable,
+      mic_system_available: draft.micSystemAvailable,
+      gps_device_available: draft.gpsDeviceAvailable,
+      gps_device_status: draft.gpsDeviceStatus,
+      gps_provider_name: draft.gpsProviderName.trim() || null,
+      gps_device_identifier: draft.gpsDeviceIdentifier.trim() || null,
+      admin_note: draft.adminNote.trim() || null,
+      active: draft.onboardingStatus === "approved",
+      updated_at: new Date().toISOString()
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error("Could not save vehicle record.");
+  }
+}
+
 function toDraft(enquiry: EnquiryRecord): AdminDraft {
   return {
     status: enquiry.status,
@@ -666,6 +1007,37 @@ function toDayDraft(day: AdWorkDayRecord): DayDraft {
     areasToCover: day.areas_to_cover ?? "",
     dayNote: day.day_note ?? "",
     planningStatus: "planned"
+  };
+}
+
+function toDriverApplicationDraft(application: DriverApplicationRecord): DriverApplicationReviewDraft {
+  return {
+    status: application.status,
+    adminNote: application.admin_note ?? "",
+    followUpDate: application.follow_up_date ?? "",
+    rejectionReason: application.rejection_reason ?? "",
+    approvalNote: application.approval_note ?? ""
+  };
+}
+
+function toDriverDraft(driver: DriverRecord): DriverDraft {
+  return {
+    onboardingStatus: driver.onboarding_status ?? "pending_review",
+    availabilityStatusText: driver.availability_status_text ?? "unknown",
+    adminNote: driver.admin_note ?? ""
+  };
+}
+
+function toVehicleDraft(vehicle: VehicleRecord): VehicleDraft {
+  return {
+    onboardingStatus: vehicle.onboarding_status ?? "pending_review",
+    vehicleType: vehicle.vehicle_type ?? "other",
+    micSystemAvailable: vehicle.mic_system_available ?? vehicle.mic_available,
+    gpsDeviceAvailable: vehicle.gps_device_available ?? "not_sure",
+    gpsDeviceStatus: vehicle.gps_device_status ?? "none",
+    gpsProviderName: vehicle.gps_provider_name ?? "",
+    gpsDeviceIdentifier: vehicle.gps_device_identifier ?? "",
+    adminNote: vehicle.admin_note ?? ""
   };
 }
 
@@ -746,7 +1118,7 @@ function filterAdWorks(adWorks: AdWorkRecord[], filters: AdWorkFilters) {
       return false;
     }
 
-    if (filters.endDate && (!adWork.start_date || adWork.start_date > filters.endDate)) {
+    if (filters.endDate && (!adWork.end_date || adWork.end_date > filters.endDate)) {
       return false;
     }
 
@@ -755,6 +1127,7 @@ function filterAdWorks(adWorks: AdWorkRecord[], filters: AdWorkFilters) {
     }
 
     return [
+      adWork.title,
       adWork.customer_name,
       adWork.business_name ?? "",
       adWork.customer_phone ?? "",
@@ -763,8 +1136,108 @@ function filterAdWorks(adWorks: AdWorkRecord[], filters: AdWorkFilters) {
   });
 }
 
+function filterDriverApplications(applications: DriverApplicationRecord[], filters: DriverApplicationFilters) {
+  const search = filters.search.trim().toLowerCase();
+
+  return applications.filter((application) => {
+    if (filters.status !== "all" && application.status !== filters.status) {
+      return false;
+    }
+
+    if (filters.city !== "all" && application.city !== filters.city) {
+      return false;
+    }
+
+    if (filters.vehicleType !== "all" && application.vehicle_type !== filters.vehicleType) {
+      return false;
+    }
+
+    if (filters.gpsDeviceAvailable !== "all" && application.gps_device_available !== filters.gpsDeviceAvailable) {
+      return false;
+    }
+
+    if (!search) {
+      return true;
+    }
+
+    return [
+      application.driver_name,
+      application.phone,
+      application.city,
+      application.vehicle_number ?? "",
+      application.service_areas ?? ""
+    ].join(" ").toLowerCase().includes(search);
+  });
+}
+
+function filterDrivers(drivers: DriverRecord[], filters: DriverFilters) {
+  const search = filters.search.trim().toLowerCase();
+
+  return drivers.filter((driver) => {
+    if (filters.status !== "all" && driver.onboarding_status !== filters.status) {
+      return false;
+    }
+
+    if (filters.availability !== "all" && driver.availability_status_text !== filters.availability) {
+      return false;
+    }
+
+    if (!search) {
+      return true;
+    }
+
+    return [
+      driver.name,
+      driver.phone,
+      driver.city ?? "",
+      (driver.service_areas ?? []).join(" ")
+    ].join(" ").toLowerCase().includes(search);
+  });
+}
+
+function filterVehicles(vehicles: VehicleRecord[], filters: VehicleFilters) {
+  const search = filters.search.trim().toLowerCase();
+
+  return vehicles.filter((vehicle) => {
+    if (filters.status !== "all" && vehicle.onboarding_status !== filters.status) {
+      return false;
+    }
+
+    if (filters.vehicleType !== "all" && vehicle.vehicle_type !== filters.vehicleType) {
+      return false;
+    }
+
+    if (filters.gpsDeviceStatus !== "all" && vehicle.gps_device_status !== filters.gpsDeviceStatus) {
+      return false;
+    }
+
+    if (!search) {
+      return true;
+    }
+
+    return [
+      vehicle.vehicle_number,
+      vehicle.city ?? "",
+      vehicle.gps_provider_name ?? "",
+      vehicle.gps_device_identifier ?? ""
+    ].join(" ").toLowerCase().includes(search);
+  });
+}
+
+function uniqueCitiesFromDriverApplications(applications: DriverApplicationRecord[]) {
+  return [...new Set(applications.map((application) => application.city).filter(Boolean))].sort();
+}
+
 function getAdWorkReference(id: string) {
   return "AW-" + id.slice(0, 8).toUpperCase();
+}
+
+function getDriverReference(id: string) {
+  return "DR-" + id.slice(0, 8).toUpperCase();
+}
+
+function getVehicleReference(id: string) {
+  return "VH-" + id.slice(0, 8).toUpperCase();
 }
 
 function DashboardCards({ adWorks }: { adWorks: AdWorkRecord[] }) {
@@ -840,6 +1313,873 @@ function EnquirySummaryCards({ enquiries }: { enquiries: EnquiryRecord[] }) {
   );
 }
 
+
+function M4SummaryCards({ config, session }: { config: SupabaseConfig; session: AuthSession }) {
+  const [applications, setApplications] = useState<DriverApplicationRecord[]>([]);
+  const [drivers, setDrivers] = useState<DriverRecord[]>([]);
+  const [vehicles, setVehicles] = useState<VehicleRecord[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadSummary() {
+      const [applicationRows, driverRows, vehicleRows] = await Promise.all([
+        fetchDriverApplications(config, session),
+        fetchDrivers(config, session),
+        fetchVehicles(config, session)
+      ]);
+
+      if (!cancelled) {
+        setApplications(applicationRows);
+        setDrivers(driverRows);
+        setVehicles(vehicleRows);
+      }
+    }
+
+    loadSummary().catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [config, session]);
+
+  const cards = [
+    {
+      label: "New driver applications",
+      value: applications.filter((application) => application.status === "new").length
+    },
+    {
+      label: "Approved drivers",
+      value: drivers.filter((driver) => driver.onboarding_status === "approved").length
+    },
+    {
+      label: "Approved vehicles",
+      value: vehicles.filter((vehicle) => vehicle.onboarding_status === "approved").length
+    },
+    {
+      label: "Vehicles with mic system",
+      value: vehicles.filter((vehicle) => vehicle.mic_system_available || vehicle.mic_available).length
+    },
+    {
+      label: "Vehicle GPS Device installed",
+      value: vehicles.filter((vehicle) => vehicle.gps_device_status === "installed").length
+    },
+    {
+      label: "Follow-up applications",
+      value: applications.filter((application) => application.follow_up_date).length
+    }
+  ];
+
+  return (
+    <div className="admin-summary-grid" aria-label="Driver and vehicle onboarding summary">
+      {cards.map((card) => (
+        <div className="admin-summary-card" key={card.label}>
+          <span>{card.label}</span>
+          <strong>{card.value}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DriverApplicationsView({ config, session }: { config: SupabaseConfig; session: AuthSession }) {
+  const [applications, setApplications] = useState<DriverApplicationRecord[]>([]);
+  const [filters, setFilters] = useState<DriverApplicationFilters>(emptyDriverApplicationFilters);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<DriverApplicationReviewDraft | null>(null);
+  const [message, setMessage] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  const selectedApplication = applications.find((application) => application.id === selectedId) ?? null;
+  const filteredApplications = useMemo(() => filterDriverApplications(applications, filters), [applications, filters]);
+  const cityOptions = useMemo(() => uniqueCitiesFromDriverApplications(applications), [applications]);
+
+  async function loadApplications() {
+    setIsLoading(true);
+    setMessage("");
+
+    try {
+      const rows = await fetchDriverApplications(config, session);
+      setApplications(rows);
+      setSelectedId((current) => current ?? rows[0]?.id ?? null);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not load driver applications.");
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadApplications();
+  }, [config, session]);
+
+  useEffect(() => {
+    setDraft(selectedApplication ? toDriverApplicationDraft(selectedApplication) : null);
+  }, [selectedApplication]);
+
+  async function handleReview(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!selectedApplication || !draft) {
+      return;
+    }
+
+    setIsSaving(true);
+    setMessage("");
+
+    try {
+      const result = await reviewDriverApplication(config, session, selectedApplication.id, draft);
+      await loadApplications();
+      setMessage(result[0]?.result_message ?? "Driver application updated.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not save driver application review.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  return (
+    <div className="admin-lead-layout">
+      <section className="lead-list-panel" aria-labelledby="driver-application-list-title">
+        <div className="panel-heading">
+          <h2 id="driver-application-list-title">Driver Applications</h2>
+          <span>{filteredApplications.length} shown</span>
+        </div>
+
+        <div className="admin-filter-grid" aria-label="Driver application filters">
+          <label>
+            Search
+            <input
+              value={filters.search}
+              placeholder="Name, mobile, vehicle"
+              onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))}
+            />
+          </label>
+          <label>
+            Status
+            <select
+              value={filters.status}
+              onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))}
+            >
+              <option value="all">All statuses</option>
+              {driverApplicationStatusOptions.map((status) => (
+                <option key={status} value={status}>{getDriverApplicationStatusLabel(status)}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            City/town
+            <select
+              value={filters.city}
+              onChange={(event) => setFilters((current) => ({ ...current, city: event.target.value }))}
+            >
+              <option value="all">All cities</option>
+              {cityOptions.map((city) => <option key={city} value={city}>{city}</option>)}
+            </select>
+          </label>
+          <label>
+            Vehicle type
+            <select
+              value={filters.vehicleType}
+              onChange={(event) => setFilters((current) => ({ ...current, vehicleType: event.target.value }))}
+            >
+              <option value="all">All vehicle types</option>
+              {vehicleTypeOptions.map((option) => (
+                <option key={option} value={option}>{vehicleTypeLabels[option]}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Vehicle GPS Device
+            <select
+              value={filters.gpsDeviceAvailable}
+              onChange={(event) => setFilters((current) => ({ ...current, gpsDeviceAvailable: event.target.value }))}
+            >
+              <option value="all">All answers</option>
+              {yesNoNotSureOptions.map((option) => (
+                <option key={option} value={option}>{yesNoNotSureLabels[option]}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <div className="lead-list">
+          {filteredApplications.map((application) => (
+            <button
+              className={application.id === selectedId ? "lead-row is-selected" : "lead-row"}
+              type="button"
+              key={application.id}
+              onClick={() => setSelectedId(application.id)}
+            >
+              <span>
+                <strong>{application.driver_name}</strong>
+                <small>{application.vehicle_number || "No vehicle number"}</small>
+              </span>
+              <span>{application.phone}</span>
+              <span>{application.city}</span>
+              <span>{vehicleTypeLabels[application.vehicle_type]}</span>
+              <span>{application.mic_system_available ? "Mic system" : "No mic system"}</span>
+              <span>{yesNoNotSureLabels[application.gps_device_available]}</span>
+              <span className="status-pill">{getDriverApplicationStatusLabel(application.status)}</span>
+              <span>{formatDate(application.follow_up_date)}</span>
+            </button>
+          ))}
+          {!isLoading && filteredApplications.length === 0 && (
+            <p className="quiet-note">No driver applications match the current filters.</p>
+          )}
+        </div>
+      </section>
+
+      <section className="lead-detail-panel" aria-labelledby="driver-application-detail-title">
+        {message && <p className="form-status admin-message" role="status">{message}</p>}
+        {!selectedApplication || !draft ? (
+          <div>
+            <h2 id="driver-application-detail-title">Driver application details</h2>
+            <p>Select a driver application to review.</p>
+          </div>
+        ) : (
+          <>
+            <div className="panel-heading">
+              <div>
+                <h2 id="driver-application-detail-title">{selectedApplication.driver_name}</h2>
+                <p>{selectedApplication.phone} - {selectedApplication.city}</p>
+              </div>
+              <span className="status-pill">{getDriverApplicationStatusLabel(selectedApplication.status)}</span>
+            </div>
+
+            <dl className="lead-detail-grid">
+              <div>
+                <dt>Vehicle ownership</dt>
+                <dd>{selectedApplication.vehicle_ownership.replace(/_/g, " ")}</dd>
+              </div>
+              <div>
+                <dt>Vehicle type</dt>
+                <dd>{vehicleTypeLabels[selectedApplication.vehicle_type]}</dd>
+              </div>
+              <div>
+                <dt>Vehicle number</dt>
+                <dd>{selectedApplication.vehicle_number || "Not provided"}</dd>
+              </div>
+              <div>
+                <dt>Mic System</dt>
+                <dd>{selectedApplication.mic_system_available ? "Yes" : "No"}</dd>
+              </div>
+              <div>
+                <dt>Vehicle GPS Device</dt>
+                <dd>{yesNoNotSureLabels[selectedApplication.gps_device_available]}</dd>
+              </div>
+              <div>
+                <dt>Linked driver</dt>
+                <dd>{selectedApplication.linked_driver_id ? getDriverReference(selectedApplication.linked_driver_id) : "Not linked"}</dd>
+              </div>
+              <div>
+                <dt>Linked vehicle</dt>
+                <dd>{selectedApplication.linked_vehicle_id ? getVehicleReference(selectedApplication.linked_vehicle_id) : "Not linked"}</dd>
+              </div>
+              <div>
+                <dt>Received</dt>
+                <dd>{formatDate(selectedApplication.created_at)}</dd>
+              </div>
+            </dl>
+
+            <div className="lead-submitted-copy">
+              <h3>{businessLabels.driver.serviceArea}</h3>
+              <p>{selectedApplication.service_areas || "Not provided"}</p>
+              <h3>Preferred working cities/towns</h3>
+              <p>{selectedApplication.preferred_working_cities || "Not provided"}</p>
+              <h3>Driver notes</h3>
+              <p>{selectedApplication.notes || "No notes"}</p>
+            </div>
+
+            <form className="admin-edit-form" onSubmit={handleReview}>
+              <div className="form-grid">
+                <label>
+                  Review status
+                  <select
+                    value={draft.status}
+                    onChange={(event) => setDraft((current) => current && {
+                      ...current,
+                      status: event.target.value as DriverApplicationStatus
+                    })}
+                  >
+                    {driverApplicationStatusOptions.map((status) => (
+                      <option key={status} value={status}>{getDriverApplicationStatusLabel(status)}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Follow-up date
+                  <input
+                    type="date"
+                    value={draft.followUpDate}
+                    onChange={(event) => setDraft((current) => current && {
+                      ...current,
+                      followUpDate: event.target.value
+                    })}
+                  />
+                </label>
+              </div>
+              <label>
+                Admin note
+                <textarea
+                  value={draft.adminNote}
+                  maxLength={1200}
+                  onChange={(event) => setDraft((current) => current && {
+                    ...current,
+                    adminNote: event.target.value
+                  })}
+                />
+              </label>
+              <label>
+                Rejection reason
+                <textarea
+                  value={draft.rejectionReason}
+                  maxLength={800}
+                  onChange={(event) => setDraft((current) => current && {
+                    ...current,
+                    rejectionReason: event.target.value
+                  })}
+                />
+              </label>
+              <label>
+                Approval note
+                <textarea
+                  value={draft.approvalNote}
+                  maxLength={800}
+                  onChange={(event) => setDraft((current) => current && {
+                    ...current,
+                    approvalNote: event.target.value
+                  })}
+                />
+              </label>
+              <div className="admin-action-row">
+                <button className="primary-button" type="submit" disabled={isSaving}>
+                  {isSaving ? "Saving..." : "Save review"}
+                </button>
+                <button className="secondary-button" type="button" onClick={loadApplications} disabled={isLoading}>
+                  {isLoading ? "Loading..." : "Refresh applications"}
+                </button>
+              </div>
+            </form>
+          </>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function DriversView({ config, session }: { config: SupabaseConfig; session: AuthSession }) {
+  const [drivers, setDrivers] = useState<DriverRecord[]>([]);
+  const [filters, setFilters] = useState<DriverFilters>(emptyDriverFilters);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<DriverDraft | null>(null);
+  const [message, setMessage] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  const selectedDriver = drivers.find((driver) => driver.id === selectedId) ?? null;
+  const filteredDrivers = useMemo(() => filterDrivers(drivers, filters), [drivers, filters]);
+
+  async function loadDrivers() {
+    setIsLoading(true);
+    setMessage("");
+
+    try {
+      const rows = await fetchDrivers(config, session);
+      setDrivers(rows);
+      setSelectedId((current) => current ?? rows[0]?.id ?? null);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not load drivers.");
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadDrivers();
+  }, [config, session]);
+
+  useEffect(() => {
+    setDraft(selectedDriver ? toDriverDraft(selectedDriver) : null);
+  }, [selectedDriver]);
+
+  async function handleSaveDriver(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!selectedDriver || !draft) {
+      return;
+    }
+
+    setIsSaving(true);
+    setMessage("");
+
+    try {
+      await updateDriverRecord(config, session, selectedDriver.id, draft);
+      await loadDrivers();
+      setMessage("Driver record updated.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not save driver record.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  return (
+    <div className="admin-lead-layout">
+      <section className="lead-list-panel" aria-labelledby="driver-list-title">
+        <div className="panel-heading">
+          <h2 id="driver-list-title">Drivers</h2>
+          <span>{filteredDrivers.length} shown</span>
+        </div>
+        <div className="admin-filter-grid" aria-label="Driver filters">
+          <label>
+            Search
+            <input
+              value={filters.search}
+              placeholder="Name, mobile, city"
+              onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))}
+            />
+          </label>
+          <label>
+            Status
+            <select
+              value={filters.status}
+              onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))}
+            >
+              <option value="all">All statuses</option>
+              {driverStatusOptions.map((status) => (
+                <option key={status} value={status}>{getDriverStatusLabel(status)}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Availability
+            <select
+              value={filters.availability}
+              onChange={(event) => setFilters((current) => ({ ...current, availability: event.target.value }))}
+            >
+              <option value="all">All availability</option>
+              {driverAvailabilityStatusOptions.map((status) => (
+                <option key={status} value={status}>{getDriverAvailabilityStatusLabel(status)}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <div className="lead-list">
+          {filteredDrivers.map((driver) => (
+            <button
+              className={driver.id === selectedId ? "lead-row is-selected" : "lead-row"}
+              type="button"
+              key={driver.id}
+              onClick={() => setSelectedId(driver.id)}
+            >
+              <span>
+                <strong>{driver.name}</strong>
+                <small>{getDriverReference(driver.id)}</small>
+              </span>
+              <span>{driver.phone}</span>
+              <span>{driver.city || "City not set"}</span>
+              <span>{getDriverAvailabilityStatusLabel(driver.availability_status_text)}</span>
+              <span className="status-pill">{getDriverStatusLabel(driver.onboarding_status)}</span>
+              <span>{formatDate(driver.created_at)}</span>
+            </button>
+          ))}
+          {!isLoading && filteredDrivers.length === 0 && (
+            <p className="quiet-note">No drivers match the current filters.</p>
+          )}
+        </div>
+      </section>
+
+      <section className="lead-detail-panel" aria-labelledby="driver-detail-title">
+        {message && <p className="form-status admin-message" role="status">{message}</p>}
+        {!selectedDriver || !draft ? (
+          <div>
+            <h2 id="driver-detail-title">Driver details</h2>
+            <p>Select a driver to manage onboarding status.</p>
+          </div>
+        ) : (
+          <form className="admin-edit-form" onSubmit={handleSaveDriver}>
+            <div className="panel-heading">
+              <div>
+                <h2 id="driver-detail-title">{selectedDriver.name}</h2>
+                <p>{selectedDriver.phone} - {selectedDriver.city || "City not set"}</p>
+              </div>
+              <span className="status-pill">{getDriverStatusLabel(draft.onboardingStatus)}</span>
+            </div>
+
+            <dl className="lead-detail-grid">
+              <div>
+                <dt>Approval status</dt>
+                <dd>{selectedDriver.approval_status.replace(/_/g, " ")}</dd>
+              </div>
+              <div>
+                <dt>Service areas</dt>
+                <dd>{(selectedDriver.service_areas ?? []).join(", ") || "Not provided"}</dd>
+              </div>
+              <div>
+                <dt>Source application</dt>
+                <dd>{selectedDriver.source_application_id ? "Linked" : "Not linked"}</dd>
+              </div>
+              <div>
+                <dt>Created</dt>
+                <dd>{formatDate(selectedDriver.created_at)}</dd>
+              </div>
+            </dl>
+
+            <div className="form-grid">
+              <label>
+                Driver status
+                <select
+                  value={draft.onboardingStatus}
+                  onChange={(event) => setDraft((current) => current && {
+                    ...current,
+                    onboardingStatus: event.target.value as DriverStatus
+                  })}
+                >
+                  {driverStatusOptions.map((status) => (
+                    <option key={status} value={status}>{getDriverStatusLabel(status)}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Availability
+                <select
+                  value={draft.availabilityStatusText}
+                  onChange={(event) => setDraft((current) => current && {
+                    ...current,
+                    availabilityStatusText: event.target.value as DriverAvailabilityStatus
+                  })}
+                >
+                  {driverAvailabilityStatusOptions.map((status) => (
+                    <option key={status} value={status}>{getDriverAvailabilityStatusLabel(status)}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <label>
+              Admin note
+              <textarea
+                value={draft.adminNote}
+                maxLength={1200}
+                onChange={(event) => setDraft((current) => current && {
+                  ...current,
+                  adminNote: event.target.value
+                })}
+              />
+            </label>
+            <div className="admin-action-row">
+              <button className="primary-button" type="submit" disabled={isSaving}>
+                {isSaving ? "Saving..." : "Save driver"}
+              </button>
+              <button className="secondary-button" type="button" onClick={loadDrivers} disabled={isLoading}>
+                {isLoading ? "Loading..." : "Refresh drivers"}
+              </button>
+            </div>
+          </form>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function VehiclesView({ config, session }: { config: SupabaseConfig; session: AuthSession }) {
+  const [vehicles, setVehicles] = useState<VehicleRecord[]>([]);
+  const [filters, setFilters] = useState<VehicleFilters>(emptyVehicleFilters);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<VehicleDraft | null>(null);
+  const [message, setMessage] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  const selectedVehicle = vehicles.find((vehicle) => vehicle.id === selectedId) ?? null;
+  const filteredVehicles = useMemo(() => filterVehicles(vehicles, filters), [vehicles, filters]);
+
+  async function loadVehicles() {
+    setIsLoading(true);
+    setMessage("");
+
+    try {
+      const rows = await fetchVehicles(config, session);
+      setVehicles(rows);
+      setSelectedId((current) => current ?? rows[0]?.id ?? null);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not load vehicles.");
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadVehicles();
+  }, [config, session]);
+
+  useEffect(() => {
+    setDraft(selectedVehicle ? toVehicleDraft(selectedVehicle) : null);
+  }, [selectedVehicle]);
+
+  async function handleSaveVehicle(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!selectedVehicle || !draft) {
+      return;
+    }
+
+    setIsSaving(true);
+    setMessage("");
+
+    try {
+      await updateVehicleRecord(config, session, selectedVehicle.id, draft);
+      await loadVehicles();
+      setMessage("Vehicle record updated.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not save vehicle record.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  return (
+    <div className="admin-lead-layout">
+      <section className="lead-list-panel" aria-labelledby="vehicle-list-title">
+        <div className="panel-heading">
+          <h2 id="vehicle-list-title">Vehicles</h2>
+          <span>{filteredVehicles.length} shown</span>
+        </div>
+        <div className="admin-filter-grid" aria-label="Vehicle filters">
+          <label>
+            Search
+            <input
+              value={filters.search}
+              placeholder="Vehicle, city, device"
+              onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))}
+            />
+          </label>
+          <label>
+            Status
+            <select
+              value={filters.status}
+              onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))}
+            >
+              <option value="all">All statuses</option>
+              {vehicleStatusOptions.map((status) => (
+                <option key={status} value={status}>{getVehicleStatusLabel(status)}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Vehicle type
+            <select
+              value={filters.vehicleType}
+              onChange={(event) => setFilters((current) => ({ ...current, vehicleType: event.target.value }))}
+            >
+              <option value="all">All vehicle types</option>
+              {vehicleTypeOptions.map((option) => (
+                <option key={option} value={option}>{vehicleTypeLabels[option]}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Vehicle GPS Device status
+            <select
+              value={filters.gpsDeviceStatus}
+              onChange={(event) => setFilters((current) => ({ ...current, gpsDeviceStatus: event.target.value }))}
+            >
+              <option value="all">All device statuses</option>
+              {vehicleGpsDeviceStatusOptions.map((status) => (
+                <option key={status} value={status}>{getVehicleGpsDeviceStatusLabel(status)}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <div className="lead-list">
+          {filteredVehicles.map((vehicle) => (
+            <button
+              className={vehicle.id === selectedId ? "lead-row is-selected" : "lead-row"}
+              type="button"
+              key={vehicle.id}
+              onClick={() => setSelectedId(vehicle.id)}
+            >
+              <span>
+                <strong>{vehicle.vehicle_number}</strong>
+                <small>{getVehicleReference(vehicle.id)}</small>
+              </span>
+              <span>{vehicle.city || "City not set"}</span>
+              <span>{vehicleTypeLabels[vehicle.vehicle_type]}</span>
+              <span>{vehicle.mic_system_available || vehicle.mic_available ? "Mic system" : "No mic system"}</span>
+              <span>{getVehicleGpsDeviceStatusLabel(vehicle.gps_device_status)}</span>
+              <span className="status-pill">{getVehicleStatusLabel(vehicle.onboarding_status)}</span>
+              <span>{formatDate(vehicle.created_at)}</span>
+            </button>
+          ))}
+          {!isLoading && filteredVehicles.length === 0 && (
+            <p className="quiet-note">No vehicles match the current filters.</p>
+          )}
+        </div>
+      </section>
+
+      <section className="lead-detail-panel" aria-labelledby="vehicle-detail-title">
+        {message && <p className="form-status admin-message" role="status">{message}</p>}
+        {!selectedVehicle || !draft ? (
+          <div>
+            <h2 id="vehicle-detail-title">Vehicle details</h2>
+            <p>Select a vehicle to manage readiness.</p>
+          </div>
+        ) : (
+          <form className="admin-edit-form" onSubmit={handleSaveVehicle}>
+            <div className="panel-heading">
+              <div>
+                <h2 id="vehicle-detail-title">{selectedVehicle.vehicle_number}</h2>
+                <p>{vehicleTypeLabels[selectedVehicle.vehicle_type]} - {selectedVehicle.city || "City not set"}</p>
+              </div>
+              <span className="status-pill">{getVehicleStatusLabel(draft.onboardingStatus)}</span>
+            </div>
+
+            <dl className="lead-detail-grid">
+              <div>
+                <dt>Linked driver</dt>
+                <dd>{selectedVehicle.driver_id ? getDriverReference(selectedVehicle.driver_id) : "Not linked"}</dd>
+              </div>
+              <div>
+                <dt>Source application</dt>
+                <dd>{selectedVehicle.source_application_id ? "Linked" : "Not linked"}</dd>
+              </div>
+              <div>
+                <dt>Active</dt>
+                <dd>{selectedVehicle.active ? "Yes" : "No"}</dd>
+              </div>
+              <div>
+                <dt>Created</dt>
+                <dd>{formatDate(selectedVehicle.created_at)}</dd>
+              </div>
+            </dl>
+
+            <div className="form-grid">
+              <label>
+                Vehicle status
+                <select
+                  value={draft.onboardingStatus}
+                  onChange={(event) => setDraft((current) => current && {
+                    ...current,
+                    onboardingStatus: event.target.value as VehicleStatus
+                  })}
+                >
+                  {vehicleStatusOptions.map((status) => (
+                    <option key={status} value={status}>{getVehicleStatusLabel(status)}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Vehicle type
+                <select
+                  value={draft.vehicleType}
+                  onChange={(event) => setDraft((current) => current && {
+                    ...current,
+                    vehicleType: event.target.value as VehicleType
+                  })}
+                >
+                  {vehicleTypeOptions.map((option) => (
+                    <option key={option} value={option}>{vehicleTypeLabels[option]}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Vehicle GPS Device
+                <select
+                  value={draft.gpsDeviceAvailable}
+                  onChange={(event) => setDraft((current) => current && {
+                    ...current,
+                    gpsDeviceAvailable: event.target.value as YesNoNotSure
+                  })}
+                >
+                  {yesNoNotSureOptions.map((option) => (
+                    <option key={option} value={option}>{yesNoNotSureLabels[option]}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Device readiness status
+                <select
+                  value={draft.gpsDeviceStatus}
+                  onChange={(event) => setDraft((current) => current && {
+                    ...current,
+                    gpsDeviceStatus: event.target.value as VehicleGpsDeviceStatus
+                  })}
+                >
+                  {vehicleGpsDeviceStatusOptions.map((status) => (
+                    <option key={status} value={status}>{getVehicleGpsDeviceStatusLabel(status)}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <div className="checkbox-grid">
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={draft.micSystemAvailable}
+                  onChange={(event) => setDraft((current) => current && {
+                    ...current,
+                    micSystemAvailable: event.target.checked
+                  })}
+                />
+                <span>Mic System available</span>
+              </label>
+            </div>
+
+            <div className="form-grid">
+              <label>
+                GPS provider name
+                <input
+                  value={draft.gpsProviderName}
+                  maxLength={120}
+                  onChange={(event) => setDraft((current) => current && {
+                    ...current,
+                    gpsProviderName: event.target.value
+                  })}
+                />
+              </label>
+              <label>
+                GPS device identifier
+                <input
+                  value={draft.gpsDeviceIdentifier}
+                  maxLength={160}
+                  onChange={(event) => setDraft((current) => current && {
+                    ...current,
+                    gpsDeviceIdentifier: event.target.value
+                  })}
+                />
+              </label>
+            </div>
+
+            <label>
+              Admin note
+              <textarea
+                value={draft.adminNote}
+                maxLength={1200}
+                onChange={(event) => setDraft((current) => current && {
+                  ...current,
+                  adminNote: event.target.value
+                })}
+              />
+            </label>
+            <div className="admin-action-row">
+              <button className="primary-button" type="submit" disabled={isSaving}>
+                {isSaving ? "Saving..." : "Save vehicle"}
+              </button>
+              <button className="secondary-button" type="button" onClick={loadVehicles} disabled={isLoading}>
+                {isLoading ? "Loading..." : "Refresh vehicles"}
+              </button>
+            </div>
+          </form>
+        )}
+      </section>
+    </div>
+  );
+}
+
 function AdminShell({
   productName,
   children,
@@ -858,6 +2198,9 @@ function AdminShell({
   const navItems: { id: AdminView; label: string }[] = [
     { id: "enquiries", label: businessLabels.admin.enquiries },
     { id: "adWorks", label: businessLabels.admin.adWorks },
+    { id: "driverApplications", label: businessLabels.admin.driverApplications },
+    { id: "drivers", label: businessLabels.admin.drivers },
+    { id: "vehicles", label: businessLabels.admin.vehicles },
     { id: "dashboard", label: businessLabels.admin.dashboard }
   ];
 
@@ -1268,11 +2611,17 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
               {activeView === "dashboard" && businessLabels.admin.dashboard}
               {activeView === "enquiries" && businessLabels.admin.enquiries}
               {activeView === "adWorks" && businessLabels.admin.adWorks}
+              {activeView === "driverApplications" && businessLabels.admin.driverApplications}
+              {activeView === "drivers" && businessLabels.admin.drivers}
+              {activeView === "vehicles" && businessLabels.admin.vehicles}
             </h1>
             <p>
-              {activeView === "dashboard" && "Review planned work before later operations."}
+              {activeView === "dashboard" && "Review planned work and onboarding readiness before later operations."}
               {activeView === "enquiries" && "View enquiries, follow up with customers, and create planned ad work."}
               {activeView === "adWorks" && "Plan advertisement work, schedules, areas, proof needed, and customer updates."}
+              {activeView === "driverApplications" && "Review driver registrations, approve records, and handle duplicate submissions."}
+              {activeView === "drivers" && "Manage approved drivers and onboarding status."}
+              {activeView === "vehicles" && "Manage vehicle approval, Mic System details, and Vehicle GPS Device readiness."}
             </p>
           </div>
           <button className="secondary-button" type="button" onClick={handleRefresh} disabled={isLoading}>
@@ -1281,6 +2630,7 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
         </div>
 
         {activeView === "dashboard" && <DashboardCards adWorks={adWorks} />}
+        {activeView === "dashboard" && <M4SummaryCards config={config} session={session} />}
         {activeView === "enquiries" && <EnquirySummaryCards enquiries={enquiries} />}
 
         {loadError && <p className="form-alert admin-message" role="alert">{loadError}</p>}
@@ -1315,6 +2665,10 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
             </div>
           </section>
         )}
+
+        {activeView === "driverApplications" && <DriverApplicationsView config={config} session={session} />}
+        {activeView === "drivers" && <DriversView config={config} session={session} />}
+        {activeView === "vehicles" && <VehiclesView config={config} session={session} />}
 
         {activeView === "enquiries" && (
           <div className="admin-lead-layout">
