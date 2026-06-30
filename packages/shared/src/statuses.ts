@@ -44,6 +44,13 @@ export const adWorkStatuses = [
 ] as const;
 
 export const adWorkDayStatuses = ["planned"] as const;
+export const adWorkAssignmentStatuses = [
+  "not_assigned",
+  "assigned",
+  "needs_review",
+  "ready_for_execution",
+  "cancelled"
+] as const;
 
 export const trackingTypes = ["mobile", "device", "both"] as const;
 export const areaCoverageStatuses = ["pending", "covered", "missed", "manual"] as const;
@@ -99,6 +106,7 @@ export const statusGroups = {
   packageTypes,
   adWorkStatuses,
   adWorkDayStatuses,
+  adWorkAssignmentStatuses,
   trackingTypes,
   areaCoverageStatuses,
   trackingSessionStatuses,
@@ -130,6 +138,7 @@ export type YesNoNotSure = (typeof yesNoNotSureOptions)[number];
 export type VehicleGpsDeviceStatus = (typeof vehicleGpsDeviceStatuses)[number];
 export type AdWorkStatus = (typeof adWorkStatuses)[number];
 export type AdWorkDayStatus = (typeof adWorkDayStatuses)[number];
+export type AdWorkAssignmentStatus = (typeof adWorkAssignmentStatuses)[number];
 export type TrackingType = (typeof trackingTypes)[number];
 export type TrackingSessionStatus = (typeof trackingSessionStatuses)[number];
 
@@ -247,6 +256,20 @@ export const adWorkStatusLabels: Record<AdWorkStatus, string> = {
 };
 
 export const adWorkStatusOptions = adWorkStatuses;
+
+export const adWorkAssignmentStatusLabels: Record<AdWorkAssignmentStatus, string> = {
+  not_assigned: "Not Assigned",
+  assigned: "Assigned",
+  needs_review: "Needs Review",
+  ready_for_execution: "Ready for Execution",
+  cancelled: "Cancelled"
+};
+
+export const adWorkAssignmentStatusOptions = adWorkAssignmentStatuses;
+
+export function getAdWorkAssignmentStatusLabel(status: string): string {
+  return adWorkAssignmentStatusLabels[status as AdWorkAssignmentStatus] ?? status;
+}
 
 export function getAdWorkStatusLabel(status: string): string {
   return adWorkStatusLabels[status as AdWorkStatus] ?? status;

@@ -180,26 +180,22 @@ describe("M3 campaign planning and scheduling", () => {
     expect(existsSync(path.resolve("apps/driver/ios"))).toBe(false);
   });
 
-  it("does not implement execution, tracking, reports, or assignment behavior", () => {
+  it("does not implement execution, tracking, or reports", () => {
     const combined = (webAdminSource + "\n" + sharedSource + "\n" + m3Migration).toLowerCase();
 
     expect(combined).not.toContain("actual_start_time");
     expect(combined).not.toContain("actual_end_time");
     expect(combined).not.toContain("tracking_sessions");
     expect(combined).not.toContain("location_points");
-    expect(combined).not.toContain("assigned_driver");
-    expect(combined).not.toContain("assigned_vehicle");
-    expect(combined).not.toContain("ad_work_driver");
-    expect(combined).not.toContain("ad_work_vehicle");
     expect(combined).not.toContain("generated_at");
     expect(combined).not.toContain("public_token");
   });
 
-  it("marks only M3 complete in the task list", () => {
+  it("marks M3 through M5 complete in the task list", () => {
     expect(tasks).toMatch(/## Milestone M3 - Ad Work Creation and Scheduling[\s\S]*- \[x\]/);
     expect(tasks).toMatch(/## Milestone M4 - Driver and Vehicle Onboarding[\s\S]*- \[x\]/);
-    expect(tasks).toMatch(/## Milestone M5 - Customer Updates, Reports, and Operations[\s\S]*- \[ \]/);
-    expect(tasks).toMatch(/## Milestone M6 - Device GPS and Data Export[\s\S]*- \[ \]/);
+    expect(tasks).toMatch(/## Milestone M5 - Driver and Vehicle Assignment to Ad Work[\s\S]*- \[x\]/);
+    expect(tasks).toMatch(/## Milestone M6 - Ad Work Execution Without GPS[\s\S]*- \[ \]/);
     expect(tasks).toMatch(/## Milestone M7 - Premium Features[\s\S]*- \[ \]/);
     expect(tasks).toMatch(/## Milestone M8 - Security, Privacy, and Release Readiness[\s\S]*- \[ \]/);
   });

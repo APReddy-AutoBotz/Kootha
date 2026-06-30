@@ -1,3 +1,4 @@
+export * from "./assignment";
 export * from "./campaign";
 export * from "./driverOnboarding";
 export * from "./enquiry";

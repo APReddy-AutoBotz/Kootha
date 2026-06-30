@@ -1,6 +1,6 @@
 # Kootha / Prachar
 
-Kootha / Prachar is a low-cost local mic advertisement proof platform. The repository currently includes M0 foundation, M1 public website and enquiries, M2 admin lead management, M3 campaign planning and scheduling, and M4 driver and vehicle onboarding.
+Kootha / Prachar is a low-cost local mic advertisement proof platform. The repository currently includes M0 foundation, M1 public website and enquiries, M2 admin lead management, M3 campaign planning and scheduling, M4 driver and vehicle onboarding, and M5 driver and vehicle assignment to ad work.
 
 ## Current Scope
 
@@ -8,17 +8,17 @@ Kootha / Prachar is a low-cost local mic advertisement proof platform. The repos
 - Public enquiry form with safe validation and Supabase insert-only submission.
 - Admin login at /admin with role checks.
 - Admin Dashboard, Enquiries, Ad Works, Driver Applications, Drivers, and Vehicles navigation.
+- Admin driver and vehicle assignment to planned Ad Works with readiness checks.
 - Admin enquiry management and M3 planned ad work management.
 - Driver Android app registration form for driver and vehicle interest.
 - Admin driver application review, approval, rejection, duplicate handling, driver records, and vehicle records.
 - Vehicle GPS Device readiness fields only.
+- Ready for Execution assignment status as an admin readiness marker only.
 - Shared product config, labels, statuses, planning helpers, onboarding validation helpers, and public form validation helpers.
 - Supabase migrations with RLS enabled and privacy-safe defaults.
 
-## What is intentionally not included in M4
+## What is intentionally not included in M5
 
-- driver assignment to ad work,
-- vehicle assignment to ad work,
 - active work execution,
 - start work/end work controls,
 - GPS tracking,
@@ -65,7 +65,7 @@ Only public anon keys belong in Vite or Expo environment values. Do not put priv
 Routes:
 
 - / public website and enquiry form
-- /admin admin login, dashboard, enquiries, planned ad works, driver applications, drivers, and vehicles
+- /admin admin login, dashboard, enquiries, planned ad works, driver applications, drivers, vehicles, and Ad Work assignment
 
 If VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY is missing or still placeholder-only, the public enquiry form and admin login show safe not-configured messages instead of crashing.
 
@@ -127,6 +127,26 @@ Admin review works from /admin:
 
 M4 does not assign drivers or vehicles to ad works. M4 does not implement tracking, GPS permissions, background location, maps, device location collection, or live customer links.
 
+## M5 Driver And Vehicle Assignment
+
+Apply the M5 migration after M0 through M4. It adds admin-only Ad Work assignment records and assignment status fields.
+
+Admin assignment works from /admin:
+
+1. Open Ad Works.
+2. Select a planned Ad Work.
+3. Use Assign Driver to choose an approved, non-blocked driver.
+4. Use Assign Vehicle to choose an approved, non-blocked vehicle.
+5. Review the driver city/town, Service Area, Availability, vehicle approval, Mic System, and Vehicle GPS Device readiness.
+6. Set assignment status to Assigned, Needs Review, Ready for Execution, Cancelled, or Not Assigned.
+7. Save the assignment note and status.
+
+Ready for Execution means the assignment has passed the simple admin readiness checklist: planned dates, Areas to Cover, approved driver, approved vehicle, Mic System, package selection, and proof plan. It does not start the Ad Work.
+
+For multi-day Ad Work, M5 uses one driver and one vehicle for all planned days. M5 does not implement different drivers per day.
+
+Vehicle GPS Device fields are readiness-only. M5 does not collect location, start tracking, ingest device data, show maps, create customer live links, generate reports, collect payments, or send WhatsApp/SMS provider messages.
+
 ## Run Driver
 
     pnpm dev:driver
@@ -149,5 +169,8 @@ Migrations are in supabase/migrations:
 - 20260630020000_m2_admin_lead_management.sql adds admin lead fields, admin-only enquiry select/update policies, user profile role checks, and simple audit logging.
 - 20260630030000_m3_campaign_planning_scheduling.sql adds admin-only ad work planning, day-wise planned schedules, customer linking from enquiries, and duplicate prevention.
 - 20260630040000_m4_driver_vehicle_onboarding.sql adds public insert-only driver applications, admin-only driver and vehicle onboarding management, and approval linking.
+- 20260630050000_m5_driver_vehicle_assignment.sql adds admin-only Ad Work assignment records, assignment statuses, and readiness checks.
 
 M4 keeps customer_live_enabled and live_tracking_enabled false by default and does not add live tracking behavior.
+
+M5 keeps customer_live_enabled and live_tracking_enabled false by default and does not add live tracking behavior.

@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import {
+  adWorkAssignmentStatusOptions,
   adWorkStatusOptions,
+  buildAssignmentReadiness,
   businessLabels,
+  driverCanBeAssigned,
   driverApplicationStatusOptions,
   driverAvailabilityStatusOptions,
   driverStatusOptions,
   enquiryStatusOptions,
+  getAdWorkAssignmentStatusLabel,
   getAdWorkStatusLabel,
   getDriverApplicationStatusLabel,
   getDriverAvailabilityStatusLabel,
@@ -19,6 +23,7 @@ import {
   liveTrackingNeedOptions,
   packageInterestLabels,
   packageInterestOptions,
+  vehicleCanBeAssigned,
   vehicleGpsDeviceStatusOptions,
   vehicleStatusOptions,
   vehicleTypeLabels,
@@ -27,7 +32,10 @@ import {
   yesNoNotSureOptions
 } from "@kootha/shared";
 import type {
+  AdWorkAssignmentStatus,
   AdWorkStatus,
+  AssignmentDriverCandidate,
+  AssignmentVehicleCandidate,
   DriverApplicationStatus,
   DriverAvailabilityStatus,
   DriverStatus,
@@ -81,6 +89,9 @@ type EnquiryRecord = {
   follow_up_date: string | null;
   admin_remark: string | null;
   updated_at: string | null;
+  assignment_status: AdWorkAssignmentStatus;
+  assignment_note: string | null;
+  assignment_updated_at: string | null;
 };
 
 type AdWorkRecord = {
@@ -212,6 +223,20 @@ type DayDraft = {
   planningStatus: "planned";
 };
 
+type AdWorkAssignmentRecord = {
+  id: string;
+  ad_work_id: string;
+  driver_id: string;
+  vehicle_id: string;
+  status: AdWorkAssignmentStatus;
+  assignment_note: string | null;
+  readiness_warnings: string[] | null;
+  warning_confirmation: boolean;
+  created_at: string;
+  updated_at: string | null;
+};
+
+
 type DriverApplicationRecord = {
   id: string;
   driver_name: string;
@@ -321,6 +346,31 @@ type VehicleDraft = {
   adminNote: string;
 };
 
+type AdWorkAssignmentDraft = {
+  driverId: string;
+  vehicleId: string;
+  status: AdWorkAssignmentStatus;
+  note: string;
+  confirmAssignmentChange: boolean;
+};
+
+type DriverCandidateFilters = {
+  city: string;
+  serviceArea: string;
+  availability: string;
+  status: string;
+  search: string;
+};
+
+type VehicleCandidateFilters = {
+  city: string;
+  vehicleType: string;
+  micSystem: string;
+  gpsDevice: string;
+  status: string;
+  search: string;
+};
+
 const adminSessionKey = "kootha-admin-session";
 const publicKeyHeader = ["api", "key"].join("");
 const adminRoles = new Set(["admin"]);
@@ -352,6 +402,21 @@ const emptyVehicleFilters: VehicleFilters = {
   status: "all",
   vehicleType: "all",
   gpsDeviceStatus: "all",
+  search: ""
+};
+const emptyDriverCandidateFilters: DriverCandidateFilters = {
+  city: "all",
+  serviceArea: "",
+  availability: "all",
+  status: "approved",
+  search: ""
+};
+const emptyVehicleCandidateFilters: VehicleCandidateFilters = {
+  city: "all",
+  vehicleType: "all",
+  micSystem: "all",
+  gpsDevice: "all",
+  status: "approved",
   search: ""
 };
 
@@ -413,7 +478,10 @@ const adWorkSelectColumns = [
   "customer_update_area_covered",
   "customer_update_completed",
   "customer_update_report_ready",
-  "updated_at"
+  "updated_at",
+  "assignment_status",
+  "assignment_note",
+  "assignment_updated_at"
 ].join(",");
 
 const adWorkDaySelectColumns = [
@@ -425,6 +493,19 @@ const adWorkDaySelectColumns = [
   "planning_status",
   "areas_to_cover",
   "day_note",
+  "created_at",
+  "updated_at"
+].join(",");
+
+const adWorkAssignmentSelectColumns = [
+  "id",
+  "ad_work_id",
+  "driver_id",
+  "vehicle_id",
+  "status",
+  "assignment_note",
+  "readiness_warnings",
+  "warning_confirmation",
   "created_at",
   "updated_at"
 ].join(",");
@@ -644,6 +725,19 @@ async function fetchAdminAdWorkDays(config: SupabaseConfig, session: AuthSession
   return await response.json() as AdWorkDayRecord[];
 }
 
+async function fetchAdWorkAssignments(config: SupabaseConfig, session: AuthSession, adWorkId?: string): Promise<AdWorkAssignmentRecord[]> {
+  const filter = adWorkId ? "&ad_work_id=eq." + encodeURIComponent(adWorkId) : "";
+  const response = await fetch(config.url + "/rest/v1/ad_work_assignments?select=" + adWorkAssignmentSelectColumns + filter + "&order=created_at.desc", {
+    headers: createHeaders(config, session.accessToken)
+  });
+
+  if (!response.ok) {
+    throw new Error("Could not load ad work assignments.");
+  }
+
+  return await response.json() as AdWorkAssignmentRecord[];
+}
+
 async function fetchDriverApplications(config: SupabaseConfig, session: AuthSession): Promise<DriverApplicationRecord[]> {
   const response = await fetch(config.url + "/rest/v1/driver_applications?select=" + driverApplicationSelectColumns + "&order=created_at.desc", {
     headers: createHeaders(config, session.accessToken)
@@ -834,6 +928,41 @@ async function syncAdWorkDays(
   }
 }
 
+async function saveAdWorkAssignment(
+  config: SupabaseConfig,
+  session: AuthSession,
+  adWorkId: string,
+  draft: AdWorkAssignmentDraft,
+  warnings: string[]
+) {
+  const response = await fetch(config.url + "/rest/v1/rpc/assign_driver_vehicle_to_ad_work", {
+    method: "POST",
+    headers: createHeaders(config, session.accessToken, true),
+    body: JSON.stringify({
+      p_ad_work_id: adWorkId,
+      p_driver_id: draft.driverId,
+      p_vehicle_id: draft.vehicleId,
+      p_status: draft.status,
+      p_assignment_note: draft.note.trim() || null,
+      p_readiness_warnings: warnings,
+      p_warning_confirmation: draft.confirmAssignmentChange
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error("Could not save assignment.");
+  }
+
+  return await response.json() as {
+    assignment_id: string;
+    ad_work_id: string;
+    driver_id: string;
+    vehicle_id: string;
+    status: AdWorkAssignmentStatus;
+    result_message: string;
+  }[];
+}
+
 async function updateAdminAdWorkDay(
   config: SupabaseConfig,
   session: AuthSession,
@@ -996,6 +1125,153 @@ function toAdWorkDraft(adWork: AdWorkRecord): AdWorkDraft {
     customerUpdateCompleted: adWork.customer_update_completed,
     customerUpdateReportReady: adWork.customer_update_report_ready
   };
+}
+
+function toAdWorkAssignmentDraft(assignment: AdWorkAssignmentRecord | null): AdWorkAssignmentDraft {
+  return {
+    driverId: assignment?.driver_id ?? "",
+    vehicleId: assignment?.vehicle_id ?? "",
+    status: assignment?.status ?? "not_assigned",
+    note: assignment?.assignment_note ?? "",
+    confirmAssignmentChange: false
+  };
+}
+
+function toDriverAssignmentCandidate(driver: DriverRecord): AssignmentDriverCandidate {
+  return {
+    id: driver.id,
+    name: driver.name,
+    phone: driver.phone,
+    city: driver.city,
+    serviceAreas: driver.service_areas ?? [],
+    approvalStatus: driver.approval_status,
+    onboardingStatus: driver.onboarding_status,
+    availabilityStatus: driver.availability_status_text
+  };
+}
+
+function toVehicleAssignmentCandidate(vehicle: VehicleRecord): AssignmentVehicleCandidate {
+  return {
+    id: vehicle.id,
+    vehicleNumber: vehicle.vehicle_number,
+    vehicleType: vehicle.vehicle_type,
+    city: vehicle.city,
+    active: vehicle.active,
+    onboardingStatus: vehicle.onboarding_status,
+    micSystemAvailable: vehicle.mic_system_available || vehicle.mic_available,
+    gpsDeviceAvailable: vehicle.gps_device_available,
+    gpsDeviceStatus: vehicle.gps_device_status
+  };
+}
+
+function toUniqueCitiesFromDrivers(drivers: DriverRecord[]) {
+  return [...new Set(drivers.map((driver) => driver.city ?? "").filter(Boolean))].sort();
+}
+
+function toUniqueCitiesFromVehicles(vehicles: VehicleRecord[]) {
+  return [...new Set(vehicles.map((vehicle) => vehicle.city ?? "").filter(Boolean))].sort();
+}
+
+function filterDriverCandidates(drivers: DriverRecord[], filters: DriverCandidateFilters) {
+  const search = filters.search.trim().toLowerCase();
+  const serviceArea = filters.serviceArea.trim().toLowerCase();
+
+  return drivers.filter((driver) => {
+    const candidate = toDriverAssignmentCandidate(driver);
+    if (!driverCanBeAssigned(candidate)) {
+      return false;
+    }
+
+    if (filters.city !== "all" && driver.city !== filters.city) {
+      return false;
+    }
+
+    if (filters.availability !== "all" && driver.availability_status_text !== filters.availability) {
+      return false;
+    }
+
+    if (filters.status !== "all" && driver.onboarding_status !== filters.status) {
+      return false;
+    }
+
+    if (serviceArea && !(driver.service_areas ?? []).some((area) => area.toLowerCase().includes(serviceArea))) {
+      return false;
+    }
+
+    if (!search) {
+      return true;
+    }
+
+    return [
+      driver.name,
+      driver.phone,
+      driver.city ?? "",
+      (driver.service_areas ?? []).join(" ")
+    ].join(" ").toLowerCase().includes(search);
+  });
+}
+
+function filterVehicleCandidates(vehicles: VehicleRecord[], filters: VehicleCandidateFilters) {
+  const search = filters.search.trim().toLowerCase();
+
+  return vehicles.filter((vehicle) => {
+    const candidate = toVehicleAssignmentCandidate(vehicle);
+    if (!vehicleCanBeAssigned(candidate)) {
+      return false;
+    }
+
+    if (filters.city !== "all" && vehicle.city !== filters.city) {
+      return false;
+    }
+
+    if (filters.vehicleType !== "all" && vehicle.vehicle_type !== filters.vehicleType) {
+      return false;
+    }
+
+    if (filters.status !== "all" && vehicle.onboarding_status !== filters.status) {
+      return false;
+    }
+
+    if (filters.micSystem === "yes" && !(vehicle.mic_system_available || vehicle.mic_available)) {
+      return false;
+    }
+
+    if (filters.micSystem === "no" && (vehicle.mic_system_available || vehicle.mic_available)) {
+      return false;
+    }
+
+    if (filters.gpsDevice !== "all" && vehicle.gps_device_status !== filters.gpsDevice && vehicle.gps_device_available !== filters.gpsDevice) {
+      return false;
+    }
+
+    if (!search) {
+      return true;
+    }
+
+    return [
+      vehicle.vehicle_number,
+      vehicle.city ?? "",
+      vehicle.gps_provider_name ?? "",
+      vehicle.gps_device_identifier ?? ""
+    ].join(" ").toLowerCase().includes(search);
+  });
+}
+
+function toAdWorkAssignmentReadiness(adWork: AdWorkRecord) {
+  return {
+    city: adWork.city,
+    areasToCover: adWork.areas_to_cover,
+    startDate: adWork.start_date,
+    endDate: adWork.end_date,
+    numberOfDays: adWork.number_of_days,
+    packageInterest: adWork.package_interest,
+    liveTrackingRequested: adWork.live_tracking_requested,
+    proofPlanSelected: adWork.photo_proof_needed || adWork.audio_video_proof_needed || adWork.area_update_needed || adWork.final_report_needed
+  };
+}
+
+function toAssignmentForAdWork(assignments: AdWorkAssignmentRecord[], adWorkId: string) {
+  return assignments.find((assignment) => assignment.ad_work_id === adWorkId) ?? null;
 }
 
 function toDayDraft(day: AdWorkDayRecord): DayDraft {
@@ -2180,6 +2456,391 @@ function VehiclesView({ config, session }: { config: SupabaseConfig; session: Au
   );
 }
 
+function M5SummaryCards({ config, session, adWorks }: { config: SupabaseConfig; session: AuthSession; adWorks: AdWorkRecord[] }) {
+  const [assignments, setAssignments] = useState<AdWorkAssignmentRecord[]>([]);
+  const [vehicles, setVehicles] = useState<VehicleRecord[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadSummary() {
+      const [assignmentRows, vehicleRows] = await Promise.all([
+        fetchAdWorkAssignments(config, session),
+        fetchVehicles(config, session)
+      ]);
+
+      if (!cancelled) {
+        setAssignments(assignmentRows);
+        setVehicles(vehicleRows);
+      }
+    }
+
+    loadSummary().catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [config, session]);
+
+  const cards = [
+    {
+      label: "Ad Works not assigned",
+      value: adWorks.filter((adWork) => {
+        const assignment = toAssignmentForAdWork(assignments, adWork.id);
+        return !assignment || assignment.status === "not_assigned" || assignment.status === "cancelled";
+      }).length
+    },
+    {
+      label: "Assigned Ad Works",
+      value: assignments.filter((assignment) => assignment.status === "assigned").length
+    },
+    {
+      label: "Ready for Execution",
+      value: assignments.filter((assignment) => assignment.status === "ready_for_execution").length
+    },
+    {
+      label: "Needs Review",
+      value: assignments.filter((assignment) => assignment.status === "needs_review").length
+    },
+    {
+      label: "Premium tracking requests needing review",
+      value: adWorks.filter((adWork) => {
+        const assignment = toAssignmentForAdWork(assignments, adWork.id);
+        const vehicle = assignment ? vehicles.find((item) => item.id === assignment.vehicle_id) : null;
+        return adWork.live_tracking_requested === "yes"
+          && (!assignment || assignment.status !== "ready_for_execution" || !vehicle || (vehicle.gps_device_available !== "yes" && vehicle.gps_device_status !== "planned" && vehicle.gps_device_status !== "installed"));
+      }).length
+    }
+  ];
+
+  return (
+    <div className="admin-summary-grid" aria-label="Driver and vehicle assignment summary">
+      {cards.map((card) => (
+        <div className="admin-summary-card" key={card.label}>
+          <span>{card.label}</span>
+          <strong>{card.value}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AdWorkAssignmentPanel({
+  config,
+  session,
+  adWork,
+  dayDrafts
+}: {
+  config: SupabaseConfig;
+  session: AuthSession;
+  adWork: AdWorkRecord;
+  dayDrafts: DayDraft[];
+}) {
+  const [drivers, setDrivers] = useState<DriverRecord[]>([]);
+  const [vehicles, setVehicles] = useState<VehicleRecord[]>([]);
+  const [assignment, setAssignment] = useState<AdWorkAssignmentRecord | null>(null);
+  const [draft, setDraft] = useState<AdWorkAssignmentDraft>(() => toAdWorkAssignmentDraft(null));
+  const [driverFilters, setDriverFilters] = useState<DriverCandidateFilters>(emptyDriverCandidateFilters);
+  const [vehicleFilters, setVehicleFilters] = useState<VehicleCandidateFilters>(emptyVehicleCandidateFilters);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [message, setMessage] = useState("");
+
+  const filteredDrivers = useMemo(() => filterDriverCandidates(drivers, driverFilters), [drivers, driverFilters]);
+  const filteredVehicles = useMemo(() => filterVehicleCandidates(vehicles, vehicleFilters), [vehicles, vehicleFilters]);
+  const selectedDriver = drivers.find((driver) => driver.id === draft.driverId) ?? null;
+  const selectedVehicle = vehicles.find((vehicle) => vehicle.id === draft.vehicleId) ?? null;
+  const readiness = buildAssignmentReadiness({
+    adWork: toAdWorkAssignmentReadiness(adWork),
+    driver: selectedDriver ? toDriverAssignmentCandidate(selectedDriver) : null,
+    vehicle: selectedVehicle ? toVehicleAssignmentCandidate(selectedVehicle) : null,
+    requestedStatus: draft.status
+  });
+  const driverCityOptions = useMemo(() => toUniqueCitiesFromDrivers(drivers), [drivers]);
+  const vehicleCityOptions = useMemo(() => toUniqueCitiesFromVehicles(vehicles), [vehicles]);
+
+  async function loadAssignmentData() {
+    setIsLoading(true);
+    setMessage("");
+
+    try {
+      const [driverRows, vehicleRows, assignmentRows] = await Promise.all([
+        fetchDrivers(config, session),
+        fetchVehicles(config, session),
+        fetchAdWorkAssignments(config, session, adWork.id)
+      ]);
+      const currentAssignment = assignmentRows[0] ?? null;
+      setDrivers(driverRows);
+      setVehicles(vehicleRows);
+      setAssignment(currentAssignment);
+      setDraft(toAdWorkAssignmentDraft(currentAssignment));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not load assignment data.");
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadAssignmentData();
+  }, [adWork.id]);
+
+  async function handleSaveAssignment() {
+    if (!draft.driverId || !draft.vehicleId) {
+      setMessage("Choose an approved driver and approved vehicle before saving.");
+      return;
+    }
+
+    setIsSaving(true);
+    setMessage("");
+
+    try {
+      const result = await saveAdWorkAssignment(config, session, adWork.id, draft, readiness.warnings);
+      await loadAssignmentData();
+      setMessage(result[0]?.result_message ?? "Assignment saved.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not save assignment.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  return (
+    <section className="form-section" aria-labelledby="assignment-title">
+      <div className="panel-heading">
+        <div>
+          <h3 id="assignment-title">Assign Driver and Vehicle</h3>
+          <p>One approved driver and one approved vehicle apply to the full Ad Work.</p>
+        </div>
+        <span className="status-pill">{getAdWorkAssignmentStatusLabel(draft.status)}</span>
+      </div>
+
+      {message && <p className="form-status admin-message" role="status">{message}</p>}
+
+      <div className="form-grid">
+        <label>
+          Driver search
+          <input
+            value={driverFilters.search}
+            placeholder="Name or mobile"
+            onChange={(event) => setDriverFilters((current) => ({ ...current, search: event.target.value }))}
+          />
+        </label>
+        <label>
+          Driver city/town
+          <select
+            value={driverFilters.city}
+            onChange={(event) => setDriverFilters((current) => ({ ...current, city: event.target.value }))}
+          >
+            <option value="all">All cities</option>
+            {driverCityOptions.map((city) => <option key={city} value={city}>{city}</option>)}
+          </select>
+        </label>
+        <label>
+          Service Area
+          <input
+            value={driverFilters.serviceArea}
+            placeholder="Area name"
+            onChange={(event) => setDriverFilters((current) => ({ ...current, serviceArea: event.target.value }))}
+          />
+        </label>
+        <label>
+          Availability
+          <select
+            value={driverFilters.availability}
+            onChange={(event) => setDriverFilters((current) => ({ ...current, availability: event.target.value }))}
+          >
+            <option value="all">All availability</option>
+            {driverAvailabilityStatusOptions.map((status) => (
+              <option key={status} value={status}>{getDriverAvailabilityStatusLabel(status)}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      <div className="form-grid">
+        <label>
+          Assign Driver
+          <select
+            value={draft.driverId}
+            onChange={(event) => setDraft((current) => ({ ...current, driverId: event.target.value }))}
+          >
+            <option value="">Choose approved driver</option>
+            {filteredDrivers.map((driver) => (
+              <option key={driver.id} value={driver.id}>
+                {driver.name} - {driver.phone} - {driver.city || "City not set"}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Vehicle search
+          <input
+            value={vehicleFilters.search}
+            placeholder="Vehicle number"
+            onChange={(event) => setVehicleFilters((current) => ({ ...current, search: event.target.value }))}
+          />
+        </label>
+        <label>
+          Vehicle city/town
+          <select
+            value={vehicleFilters.city}
+            onChange={(event) => setVehicleFilters((current) => ({ ...current, city: event.target.value }))}
+          >
+            <option value="all">All cities</option>
+            {vehicleCityOptions.map((city) => <option key={city} value={city}>{city}</option>)}
+          </select>
+        </label>
+        <label>
+          Vehicle type
+          <select
+            value={vehicleFilters.vehicleType}
+            onChange={(event) => setVehicleFilters((current) => ({ ...current, vehicleType: event.target.value }))}
+          >
+            <option value="all">All vehicle types</option>
+            {vehicleTypeOptions.map((option) => (
+              <option key={option} value={option}>{vehicleTypeLabels[option]}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      <div className="form-grid">
+        <label>
+          Mic System
+          <select
+            value={vehicleFilters.micSystem}
+            onChange={(event) => setVehicleFilters((current) => ({ ...current, micSystem: event.target.value }))}
+          >
+            <option value="all">All</option>
+            <option value="yes">Available</option>
+            <option value="no">Not Available</option>
+          </select>
+        </label>
+        <label>
+          Vehicle GPS Device
+          <select
+            value={vehicleFilters.gpsDevice}
+            onChange={(event) => setVehicleFilters((current) => ({ ...current, gpsDevice: event.target.value }))}
+          >
+            <option value="all">All device answers</option>
+            {yesNoNotSureOptions.map((option) => (
+              <option key={option} value={option}>{yesNoNotSureLabels[option]}</option>
+            ))}
+            {vehicleGpsDeviceStatusOptions.map((status) => (
+              <option key={status} value={status}>{getVehicleGpsDeviceStatusLabel(status)}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Assign Vehicle
+          <select
+            value={draft.vehicleId}
+            onChange={(event) => setDraft((current) => ({ ...current, vehicleId: event.target.value }))}
+          >
+            <option value="">Choose approved vehicle</option>
+            {filteredVehicles.map((vehicle) => (
+              <option key={vehicle.id} value={vehicle.id}>
+                {vehicle.vehicle_number} - {vehicleTypeLabels[vehicle.vehicle_type]} - {vehicle.city || "City not set"}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Assignment status
+          <select
+            value={draft.status}
+            onChange={(event) => setDraft((current) => ({ ...current, status: event.target.value as AdWorkAssignmentStatus }))}
+          >
+            {adWorkAssignmentStatusOptions.map((status) => (
+              <option key={status} value={status}>{getAdWorkAssignmentStatusLabel(status)}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      <div className="lead-detail-grid">
+        <div>
+          <dt>Driver details</dt>
+          <dd>{selectedDriver ? selectedDriver.name + " - " + selectedDriver.phone + " - " + (selectedDriver.city || "City not set") : "Not selected"}</dd>
+        </div>
+        <div>
+          <dt>Driver status</dt>
+          <dd>{selectedDriver ? getDriverStatusLabel(selectedDriver.onboarding_status) + " / " + getDriverAvailabilityStatusLabel(selectedDriver.availability_status_text) : "Not selected"}</dd>
+        </div>
+        <div>
+          <dt>Service Area</dt>
+          <dd>{selectedDriver ? (selectedDriver.service_areas ?? []).join(", ") || "Not provided" : "Not selected"}</dd>
+        </div>
+        <div>
+          <dt>Vehicle details</dt>
+          <dd>{selectedVehicle ? selectedVehicle.vehicle_number + " - " + vehicleTypeLabels[selectedVehicle.vehicle_type] + " - " + (selectedVehicle.city || "City not set") : "Not selected"}</dd>
+        </div>
+        <div>
+          <dt>Vehicle status</dt>
+          <dd>{selectedVehicle ? getVehicleStatusLabel(selectedVehicle.onboarding_status) : "Not selected"}</dd>
+        </div>
+        <div>
+          <dt>Vehicle GPS Device</dt>
+          <dd>{selectedVehicle ? yesNoNotSureLabels[selectedVehicle.gps_device_available] + " / " + getVehicleGpsDeviceStatusLabel(selectedVehicle.gps_device_status) : "Not selected"}</dd>
+        </div>
+      </div>
+
+      <label>
+        Assignment note
+        <textarea
+          value={draft.note}
+          maxLength={1000}
+          onChange={(event) => setDraft((current) => ({ ...current, note: event.target.value }))}
+        />
+      </label>
+
+      <div className="checkbox-grid">
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
+            checked={draft.confirmAssignmentChange}
+            onChange={(event) => setDraft((current) => ({ ...current, confirmAssignmentChange: event.target.checked }))}
+          />
+          <span>Confirm assignment change</span>
+        </label>
+      </div>
+
+      <div className="lead-submitted-copy">
+        <h3>Readiness checklist</h3>
+        {readiness.checks.map((check) => (
+          <p key={check.label}>{check.passed ? "OK" : "Needed"} - {check.label}</p>
+        ))}
+        <h3>Warnings</h3>
+        {readiness.warnings.length === 0 ? (
+          <p>No warnings.</p>
+        ) : (
+          readiness.warnings.map((warning) => <p key={warning}>{warning}</p>)
+        )}
+      </div>
+
+      {adWork.number_of_days > 1 && (
+        <div className="lead-submitted-copy">
+          <h3>Multi-day assignment</h3>
+          <p>Same driver and vehicle will be used for all planned days.</p>
+          {dayDrafts.map((day, index) => (
+            <p key={day.id}>Day {index + 1}: {formatDate(day.workDate)} - {day.areasToCover || adWork.areas_to_cover || "Areas not set"}</p>
+          ))}
+        </div>
+      )}
+
+      <div className="admin-action-row">
+        <button className="secondary-button" type="button" onClick={loadAssignmentData} disabled={isLoading}>
+          {isLoading ? "Loading..." : "Refresh assignment"}
+        </button>
+        <button className="primary-button" type="button" onClick={handleSaveAssignment} disabled={isSaving}>
+          {isSaving ? "Saving..." : "Save assignment"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function AdminShell({
   productName,
   children,
@@ -2631,6 +3292,7 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
 
         {activeView === "dashboard" && <DashboardCards adWorks={adWorks} />}
         {activeView === "dashboard" && <M4SummaryCards config={config} session={session} />}
+        {activeView === "dashboard" && <M5SummaryCards config={config} session={session} adWorks={adWorks} />}
         {activeView === "enquiries" && <EnquirySummaryCards enquiries={enquiries} />}
 
         {loadError && <p className="form-alert admin-message" role="alert">{loadError}</p>}
@@ -3293,6 +3955,13 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
                       )}
                     </div>
                   </section>
+
+                  <AdWorkAssignmentPanel
+                    config={config}
+                    session={session}
+                    adWork={selectedAdWork}
+                    dayDrafts={dayDrafts}
+                  />
 
                   <section className="form-section" aria-labelledby="proof-plan-title">
                     <h3 id="proof-plan-title">Proof Needed</h3>
