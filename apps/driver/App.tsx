@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import * as ImagePicker from "expo-image-picker";
 import {
   adWorkExecutionDayStatusLabels,
   businessLabels,
@@ -6,12 +7,15 @@ import {
   canResumeWork,
   canStartWork,
   canTakeBreak,
+  canUploadPhotoProof,
   executionProofNoteTypeLabels,
   executionProofNoteTypeOptions,
   initialDriverApplication,
+  proofPhotoBucketName,
   resolveProductName,
   validateDriverApplication,
   validateDriverExecutionAction,
+  validatePhotoProofInput,
   vehicleOwnershipLabels,
   vehicleOwnershipOptions,
   vehicleTypeLabels,
@@ -29,6 +33,7 @@ import type {
   YesNoNotSure
 } from "@kootha/shared";
 import {
+  Image,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -44,6 +49,14 @@ const productName = resolveProductName({
 });
 const driverLabels = businessLabels.driver;
 const publicKeyHeader = ["api", "key"].join("");
+
+type ProofUploadSlot = {
+  proof_upload_id: string;
+  file_bucket: string;
+  file_path: string;
+  upload_status: string;
+  result_message: string;
+};
 
 type DriverWorkRow = {
   ad_work_id: string;
@@ -175,6 +188,119 @@ async function saveWorkAction(input: {
   }
 }
 
+function encodeStoragePath(path: string): string {
+  return path.split("/").map((segment) => encodeURIComponent(segment)).join("/");
+}
+
+function guessProofPhotoMimeType(uri: string): string {
+  const normalizedUri = uri.toLowerCase().split("?")[0] ?? "";
+
+  if (normalizedUri.endsWith(".png")) {
+    return "image/png";
+  }
+
+  if (normalizedUri.endsWith(".webp")) {
+    return "image/webp";
+  }
+
+  return "image/jpeg";
+}
+
+async function requestProofUploadSlot(input: {
+  mobileNumber: string;
+  workCode: string;
+  dayId: string;
+  proofType: ExecutionProofNoteType;
+  areaPlaceName: string;
+  note: string;
+  mimeType: string;
+  fileSize: number;
+}): Promise<ProofUploadSlot> {
+  const config = getDriverSupabaseConfig();
+
+  if (!config) {
+    throw new Error("Driver work access is not configured in this environment.");
+  }
+
+  const response = await fetch(config.url + "/rest/v1/rpc/request_driver_proof_upload", {
+    method: "POST",
+    headers: createPublicHeaders(config, true),
+    body: JSON.stringify({
+      p_mobile: input.mobileNumber.trim(),
+      p_work_code: input.workCode.trim(),
+      p_ad_work_day_id: input.dayId,
+      p_proof_type: input.proofType,
+      p_area_place_name: input.areaPlaceName.trim(),
+      p_note_text: input.note.trim(),
+      p_file_mime_type: input.mimeType,
+      p_file_size_bytes: input.fileSize
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error("Could not prepare photo proof upload.");
+  }
+
+  const slots = await response.json() as ProofUploadSlot[];
+  const slot = slots[0];
+
+  if (!slot?.proof_upload_id || slot.file_bucket !== proofPhotoBucketName) {
+    throw new Error("Could not prepare photo proof upload.");
+  }
+
+  return slot;
+}
+
+async function uploadProofPhoto(input: { slot: ProofUploadSlot; photoUri: string; mimeType: string }) {
+  const config = getDriverSupabaseConfig();
+
+  if (!config) {
+    throw new Error("Driver work access is not configured in this environment.");
+  }
+
+  const photoResponse = await fetch(input.photoUri);
+  if (!photoResponse.ok) {
+    throw new Error("Could not read selected photo.");
+  }
+
+  const photoBlob = await photoResponse.blob();
+  const response = await fetch(config.url + "/storage/v1/object/" + input.slot.file_bucket + "/" + encodeStoragePath(input.slot.file_path), {
+    method: "POST",
+    headers: {
+      ...createPublicHeaders(config),
+      "Content-Type": input.mimeType,
+      "x-upsert": "false"
+    },
+    body: photoBlob
+  });
+
+  if (!response.ok) {
+    throw new Error("Could not upload photo proof.");
+  }
+}
+
+async function completeProofUpload(input: { mobileNumber: string; workCode: string; proofUploadId: string }) {
+  const config = getDriverSupabaseConfig();
+
+  if (!config) {
+    throw new Error("Driver work access is not configured in this environment.");
+  }
+
+  const response = await fetch(config.url + "/rest/v1/rpc/complete_driver_proof_upload", {
+    method: "POST",
+    headers: createPublicHeaders(config, true),
+    body: JSON.stringify({
+      p_mobile: input.mobileNumber.trim(),
+      p_work_code: input.workCode.trim(),
+      p_proof_upload_id: input.proofUploadId
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error("Could not finish photo proof upload.");
+  }
+}
+
 function OptionButton<T extends string>({
   label,
   value,
@@ -262,6 +388,8 @@ export function App() {
   const [proofNote, setProofNote] = useState("");
   const [proofArea, setProofArea] = useState("");
   const [proofType, setProofType] = useState<ExecutionProofNoteType>("area_covered");
+  const [proofPhoto, setProofPhoto] = useState<ImagePicker.ImagePickerAsset | null>(null);
+  const [isProofSubmitting, setIsProofSubmitting] = useState(false);
   const configured = useMemo(() => Boolean(getDriverSupabaseConfig()), []);
   const today = new Date().toISOString().slice(0, 10);
   const currentWork = workRows.find((row) => row.planned_date === today)
@@ -345,6 +473,80 @@ export function App() {
       setWorkMessage(error instanceof Error ? error.message : "Could not save work update.");
     } finally {
       setIsWorkLoading(false);
+    }
+  }
+
+  async function handleChooseProofPhoto() {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+    if (!permission.granted) {
+      setWorkMessage("Photo access is needed to choose proof.");
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      allowsEditing: false,
+      allowsMultipleSelection: false,
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.75
+    });
+
+    if (!result.canceled) {
+      setProofPhoto(result.assets[0] ?? null);
+      setWorkMessage("");
+    }
+  }
+
+  async function handleSubmitPhotoProof() {
+    if (!currentWork || !proofPhoto) {
+      setWorkMessage("Choose a photo first.");
+      return;
+    }
+
+    const photoResponse = await fetch(proofPhoto.uri);
+    if (!photoResponse.ok) {
+      setWorkMessage("Could not read selected photo.");
+      return;
+    }
+
+    const photoBlob = await photoResponse.blob();
+    const mimeType = proofPhoto.mimeType || photoBlob.type || guessProofPhotoMimeType(proofPhoto.uri);
+    const fileSize = proofPhoto.fileSize ?? photoBlob.size;
+    const validationErrors = validatePhotoProofInput(currentStatus, {
+      note: proofNote,
+      areaPlaceName: proofArea,
+      mimeType,
+      fileSize
+    });
+
+    if (validationErrors.length > 0) {
+      setWorkMessage(validationErrors.join(" "));
+      return;
+    }
+
+    try {
+      setIsProofSubmitting(true);
+      const slot = await requestProofUploadSlot({
+        mobileNumber,
+        workCode,
+        dayId: currentWork.ad_work_day_id,
+        proofType,
+        areaPlaceName: proofArea,
+        note: proofNote,
+        mimeType,
+        fileSize
+      });
+      await uploadProofPhoto({ slot, photoUri: proofPhoto.uri, mimeType });
+      await completeProofUpload({ mobileNumber, workCode, proofUploadId: slot.proof_upload_id });
+      setProofPhoto(null);
+      setProofNote("");
+      setProofArea("");
+      setWorkMessage(driverLabels.proofSent + ".");
+      await refreshAssignedWork();
+    } catch (error) {
+      setWorkMessage(error instanceof Error ? error.message : "Could not send proof.");
+    } finally {
+      setIsProofSubmitting(false);
     }
   }
 
@@ -445,7 +647,7 @@ export function App() {
             />
             <PrimaryButton label={driverLabels.endWork} disabled={!canEndWork(currentStatus) || isWorkLoading} onPress={() => void handleWorkAction("end")} />
 
-            <Text style={styles.label}>Proof Note type</Text>
+            <Text style={styles.label}>Proof type</Text>
             <View style={styles.optionGrid}>
               {executionProofNoteTypeOptions.map((option) => (
                 <OptionButton
@@ -457,7 +659,7 @@ export function App() {
                 />
               ))}
             </View>
-            <Text style={styles.label}>Area/place name</Text>
+            <Text style={styles.label}>{driverLabels.areaOrPlaceName}</Text>
             <TextInput
               style={styles.input}
               value={proofArea}
@@ -475,6 +677,23 @@ export function App() {
               placeholder="Write a simple proof note"
             />
             <SecondaryButton label={driverLabels.addProofNote} disabled={isWorkLoading} onPress={() => void handleWorkAction("add_proof_note")} />
+
+            <View style={styles.proofUploadBox}>
+              <Text style={styles.sectionTitle}>{driverLabels.uploadPhotoProof}</Text>
+              <Text style={styles.body}>Choose one photo after work is Running or On Break.</Text>
+              <SecondaryButton label={proofPhoto ? "Change Photo" : "Choose Photo"} disabled={isProofSubmitting} onPress={() => void handleChooseProofPhoto()} />
+              {proofPhoto ? (
+                <View style={styles.photoPreviewBox}>
+                  <Image source={{ uri: proofPhoto.uri }} style={styles.photoPreview} />
+                  <Text style={styles.body}>{proofPhoto.fileName || "Selected photo"}</Text>
+                </View>
+              ) : null}
+              <PrimaryButton
+                label={isProofSubmitting ? "Submitting..." : driverLabels.submitProof}
+                disabled={!canUploadPhotoProof(currentStatus) || isProofSubmitting || !proofPhoto}
+                onPress={() => void handleSubmitPhotoProof()}
+              />
+            </View>
 
             <Text style={styles.label}>{driverLabels.issueReported}</Text>
             <TextInput
@@ -780,6 +999,23 @@ const styles = StyleSheet.create({
     alignItems: "center",
     flexDirection: "row",
     gap: 12
+  },
+  proofUploadBox: {
+    borderWidth: 1,
+    borderColor: "#eadfce",
+    borderRadius: 8,
+    backgroundColor: "#fffaf1",
+    padding: 12,
+    gap: 10
+  },
+  photoPreviewBox: {
+    gap: 8
+  },
+  photoPreview: {
+    width: "100%",
+    height: 220,
+    borderRadius: 8,
+    backgroundColor: "#eadfce"
   },
   consentRow: {
     flexDirection: "row",

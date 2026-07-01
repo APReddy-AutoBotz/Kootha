@@ -86,7 +86,11 @@ describe("M2 admin lead management", () => {
     const combinedPackages = `${packageJson}\n${webPackageJson}\n${driverPackageJson}`.toLowerCase();
     const webSource = `${webAppSource}\n${webAdminSource}`.toLowerCase();
 
-    expect(driverConfig).toContain('"permissions": []');
+    expect(driverConfig).not.toContain("ACCESS_FINE_LOCATION");
+    expect(driverConfig).not.toContain("ACCESS_COARSE_LOCATION");
+    expect(driverConfig).not.toContain("ACCESS_BACKGROUND_LOCATION");
+    expect(driverConfig).not.toContain("RECORD_AUDIO");
+    expect(driverConfig).not.toContain("CAMERA");
     expect(combinedPackages).not.toContain("expo-location");
     expect(webSource).not.toContain("maps.googleapis");
     expect(webSource).not.toContain("google maps");
@@ -121,7 +125,7 @@ describe("M2 admin lead management", () => {
     expect(tasks).toMatch(/## Milestone M4 - Driver and Vehicle Onboarding[\s\S]*- \[x\]/);
     expect(tasks).toMatch(/## Milestone M5 - Driver and Vehicle Assignment to Ad Work[\s\S]*- \[x\]/);
     expect(tasks).toMatch(/## Milestone M6 - Ad Work Execution Without GPS[\s\S]*- \[x\]/);
-    expect(tasks).toMatch(/## Milestone M7 - Proof Upload and Customer Update Sharing[\s\S]*- \[ \]/);
-    expect(tasks).toMatch(/## Milestone M8 - Security, Privacy, and Release Readiness[\s\S]*- \[ \]/);
+    expect(tasks).toMatch(/## Milestone M7 - Proof Upload and Customer Update Sharing[\s\S]*- \[x\]/);
+    expect(tasks).toMatch(/## Milestone M8 - Final Proof Summary and Campaign Closure[\s\S]*- \[ \]/);
   });
 });

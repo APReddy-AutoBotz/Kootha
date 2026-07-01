@@ -62,8 +62,8 @@ Status values:
 
 ## Milestone M7 - Proof Upload and Customer Update Sharing
 
-- [ ] Build secure proof upload and manual customer update sharing without live maps, payment gateway, or provider auto-send.
+- [x] Build secure proof upload and manual customer update sharing without live maps, payment gateway, or provider auto-send.
 
-## Milestone M8 - Security, Privacy, and Release Readiness
+## Milestone M8 - Final Proof Summary and Campaign Closure
 
-- [ ] Verify access control, privacy, no hidden audio, no exposed secrets, and pilot readiness.
+- [ ] Build final proof summary and campaign closure without GPS tracking, provider auto-send, payments, customer app, iOS app, or PWA.

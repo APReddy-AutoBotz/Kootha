@@ -118,10 +118,14 @@ describe("M6 ad work execution without GPS", () => {
     expect(m6Migration).toContain("'draft'");
   });
 
-  it("does not add location, media upload, report, payment, or provider behavior", () => {
+  it("does not add GPS, report, payment, or provider behavior", () => {
     const source = (driverAppSource + "\n" + webAdminSource + "\n" + packageJson + "\n" + webPackageJson + "\n" + driverPackageJson + "\n" + m6Migration).toLowerCase();
 
-    expect(driverConfig).toContain('"permissions": []');
+    expect(driverConfig).not.toContain("ACCESS_FINE_LOCATION");
+    expect(driverConfig).not.toContain("ACCESS_COARSE_LOCATION");
+    expect(driverConfig).not.toContain("ACCESS_BACKGROUND_LOCATION");
+    expect(driverConfig).not.toContain("RECORD_AUDIO");
+    expect(driverConfig).not.toContain("CAMERA");
     expect(source).not.toContain("expo-location");
     expect(source).not.toContain("access_background_location");
     expect(source).not.toContain("maps.googleapis");
@@ -130,10 +134,7 @@ describe("M6 ad work execution without GPS", () => {
     expect(source).not.toContain("leaflet");
     expect(source).not.toContain("tracking_sessions");
     expect(source).not.toContain("location_points");
-    expect(source).not.toContain("proof_uploads");
-    expect(source).not.toContain("file_path");
     expect(source).not.toContain("expo-camera");
-    expect(source).not.toContain("expo-image-picker");
     expect(source).not.toContain("expo-av");
     expect(source).not.toContain("camera");
     expect(source).not.toContain("microphone");
@@ -186,7 +187,7 @@ describe("M6 ad work execution without GPS", () => {
   it("marks M6 complete and keeps future milestones open", () => {
     expect(tasks).toMatch(/## Milestone M5 - Driver and Vehicle Assignment to Ad Work[\s\S]*- \[x\]/);
     expect(tasks).toMatch(/## Milestone M6 - Ad Work Execution Without GPS[\s\S]*- \[x\]/);
-    expect(tasks).toMatch(/## Milestone M7 - Proof Upload and Customer Update Sharing[\s\S]*- \[ \]/);
-    expect(tasks).toMatch(/## Milestone M8 - Security, Privacy, and Release Readiness[\s\S]*- \[ \]/);
+    expect(tasks).toMatch(/## Milestone M7 - Proof Upload and Customer Update Sharing[\s\S]*- \[x\]/);
+    expect(tasks).toMatch(/## Milestone M8 - Final Proof Summary and Campaign Closure[\s\S]*- \[ \]/);
   });
 });

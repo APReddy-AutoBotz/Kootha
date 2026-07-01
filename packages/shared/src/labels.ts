@@ -48,7 +48,12 @@ export const businessLabels = {
     workCompleted: "Work Completed",
     issueReported: "Issue Reported",
     workCode: "Work Code",
-    assignedWork: "Assigned Work"
+    assignedWork: "Assigned Work",
+    uploadPhotoProof: "Upload Photo Proof",
+    areaOrPlaceName: "Area or Place Name",
+    whatHappened: "What happened?",
+    submitProof: "Submit Proof",
+    proofSent: "Proof Sent"
   },
   customer: {
     home: "Home",
@@ -90,7 +95,12 @@ export const businessLabels = {
     executionRelease: "Execution Release",
     workAccessCode: "Work Access Code",
     executionTimeline: "Execution Timeline",
-    proofNotes: "Proof Notes"
+    proofNotes: "Proof Notes",
+    proofUploads: "Proof Uploads",
+    proofReview: "Proof Review",
+    copyMessage: "Copy Message",
+    markAsShared: "Mark as Shared",
+    customerUpdate: "Customer Update"
   }
 } as const;
 

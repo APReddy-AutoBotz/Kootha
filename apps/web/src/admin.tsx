@@ -7,6 +7,7 @@ import {
   buildAssignmentReadiness,
   buildExecutionReleaseReadiness,
   businessLabels,
+  customerUpdateSharingMethodOptions,
   driverCanBeAssigned,
   driverApplicationStatusOptions,
   driverAvailabilityStatusOptions,
@@ -21,13 +22,18 @@ import {
   getEnquiryStatusLabel,
   getExecutionProofNoteTypeLabel,
   getExecutionReleaseStatusLabel,
+  getCustomerUpdateSharingMethodLabel,
+  getCustomerUpdateSharingStatusLabel,
   getPlannedEndDate,
+  getProofReviewStatusLabel,
+  getProofUploadStatusLabel,
   getVehicleGpsDeviceStatusLabel,
   getVehicleStatusLabel,
   liveTrackingNeedLabels,
   liveTrackingNeedOptions,
   packageInterestLabels,
   packageInterestOptions,
+  proofReviewStatusOptions,
   executionProofNoteTypeOptions,
   vehicleCanBeAssigned,
   vehicleGpsDeviceStatusOptions,
@@ -43,6 +49,8 @@ import type {
   AdWorkStatus,
   AssignmentDriverCandidate,
   AssignmentVehicleCandidate,
+  CustomerUpdateSharingMethod,
+  CustomerUpdateSharingStatus,
   DriverApplicationStatus,
   DriverAvailabilityStatus,
   DriverStatus,
@@ -51,6 +59,8 @@ import type {
   ExecutionReleaseStatus,
   LiveTrackingNeed,
   PackageInterest,
+  ProofReviewStatus,
+  ProofUploadStatus,
   VehicleGpsDeviceStatus,
   VehicleStatus,
   VehicleType,
@@ -267,6 +277,29 @@ type AdWorkAssignmentRecord = {
 };
 
 
+
+type ProofUploadRecord = {
+  id: string;
+  ad_work_id: string | null;
+  ad_work_day_id: string | null;
+  assignment_id: string | null;
+  driver_id: string | null;
+  vehicle_id: string | null;
+  proof_type: ExecutionProofNoteType;
+  area_place_name: string | null;
+  note_text: string | null;
+  file_bucket: string;
+  file_path: string;
+  file_mime_type: string | null;
+  file_size_bytes: number | null;
+  upload_status: ProofUploadStatus;
+  review_status: ProofReviewStatus;
+  admin_review_note: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+  updated_at: string | null;
+};
+
 type ExecutionProofNoteRecord = {
   id: string;
   ad_work_id: string;
@@ -286,7 +319,12 @@ type CustomerUpdateRecord = {
   message: string;
   channel: string;
   sent_status: string;
+  sharing_status: CustomerUpdateSharingStatus;
+  sharing_method: CustomerUpdateSharingMethod | null;
+  sharing_note: string | null;
+  shared_at: string | null;
   created_at: string;
+  updated_at: string | null;
 };
 
 type DriverApplicationRecord = {
@@ -576,6 +614,29 @@ const adWorkAssignmentSelectColumns = [
   "updated_at"
 ].join(",");
 
+
+const proofUploadSelectColumns = [
+  "id",
+  "ad_work_id",
+  "ad_work_day_id",
+  "assignment_id",
+  "driver_id",
+  "vehicle_id",
+  "proof_type",
+  "area_place_name",
+  "note_text",
+  "file_bucket",
+  "file_path",
+  "file_mime_type",
+  "file_size_bytes",
+  "upload_status",
+  "review_status",
+  "admin_review_note",
+  "reviewed_at",
+  "created_at",
+  "updated_at"
+].join(",");
+
 const executionProofNoteSelectColumns = [
   "id",
   "ad_work_id",
@@ -595,7 +656,12 @@ const customerUpdateSelectColumns = [
   "message",
   "channel",
   "sent_status",
-  "created_at"
+  "sharing_status",
+  "sharing_method",
+  "sharing_note",
+  "shared_at",
+  "created_at",
+  "updated_at"
 ].join(",");
 
 const driverApplicationSelectColumns = [
@@ -686,6 +752,11 @@ function createHeaders(config: SupabaseConfig, accessToken?: string, includeJson
   }
 
   return headers;
+}
+
+
+function encodeStoragePath(path: string): string {
+  return path.split("/").map((segment) => encodeURIComponent(segment)).join("/");
 }
 
 function readStoredSession(): AuthSession | null {
@@ -826,6 +897,20 @@ async function fetchAdWorkAssignments(config: SupabaseConfig, session: AuthSessi
   return await response.json() as AdWorkAssignmentRecord[];
 }
 
+
+async function fetchAdminProofUploads(config: SupabaseConfig, session: AuthSession, adWorkId?: string): Promise<ProofUploadRecord[]> {
+  const filter = adWorkId ? "&ad_work_id=eq." + encodeURIComponent(adWorkId) : "";
+  const response = await fetch(config.url + "/rest/v1/proof_uploads?select=" + proofUploadSelectColumns + filter + "&order=created_at.desc", {
+    headers: createHeaders(config, session.accessToken)
+  });
+
+  if (!response.ok) {
+    throw new Error("Could not load proof uploads.");
+  }
+
+  return await response.json() as ProofUploadRecord[];
+}
+
 async function fetchExecutionProofNotes(config: SupabaseConfig, session: AuthSession, adWorkId: string): Promise<ExecutionProofNoteRecord[]> {
   const response = await fetch(config.url + "/rest/v1/execution_proof_notes?select=" + executionProofNoteSelectColumns + "&ad_work_id=eq." + encodeURIComponent(adWorkId) + "&order=created_at.desc", {
     headers: createHeaders(config, session.accessToken)
@@ -838,8 +923,9 @@ async function fetchExecutionProofNotes(config: SupabaseConfig, session: AuthSes
   return await response.json() as ExecutionProofNoteRecord[];
 }
 
-async function fetchCustomerUpdates(config: SupabaseConfig, session: AuthSession, adWorkId: string): Promise<CustomerUpdateRecord[]> {
-  const response = await fetch(config.url + "/rest/v1/customer_updates?select=" + customerUpdateSelectColumns + "&ad_work_id=eq." + encodeURIComponent(adWorkId) + "&order=created_at.desc", {
+async function fetchCustomerUpdates(config: SupabaseConfig, session: AuthSession, adWorkId?: string): Promise<CustomerUpdateRecord[]> {
+  const filter = adWorkId ? "&ad_work_id=eq." + encodeURIComponent(adWorkId) : "";
+  const response = await fetch(config.url + "/rest/v1/customer_updates?select=" + customerUpdateSelectColumns + filter + "&order=created_at.desc", {
     headers: createHeaders(config, session.accessToken)
   });
 
@@ -848,6 +934,72 @@ async function fetchCustomerUpdates(config: SupabaseConfig, session: AuthSession
   }
 
   return await response.json() as CustomerUpdateRecord[];
+}
+
+
+async function fetchProofPhotoSignedUrl(config: SupabaseConfig, session: AuthSession, bucket: string, path: string): Promise<string> {
+  const response = await fetch(config.url + "/storage/v1/object/sign/" + bucket + "/" + encodeStoragePath(path), {
+    method: "POST",
+    headers: createHeaders(config, session.accessToken, true),
+    body: JSON.stringify({ expiresIn: 300 })
+  });
+
+  if (!response.ok) {
+    throw new Error("Could not open proof photo preview.");
+  }
+
+  const payload = await response.json() as { signedURL?: string; signedUrl?: string };
+  const signedPath = payload.signedURL ?? payload.signedUrl;
+
+  if (!signedPath) {
+    throw new Error("Could not open proof photo preview.");
+  }
+
+  return signedPath.startsWith("http") ? signedPath : config.url + "/storage/v1" + signedPath;
+}
+
+async function reviewProofUpload(
+  config: SupabaseConfig,
+  session: AuthSession,
+  proofUploadId: string,
+  reviewStatus: ProofReviewStatus,
+  reviewNote: string
+) {
+  const response = await fetch(config.url + "/rest/v1/rpc/review_proof_upload", {
+    method: "POST",
+    headers: createHeaders(config, session.accessToken, true),
+    body: JSON.stringify({
+      p_proof_upload_id: proofUploadId,
+      p_review_status: reviewStatus,
+      p_admin_review_note: reviewNote.trim() || null
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error("Could not save proof review.");
+  }
+}
+
+async function markCustomerUpdateShared(
+  config: SupabaseConfig,
+  session: AuthSession,
+  customerUpdateId: string,
+  sharingMethod: CustomerUpdateSharingMethod,
+  sharingNote: string
+) {
+  const response = await fetch(config.url + "/rest/v1/rpc/mark_customer_update_shared", {
+    method: "POST",
+    headers: createHeaders(config, session.accessToken, true),
+    body: JSON.stringify({
+      p_customer_update_id: customerUpdateId,
+      p_sharing_method: sharingMethod,
+      p_sharing_note: sharingNote.trim() || null
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error("Could not mark Customer Update as shared.");
+  }
 }
 
 async function releaseAdWorkToDriver(
@@ -3044,6 +3196,373 @@ function M6SummaryCards({ adWorks, adWorkDays }: { adWorks: AdWorkRecord[]; adWo
   );
 }
 
+function M7SummaryCards({ config, session }: { config: SupabaseConfig; session: AuthSession }) {
+  const [proofUploads, setProofUploads] = useState<ProofUploadRecord[]>([]);
+  const [customerUpdates, setCustomerUpdates] = useState<CustomerUpdateRecord[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadSummary() {
+      const [proofRows, updateRows] = await Promise.all([
+        fetchAdminProofUploads(config, session),
+        fetchCustomerUpdates(config, session)
+      ]);
+
+      if (!cancelled) {
+        setProofUploads(proofRows);
+        setCustomerUpdates(updateRows);
+      }
+    }
+
+    loadSummary().catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [config, session]);
+
+  const today = new Date().toISOString().slice(0, 10);
+  const cards = [
+    {
+      label: "Photo Proofs Today",
+      value: proofUploads.filter((proof) => proof.created_at.startsWith(today)).length
+    },
+    {
+      label: "Proofs Waiting Review",
+      value: proofUploads.filter((proof) => proof.upload_status === "uploaded" && proof.review_status === "waiting_review").length
+    },
+    {
+      label: "Approved Today",
+      value: proofUploads.filter((proof) => proof.review_status === "approved" && Boolean(proof.reviewed_at?.startsWith(today))).length
+    },
+    {
+      label: "Needs More Info",
+      value: proofUploads.filter((proof) => proof.review_status === "needs_more_info").length
+    },
+    {
+      label: "Updates Pending Sharing",
+      value: customerUpdates.filter((update) => update.sharing_status === "pending_sharing").length
+    },
+    {
+      label: "Updates Shared Today",
+      value: customerUpdates.filter((update) => update.sharing_status === "shared_manually" && Boolean(update.shared_at?.startsWith(today))).length
+    }
+  ];
+
+  return (
+    <div className="admin-summary-grid" aria-label="Proof upload and customer update summary">
+      {cards.map((card) => (
+        <div className="admin-summary-card" key={card.label}>
+          <span>{card.label}</span>
+          <strong>{card.value}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AdminProofReviewPanel({
+  config,
+  session,
+  adWork,
+  dayDrafts
+}: {
+  config: SupabaseConfig;
+  session: AuthSession;
+  adWork: AdWorkRecord;
+  dayDrafts: DayDraft[];
+}) {
+  const [proofUploads, setProofUploads] = useState<ProofUploadRecord[]>([]);
+  const [customerUpdates, setCustomerUpdates] = useState<CustomerUpdateRecord[]>([]);
+  const [drivers, setDrivers] = useState<DriverRecord[]>([]);
+  const [vehicles, setVehicles] = useState<VehicleRecord[]>([]);
+  const [previewUrls, setPreviewUrls] = useState<Record<string, string>>({});
+  const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
+  const [sharingMethods, setSharingMethods] = useState<Record<string, CustomerUpdateSharingMethod>>({});
+  const [sharingNotes, setSharingNotes] = useState<Record<string, string>>({});
+  const [message, setMessage] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [savingKey, setSavingKey] = useState("");
+
+  const daysById = useMemo(() => new Map(dayDrafts.map((day, index) => [day.id, { day, index }])), [dayDrafts]);
+  const driversById = useMemo(() => new Map(drivers.map((driver) => [driver.id, driver])), [drivers]);
+  const vehiclesById = useMemo(() => new Map(vehicles.map((vehicle) => [vehicle.id, vehicle])), [vehicles]);
+
+  async function loadProofReviewData() {
+    setIsLoading(true);
+    setMessage("");
+
+    try {
+      const [proofRows, updateRows, driverRows, vehicleRows] = await Promise.all([
+        fetchAdminProofUploads(config, session, adWork.id),
+        fetchCustomerUpdates(config, session, adWork.id),
+        fetchDrivers(config, session),
+        fetchVehicles(config, session)
+      ]);
+      const nextReviewNotes: Record<string, string> = {};
+      const nextSharingMethods: Record<string, CustomerUpdateSharingMethod> = {};
+      const nextSharingNotes: Record<string, string> = {};
+
+      for (const proof of proofRows) {
+        nextReviewNotes[proof.id] = proof.admin_review_note ?? "";
+      }
+
+      for (const update of updateRows) {
+        nextSharingMethods[update.id] = update.sharing_method ?? "manual_whatsapp";
+        nextSharingNotes[update.id] = update.sharing_note ?? "";
+      }
+
+      const previewEntries = await Promise.all(proofRows
+        .filter((proof) => proof.upload_status === "uploaded")
+        .map(async (proof) => {
+          try {
+            const signedUrl = await fetchProofPhotoSignedUrl(config, session, proof.file_bucket, proof.file_path);
+            return [proof.id, signedUrl] as const;
+          } catch {
+            return [proof.id, ""] as const;
+          }
+        }));
+
+      setProofUploads(proofRows);
+      setCustomerUpdates(updateRows);
+      setDrivers(driverRows);
+      setVehicles(vehicleRows);
+      setReviewNotes(nextReviewNotes);
+      setSharingMethods(nextSharingMethods);
+      setSharingNotes(nextSharingNotes);
+      setPreviewUrls(Object.fromEntries(previewEntries.filter((entry) => Boolean(entry[1]))));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not load proof uploads.");
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadProofReviewData();
+  }, [adWork.id]);
+
+  async function handleReviewProof(proofUploadId: string, nextStatus: ProofReviewStatus) {
+    setSavingKey("proof-" + proofUploadId + "-" + nextStatus);
+    setMessage("");
+
+    try {
+      await reviewProofUpload(config, session, proofUploadId, nextStatus, reviewNotes[proofUploadId] ?? "");
+      await loadProofReviewData();
+      setMessage("Proof review saved.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not save proof review.");
+    } finally {
+      setSavingKey("");
+    }
+  }
+
+  async function handleCopyMessage(update: CustomerUpdateRecord) {
+    try {
+      await navigator.clipboard.writeText(update.message);
+      setMessage("Customer Update copied.");
+    } catch {
+      setMessage("Could not copy message in this browser.");
+    }
+  }
+
+  async function handleMarkShared(updateId: string) {
+    setSavingKey("update-" + updateId);
+    setMessage("");
+
+    try {
+      await markCustomerUpdateShared(config, session, updateId, sharingMethods[updateId] ?? "manual_whatsapp", sharingNotes[updateId] ?? "");
+      await loadProofReviewData();
+      setMessage("Customer Update marked as shared.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not mark Customer Update as shared.");
+    } finally {
+      setSavingKey("");
+    }
+  }
+
+  const waitingCount = proofUploads.filter((proof) => proof.upload_status === "uploaded" && proof.review_status === "waiting_review").length;
+
+  return (
+    <section className="form-section" aria-labelledby="proof-review-title">
+      <div className="panel-heading">
+        <div>
+          <h3 id="proof-review-title">Proof Uploads and Customer Updates</h3>
+          <p>Review uploaded proof photos and manually share Customer Updates.</p>
+        </div>
+        <span className="status-pill">{waitingCount} waiting</span>
+      </div>
+
+      {message && <p className="form-status admin-message" role="status">{message}</p>}
+
+      <div className="admin-action-row">
+        <button className="secondary-button" type="button" onClick={() => void loadProofReviewData()} disabled={isLoading}>
+          {isLoading ? "Loading..." : "Refresh proof uploads"}
+        </button>
+      </div>
+
+      <div className="proof-review-layout">
+        <div className="proof-review-column">
+          <h4>{businessLabels.admin.proofUploads}</h4>
+          <div className="proof-review-list">
+            {proofUploads.length === 0 ? (
+              <p className="quiet-note">No photo proof uploads yet.</p>
+            ) : proofUploads.map((proof) => {
+              const dayEntry = proof.ad_work_day_id ? daysById.get(proof.ad_work_day_id) : undefined;
+              const driver = proof.driver_id ? driversById.get(proof.driver_id) : undefined;
+              const vehicle = proof.vehicle_id ? vehiclesById.get(proof.vehicle_id) : undefined;
+              const previewUrl = previewUrls[proof.id];
+
+              return (
+                <article className="proof-review-card" key={proof.id}>
+                  <div className="panel-heading proof-card-heading">
+                    <div>
+                      <h5>{getExecutionProofNoteTypeLabel(proof.proof_type)} - {proof.area_place_name || "Area not set"}</h5>
+                      <p>{formatDateTime(proof.created_at)}</p>
+                    </div>
+                    <span className="status-pill">{getProofReviewStatusLabel(proof.review_status)}</span>
+                  </div>
+
+                  <dl className="lead-detail-grid proof-detail-grid">
+                    <div>
+                      <dt>Upload status</dt>
+                      <dd>{getProofUploadStatusLabel(proof.upload_status)}</dd>
+                    </div>
+                    <div>
+                      <dt>Work day</dt>
+                      <dd>{dayEntry ? "Day " + (dayEntry.index + 1) + " - " + formatDate(dayEntry.day.workDate) : "Not matched"}</dd>
+                    </div>
+                    <div>
+                      <dt>Driver</dt>
+                      <dd>{driver ? driver.name + " - " + driver.phone : "Not matched"}</dd>
+                    </div>
+                    <div>
+                      <dt>Vehicle</dt>
+                      <dd>{vehicle ? vehicle.vehicle_number : "Not matched"}</dd>
+                    </div>
+                    <div>
+                      <dt>File</dt>
+                      <dd>{proof.file_mime_type || "image"} / {proof.file_size_bytes ? Math.round(proof.file_size_bytes / 1024) + " KB" : "size not set"}</dd>
+                    </div>
+                    <div>
+                      <dt>Reviewed</dt>
+                      <dd>{formatDateTime(proof.reviewed_at)}</dd>
+                    </div>
+                  </dl>
+
+                  {previewUrl ? (
+                    <img className="proof-photo-preview" src={previewUrl} alt="Proof upload preview" />
+                  ) : (
+                    <p className="quiet-note">Secure preview is not available yet.</p>
+                  )}
+
+                  <p>{proof.note_text || "No driver note."}</p>
+
+                  <label>
+                    Admin review note
+                    <textarea
+                      value={reviewNotes[proof.id] ?? ""}
+                      maxLength={500}
+                      onChange={(event) => setReviewNotes((current) => ({ ...current, [proof.id]: event.target.value }))}
+                    />
+                  </label>
+
+                  <div className="admin-action-row">
+                    {proofReviewStatusOptions.filter((status) => status !== "waiting_review").map((status) => (
+                      <button
+                        className={status === "approved" ? "primary-button" : "secondary-button"}
+                        type="button"
+                        key={status}
+                        disabled={Boolean(savingKey)}
+                        onClick={() => void handleReviewProof(proof.id, status)}
+                      >
+                        {savingKey === "proof-" + proof.id + "-" + status ? "Saving..." : getProofReviewStatusLabel(status)}
+                      </button>
+                    ))}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="proof-review-column">
+          <h4>{businessLabels.admin.customerUpdate}</h4>
+          <div className="customer-update-list">
+            {customerUpdates.length === 0 ? (
+              <p className="quiet-note">No customer update records yet.</p>
+            ) : customerUpdates.map((update) => (
+              <article className="customer-update-card" key={update.id}>
+                <div className="panel-heading proof-card-heading">
+                  <div>
+                    <h5>{update.type.replace(/_/g, " ")}</h5>
+                    <p>{formatDateTime(update.created_at)}</p>
+                  </div>
+                  <span className="status-pill">{getCustomerUpdateSharingStatusLabel(update.sharing_status)}</span>
+                </div>
+
+                <p className="customer-update-message">{update.message}</p>
+
+                <dl className="lead-detail-grid proof-detail-grid">
+                  <div>
+                    <dt>Method</dt>
+                    <dd>{update.sharing_method ? getCustomerUpdateSharingMethodLabel(update.sharing_method) : "Not shared"}</dd>
+                  </div>
+                  <div>
+                    <dt>Shared at</dt>
+                    <dd>{formatDateTime(update.shared_at)}</dd>
+                  </div>
+                  <div>
+                    <dt>Status</dt>
+                    <dd>{update.sent_status}</dd>
+                  </div>
+                </dl>
+
+                <div className="admin-action-row">
+                  <button className="secondary-button" type="button" onClick={() => void handleCopyMessage(update)}>
+                    {businessLabels.admin.copyMessage}
+                  </button>
+                </div>
+
+                <label>
+                  Share method
+                  <select
+                    value={sharingMethods[update.id] ?? "manual_whatsapp"}
+                    onChange={(event) => setSharingMethods((current) => ({ ...current, [update.id]: event.target.value as CustomerUpdateSharingMethod }))}
+                  >
+                    {customerUpdateSharingMethodOptions.map((method) => (
+                      <option key={method} value={method}>{getCustomerUpdateSharingMethodLabel(method)}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <label>
+                  Sharing note
+                  <textarea
+                    value={sharingNotes[update.id] ?? ""}
+                    maxLength={500}
+                    onChange={(event) => setSharingNotes((current) => ({ ...current, [update.id]: event.target.value }))}
+                  />
+                </label>
+
+                <button
+                  className="primary-button"
+                  type="button"
+                  disabled={Boolean(savingKey)}
+                  onClick={() => void handleMarkShared(update.id)}
+                >
+                  {savingKey === "update-" + update.id ? "Saving..." : businessLabels.admin.markAsShared}
+                </button>
+              </article>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function AdminExecutionPanel({
   config,
   session,
@@ -3658,6 +4177,7 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
         {activeView === "dashboard" && <M4SummaryCards config={config} session={session} />}
         {activeView === "dashboard" && <M5SummaryCards config={config} session={session} adWorks={adWorks} />}
         {activeView === "dashboard" && <M6SummaryCards adWorks={adWorks} adWorkDays={adWorkDays} />}
+        {activeView === "dashboard" && <M7SummaryCards config={config} session={session} />}
         {activeView === "enquiries" && <EnquirySummaryCards enquiries={enquiries} />}
 
         {loadError && <p className="form-alert admin-message" role="alert">{loadError}</p>}
@@ -4334,6 +4854,13 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
                     adWork={selectedAdWork}
                     dayDrafts={dayDrafts}
                     onReleased={loadData}
+                  />
+
+                  <AdminProofReviewPanel
+                    config={config}
+                    session={session}
+                    adWork={selectedAdWork}
+                    dayDrafts={dayDrafts}
                   />
 
                   <section className="form-section" aria-labelledby="proof-plan-title">
