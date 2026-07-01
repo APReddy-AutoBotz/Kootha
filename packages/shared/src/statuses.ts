@@ -91,6 +91,23 @@ export const trackingHealthStatuses = [
   "sync_failed",
   "stopped"
 ] as const;
+export const locationProofReviewStatuses = [
+  "not_reviewed",
+  "reviewed",
+  "needs_follow_up",
+  "accepted",
+  "rejected",
+  "not_required"
+] as const;
+export const locationProofWarningTypes = [
+  "no_location_points",
+  "late_first_location",
+  "long_gap",
+  "stopped_early",
+  "permission_missing",
+  "sync_failed",
+  "points_after_work_end"
+] as const;
 export const stoppedByValues = ["driver", "admin", "system"] as const;
 export const proofUploadTypes = ["photo", "audio", "video"] as const;
 export const alertTypes = [
@@ -159,6 +176,8 @@ export const statusGroups = {
   locationQualities,
   trackingStopReasons,
   trackingHealthStatuses,
+  locationProofReviewStatuses,
+  locationProofWarningTypes,
   stoppedByValues,
   proofUploadTypes,
   alertTypes,
@@ -203,6 +222,8 @@ export type TrackingSource = (typeof trackingSources)[number];
 export type LocationQuality = (typeof locationQualities)[number];
 export type TrackingStopReason = (typeof trackingStopReasons)[number];
 export type TrackingHealthStatus = (typeof trackingHealthStatuses)[number];
+export type LocationProofReviewStatus = (typeof locationProofReviewStatuses)[number];
+export type LocationProofWarningType = (typeof locationProofWarningTypes)[number];
 
 export const enquiryStatusLabels: Record<EnquiryStatus, string> = {
   new: "New",
@@ -570,6 +591,45 @@ export function getTrackingHealthStatusLabel(status: string | null | undefined):
   }
 
   return trackingHealthStatusLabels[status as TrackingHealthStatus] ?? status;
+}
+
+export const locationProofReviewStatusLabels: Record<LocationProofReviewStatus, string> = {
+  not_reviewed: "Not Reviewed",
+  reviewed: "Reviewed",
+  needs_follow_up: "Needs Follow-up",
+  accepted: "Accepted",
+  rejected: "Rejected",
+  not_required: "Not Required"
+};
+
+export const locationProofReviewStatusOptions = locationProofReviewStatuses;
+
+export function getLocationProofReviewStatusLabel(status: string | null | undefined): string {
+  if (!status) {
+    return "Not Reviewed";
+  }
+
+  return locationProofReviewStatusLabels[status as LocationProofReviewStatus] ?? status;
+}
+
+export const locationProofWarningLabels: Record<LocationProofWarningType, string> = {
+  no_location_points: "No Location Points",
+  late_first_location: "Late First Location",
+  long_gap: "Long Gap",
+  stopped_early: "Stopped Early",
+  permission_missing: "Permission Missing",
+  sync_failed: "Sync Failed",
+  points_after_work_end: "Points After Work End"
+};
+
+export const locationProofWarningOptions = locationProofWarningTypes;
+
+export function getLocationProofWarningLabel(warning: string | null | undefined): string {
+  if (!warning) {
+    return "Not set";
+  }
+
+  return locationProofWarningLabels[warning as LocationProofWarningType] ?? warning;
 }
 export function getAdWorkStatusLabel(status: string): string {
   return adWorkStatusLabels[status as AdWorkStatus] ?? status;
