@@ -82,4 +82,8 @@ Status values:
 
 ## Milestone M12 - Location Proof in Final Summary
 
+- [x] Build customer-safe Phone Location Proof in the Final Proof Summary, including admin include control, customer-safe note, wording preview, closure warnings, admin-only fields/RPCs, and no coordinates, maps, route proof, public links, provider sending, payments, customer app, iOS app, or PWA.
+
+## Milestone M13 - Pilot Readiness and Deployment Preparation
+
 - [ ] Not started.

@@ -1,6 +1,6 @@
 # Kootha / Prachar
 
-Kootha / Prachar is a low-cost local mic advertisement proof platform. The repository currently includes M0 foundation, M1 public website and enquiries, M2 admin lead management, M3 campaign planning and scheduling, M4 driver and vehicle onboarding, M5 driver and vehicle assignment to ad work, M6 ad work execution without GPS, M7 proof upload and customer update sharing, M8 final proof summary and campaign closure, M9 mobile GPS tracking foundation, M10 mobile GPS reliability and offline buffer, and M11 admin tracking review without maps.
+Kootha / Prachar is a low-cost local mic advertisement proof platform. The repository currently includes M0 foundation, M1 public website and enquiries, M2 admin lead management, M3 campaign planning and scheduling, M4 driver and vehicle onboarding, M5 driver and vehicle assignment to ad work, M6 ad work execution without GPS, M7 proof upload and customer update sharing, M8 final proof summary and campaign closure, M9 mobile GPS tracking foundation, M10 mobile GPS reliability and offline buffer, M11 admin tracking review without maps, and M12 location proof in final summary.
 
 ## Current Scope
 
@@ -23,13 +23,13 @@ Kootha / Prachar is a low-cost local mic advertisement proof platform. The repos
 - Admin copy and print-friendly Final Proof Summary flow for manual sharing or browser print/save as PDF.
 - Admin Phone Location Proof controls, tracking health, offline sync warnings, and stop action for assigned Ad Works.
 - Admin Location Proof Review without maps, including day-wise tracking review, warning counts, review status, and review notes.
-- Final Proof Summary includes safe Phone Location Proof review wording only: reviewed by admin, needs follow-up, not required, or not available.
+- Final Proof Summary can include admin-confirmed, customer-safe Phone Location Proof fields: status, required flag, active during work, first/last received time, offline sync, and Team Review Note without coordinates, route maps, distance proof, public links, or live tracking claims.
 - Driver foreground phone location proof with explicit consent, Start Location Proof, Stop Location Proof, and saved location updates only during assigned running work.
 - Driver local offline buffer for Phone Location Proof points with client idempotency keys, retry sync, Sync Now, and unsynced point status.
 - Shared product config, labels, statuses, planning helpers, onboarding validation helpers, execution and proof upload helpers, closure helpers, and public form validation helpers.
 - Supabase migrations with RLS enabled and privacy-safe defaults.
 
-## What is intentionally not included in M11
+## What is intentionally not included in M12
 
 - background location,
 - map integration or route map display,
@@ -287,11 +287,30 @@ Final Proof Summary uses safe text only: Phone Location Proof reviewed by admin,
 
 M11 remains admin-only and no-map. It does not add background location, Google Maps, route maps, GPS device ingestion, public location access, customer live tracking links, reports, payments, provider auto-send, customer app, iOS app, or PWA.
 
+## M12 Location Proof In Final Summary
+
+Apply the M12 migration after M0 through M11. It extends the admin-only Final Proof Summary with a customer-safe Phone Location Proof section based on M11 review data.
+
+Admin final summary location proof works from /admin:
+
+1. Complete Location Proof Review first when phone location proof is required.
+2. Open Final Proof Summary for the Ad Work.
+3. Review Phone Location Proof Status, Location Proof Required, Location Proof Active During Work, first and last received time, Offline Location Sync, Points Received, and Review.
+4. Choose Include Phone Location Proof in customer summary only when the review state is ready for customer wording.
+5. Add a Customer-safe location proof note and confirm the wording before saving.
+6. Use Mark Ready for Closure or Close Ad Work to refresh the summary.
+7. Copy or print the final summary manually. M12 does not create public links or provider sends.
+
+Customer summary wording is limited to Phone Location Proof Status, Location Proof Required, Location Proof Active During Work, First Location Received, Last Location Received, Offline Location Sync, and Team Review Note. It does not expose latitude, longitude, accuracy, raw location points, tracking session ids, internal review notes, storage paths, route drawings, maps, distance billing, or public live tracking.
+
+Closure warnings include Phone Location Proof is not reviewed, No phone location updates were received, and Some location updates need follow-up. Closing with location warnings requires a Closure Reason or a customer-safe Phone Location Proof note.
+
+M12 remains admin-only and no-map. It does not add background location, Google Maps, route maps, GPS device ingestion, public location access, customer live tracking links, reports, payments, provider auto-send, customer app, iOS app, or PWA.
 ## Run Driver
 
     pnpm dev:driver
 
-The driver app is Expo React Native and Android-first. M9 requests foreground phone location permission only after the driver opens assigned work, starts work, reads the Location Proof notice, and chooses Start Location Proof. M10 buffers captured location points locally when sync fails and retries them while foreground Location Proof is active. M11 adds admin review without maps and keeps technical coordinates hidden by default. It does not request background location. M7 requests Android photo library access only for selecting photo proof uploads.
+The driver app is Expo React Native and Android-first. M9 requests foreground phone location permission only after the driver opens assigned work, starts work, reads the Location Proof notice, and chooses Start Location Proof. M10 buffers captured location points locally when sync fails and retries them while foreground Location Proof is active. M11 adds admin review without maps and keeps technical coordinates hidden by default. M12 adds customer-safe final summary wording without exposing raw location values. It does not request background location. M7 requests Android photo library access only for selecting photo proof uploads.
 
 ## Verify
 
@@ -316,6 +335,7 @@ Migrations are in supabase/migrations:
 - 20260701090000_m9_mobile_gps_tracking_foundation.sql adds admin-controlled Phone Location Proof, foreground driver tracking RPCs, admin-only tracking session and location point access, and automatic stop rules.
 - 20260701100000_m10_mobile_gps_reliability_offline_buffer.sql adds offline buffer sync metadata, location point client idempotency, driver sync RPCs, and admin tracking health warnings.
 - 20260701110000_m11_admin_tracking_review_without_maps.sql adds admin-only Location Proof Review records, review RPCs, dashboard queues, and safe final summary Phone Location Proof wording.
+- 20260701120000_m12_location_proof_in_final_summary.sql adds admin-confirmed, customer-safe Phone Location Proof fields to Final Proof Summary records, closure warnings, and safe summary RPC checks.
 
 M4 keeps customer_live_enabled and live_tracking_enabled false by default and does not add live tracking behavior.
 
@@ -333,3 +353,5 @@ M10 keeps customer_live_enabled and live_tracking_enabled false by default and d
 
 
 M11 keeps customer_live_enabled and live_tracking_enabled false by default and does not add customer live tracking behavior.
+
+M12 keeps customer_live_enabled and live_tracking_enabled false by default and does not add customer live tracking behavior.

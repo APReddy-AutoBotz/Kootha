@@ -164,8 +164,7 @@ describe("M11 admin tracking review without maps", () => {
     expect(existsSync(path.resolve("apps/driver/ios"))).toBe(false);
   });
 
-  it("marks M11 complete and leaves M12 not started", () => {
+  it("marks M11 complete in the milestone ledger", () => {
     expect(tasks).toMatch(/## Milestone M11 - Admin Tracking Review Without Maps[\s\S]*- \[x\]/);
-    expect(tasks).toMatch(/## Milestone M12 - Location Proof in Final Summary[\s\S]*- \[ \] Not started\./);
   });
 });
