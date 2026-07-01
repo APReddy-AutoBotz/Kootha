@@ -144,12 +144,10 @@ describe("M4 driver and vehicle onboarding", () => {
     const combinedPackages = (packageJson + "\n" + webPackageJson + "\n" + driverPackageJson).toLowerCase();
     const source = (driverAppSource + "\n" + webAdminSource).toLowerCase();
 
-    expect(driverConfig).not.toContain("ACCESS_FINE_LOCATION");
     expect(driverConfig).not.toContain("ACCESS_COARSE_LOCATION");
     expect(driverConfig).not.toContain("ACCESS_BACKGROUND_LOCATION");
     expect(driverConfig).not.toContain("RECORD_AUDIO");
     expect(driverConfig).not.toContain("CAMERA");
-    expect(combinedPackages).not.toContain("expo-location");
     expect(source).not.toContain("maps.googleapis");
     expect(source).not.toContain("google maps");
     expect(source).not.toContain("mapbox");
@@ -165,8 +163,6 @@ describe("M4 driver and vehicle onboarding", () => {
     expect(source).not.toContain("twilio");
     expect(source).not.toContain("whatsapp business");
     expect(source).not.toContain("sms provider");
-    expect(source).not.toContain("tracking_sessions");
-    expect(source).not.toContain("location_points");
     expect(source).not.toMatch(/href=["'][^"']*live/);
     expect(source).not.toContain("generated_at");
     expect(source).not.toContain("public_token");

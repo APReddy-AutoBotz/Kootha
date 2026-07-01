@@ -67,3 +67,7 @@ Status values:
 ## Milestone M8 - Final Proof Summary and Campaign Closure
 
 - [x] Build final proof summary and campaign closure without GPS tracking, provider auto-send, payments, customer app, iOS app, or PWA.
+
+## Milestone M9 - Mobile GPS Tracking Foundation
+
+- [x] Build admin Phone Location Proof control, foreground driver consent, Start/Stop Location Proof, location point saving during running assigned work, tracking health, and admin-only RLS without background location, maps, customer live tracking links, reports, payments, provider auto-send, customer app, iOS app, or PWA.

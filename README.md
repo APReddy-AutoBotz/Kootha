@@ -1,6 +1,6 @@
 # Kootha / Prachar
 
-Kootha / Prachar is a low-cost local mic advertisement proof platform. The repository currently includes M0 foundation, M1 public website and enquiries, M2 admin lead management, M3 campaign planning and scheduling, M4 driver and vehicle onboarding, M5 driver and vehicle assignment to ad work, M6 ad work execution without GPS, M7 proof upload and customer update sharing, and M8 final proof summary and campaign closure.
+Kootha / Prachar is a low-cost local mic advertisement proof platform. The repository currently includes M0 foundation, M1 public website and enquiries, M2 admin lead management, M3 campaign planning and scheduling, M4 driver and vehicle onboarding, M5 driver and vehicle assignment to ad work, M6 ad work execution without GPS, M7 proof upload and customer update sharing, M8 final proof summary and campaign closure, and M9 mobile GPS tracking foundation.
 
 ## Current Scope
 
@@ -21,20 +21,21 @@ Kootha / Prachar is a low-cost local mic advertisement proof platform. The repos
 - Customer update records that admins can copy and mark as shared by phone call, manual WhatsApp, manual SMS, in person, or other manual method without provider integration.
 - Admin Final Proof Summary review, Ready to Close status, Close Ad Work action, Closed with Issues status, and manual final summary share tracking.
 - Admin copy and print-friendly Final Proof Summary flow for manual sharing or browser print/save as PDF.
+- Admin Phone Location Proof controls, tracking health, and stop action for assigned Ad Works.
+- Driver foreground phone location proof with explicit consent, Start Location Proof, Stop Location Proof, and saved location updates only during assigned running work.
 - Shared product config, labels, statuses, planning helpers, onboarding validation helpers, execution and proof upload helpers, closure helpers, and public form validation helpers.
 - Supabase migrations with RLS enabled and privacy-safe defaults.
 
-## What is intentionally not included in M8
+## What is intentionally not included in M9
 
-- GPS tracking,
 - background location,
-- map integration,
+- map integration or route map display,
 - GPS device location ingest,
 - customer live tracking links,
 - camera capture,
 - microphone,
 - video or audio proof upload,
-- public final report generation,
+- automated final report generation,
 - payment gateway,
 - WhatsApp/SMS provider integration,
 - customer mobile app,
@@ -221,11 +222,32 @@ The Final Proof Summary shows customer details, Ad Work details, assigned driver
 
 M8 does not use GPS, maps, route tracking, background location, customer live tracking links, paid PDF generation, automatic email, WhatsApp/SMS provider sending, payments, customer app, iOS app, or PWA. Proof photos remain private in the proof-photos bucket. Admin previews use short-lived signed URLs only.
 
+## M9 Mobile GPS Tracking Foundation
+
+Apply the M9 migration after M0 through M8. It adds admin-controlled Phone Location Proof settings, admin-only tracking session and location point access, and driver RPCs for foreground phone location proof.
+
+Admin Phone Location Proof works from /admin:
+
+1. Open Ad Works and select a Ready for Execution or released Ad Work.
+2. Use Phone Location Proof to mark Location Proof Required and add a short note for the driver.
+3. Review Location Health, point count, quality, last update time, and permission warnings.
+4. Stop Phone Location Proof manually if access must be stopped.
+
+Driver Phone Location Proof works from the Android driver app:
+
+1. Enter mobile number and Work Code.
+2. Open Assigned Work and Start Work for today's planned work day.
+3. Read the location notice and allow Location Proof for the assigned work.
+4. Choose Start Location Proof. The app requests foreground location permission only at that point.
+5. Location updates are saved while the assigned work day is Running.
+6. Take Break, End Work, admin stop, revoked access, or closure stops Phone Location Proof.
+
+M9 does not add background location, maps, route display, GPS device ingestion, customer live tracking links, reports, payments, provider auto-send, customer app, iOS app, or PWA. Phone location proof records are admin-only. customer_live_enabled and live_tracking_enabled remain false.
 ## Run Driver
 
     pnpm dev:driver
 
-The driver app is Expo React Native and Android-first. It does not request GPS or background location permissions. M7 requests Android photo library access only for selecting photo proof uploads.
+The driver app is Expo React Native and Android-first. M9 requests foreground phone location permission only after the driver opens assigned work, starts work, reads the Location Proof notice, and chooses Start Location Proof. It does not request background location. M7 requests Android photo library access only for selecting photo proof uploads.
 
 ## Verify
 
@@ -247,6 +269,7 @@ Migrations are in supabase/migrations:
 - 20260630060000_m6_ad_work_execution_without_gps.sql adds admin release, Work Code access, day-wise execution status, text-only Proof Notes, and customer update records.
 - 20260701070000_m7_proof_upload_customer_update_sharing.sql adds private proof photo storage, driver upload slot RPCs, admin proof review, and manual Customer Update sharing fields.
 - 20260701080000_m8_final_proof_summary_campaign_closure.sql adds admin-only Final Proof Summary records, closure statuses, closure RPCs, and manual final summary share tracking.
+- 20260701090000_m9_mobile_gps_tracking_foundation.sql adds admin-controlled Phone Location Proof, foreground driver tracking RPCs, admin-only tracking session and location point access, and automatic stop rules.
 
 M4 keeps customer_live_enabled and live_tracking_enabled false by default and does not add live tracking behavior.
 
@@ -257,3 +280,5 @@ M6 keeps customer_live_enabled and live_tracking_enabled false by default and do
 M7 keeps customer_live_enabled and live_tracking_enabled false by default and does not add live tracking behavior.
 
 M8 keeps customer_live_enabled and live_tracking_enabled false by default and does not add live tracking behavior.
+
+M9 keeps customer_live_enabled and live_tracking_enabled false by default and does not add customer live tracking behavior.

@@ -78,9 +78,10 @@ export const customerAcceptanceStatuses = ["yes", "no", "not_confirmed"] as cons
 
 export const trackingTypes = ["mobile", "device", "both"] as const;
 export const areaCoverageStatuses = ["pending", "covered", "missed", "manual"] as const;
-export const trackingSessionStatuses = ["not_started", "running", "paused", "stopped", "completed"] as const;
-export const trackingSources = ["mobile", "device"] as const;
+export const trackingSessionStatuses = ["not_started", "running", "paused", "stopped", "completed", "failed", "permission_missing"] as const;
+export const trackingSources = ["phone"] as const;
 export const locationQualities = ["good", "weak", "unknown"] as const;
+export const trackingStopReasons = ["work_ended", "break_started", "admin_stopped", "permission_removed", "app_error", "other"] as const;
 export const stoppedByValues = ["driver", "admin", "system"] as const;
 export const proofUploadTypes = ["photo", "audio", "video"] as const;
 export const alertTypes = [
@@ -147,6 +148,7 @@ export const statusGroups = {
   trackingSessionStatuses,
   trackingSources,
   locationQualities,
+  trackingStopReasons,
   stoppedByValues,
   proofUploadTypes,
   alertTypes,
@@ -187,6 +189,9 @@ export type FinalSummaryShareMethod = (typeof finalSummaryShareMethods)[number];
 export type CustomerAcceptanceStatus = (typeof customerAcceptanceStatuses)[number];
 export type TrackingType = (typeof trackingTypes)[number];
 export type TrackingSessionStatus = (typeof trackingSessionStatuses)[number];
+export type TrackingSource = (typeof trackingSources)[number];
+export type LocationQuality = (typeof locationQualities)[number];
+export type TrackingStopReason = (typeof trackingStopReasons)[number];
 
 export const enquiryStatusLabels: Record<EnquiryStatus, string> = {
   new: "New",
@@ -481,6 +486,61 @@ export function getCustomerAcceptanceStatusLabel(status: string | null | undefin
   return customerAcceptanceStatusLabels[status as CustomerAcceptanceStatus] ?? status;
 }
 
+
+export const trackingSessionStatusLabels: Record<TrackingSessionStatus, string> = {
+  not_started: "Not Started",
+  running: "Running",
+  paused: "Paused",
+  stopped: "Stopped",
+  completed: "Completed",
+  failed: "Failed",
+  permission_missing: "Permission Missing"
+};
+
+export const trackingSessionStatusOptions = trackingSessionStatuses;
+
+export function getTrackingSessionStatusLabel(status: string | null | undefined): string {
+  if (!status) {
+    return "Not Started";
+  }
+
+  return trackingSessionStatusLabels[status as TrackingSessionStatus] ?? status;
+}
+
+export const trackingStopReasonLabels: Record<TrackingStopReason, string> = {
+  work_ended: "Work Ended",
+  break_started: "Break Started",
+  admin_stopped: "Admin Stopped",
+  permission_removed: "Permission Removed",
+  app_error: "App Error",
+  other: "Other"
+};
+
+export const trackingStopReasonOptions = trackingStopReasons;
+
+export function getTrackingStopReasonLabel(reason: string | null | undefined): string {
+  if (!reason) {
+    return "Not set";
+  }
+
+  return trackingStopReasonLabels[reason as TrackingStopReason] ?? reason;
+}
+
+export const locationQualityLabels: Record<LocationQuality, string> = {
+  good: "Good",
+  weak: "Weak",
+  unknown: "Unknown"
+};
+
+export const locationQualityOptions = locationQualities;
+
+export function getLocationQualityLabel(quality: string | null | undefined): string {
+  if (!quality) {
+    return "Unknown";
+  }
+
+  return locationQualityLabels[quality as LocationQuality] ?? quality;
+}
 export function getAdWorkStatusLabel(status: string): string {
   return adWorkStatusLabels[status as AdWorkStatus] ?? status;
 }

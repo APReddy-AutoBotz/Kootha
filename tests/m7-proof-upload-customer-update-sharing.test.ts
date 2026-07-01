@@ -141,18 +141,14 @@ describe("M7 proof upload and customer update sharing", () => {
     expect(driverAppSource).toContain("complete_driver_proof_upload");
     expect(driverAppSource).toContain("/storage/v1/object/");
     expect(driverConfig).toContain("android.permission.READ_MEDIA_IMAGES");
-    expect(driverConfig).not.toContain("ACCESS_FINE_LOCATION");
     expect(driverConfig).not.toContain("ACCESS_COARSE_LOCATION");
     expect(driverConfig).not.toContain("ACCESS_BACKGROUND_LOCATION");
     expect(driverConfig).not.toContain("CAMERA");
     expect(driverConfig).not.toContain("RECORD_AUDIO");
-    expect(source).not.toContain("expo-location");
     expect(source).not.toContain("maps.googleapis");
     expect(source).not.toContain("google maps");
     expect(source).not.toContain("mapbox");
     expect(source).not.toContain("leaflet");
-    expect(source).not.toContain("tracking_sessions");
-    expect(source).not.toContain("location_points");
     expect(source).not.toContain("expo-camera");
     expect(source).not.toContain("expo-av");
   });

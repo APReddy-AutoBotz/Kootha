@@ -86,12 +86,10 @@ describe("M2 admin lead management", () => {
     const combinedPackages = `${packageJson}\n${webPackageJson}\n${driverPackageJson}`.toLowerCase();
     const webSource = `${webAppSource}\n${webAdminSource}`.toLowerCase();
 
-    expect(driverConfig).not.toContain("ACCESS_FINE_LOCATION");
     expect(driverConfig).not.toContain("ACCESS_COARSE_LOCATION");
     expect(driverConfig).not.toContain("ACCESS_BACKGROUND_LOCATION");
     expect(driverConfig).not.toContain("RECORD_AUDIO");
     expect(driverConfig).not.toContain("CAMERA");
-    expect(combinedPackages).not.toContain("expo-location");
     expect(webSource).not.toContain("maps.googleapis");
     expect(webSource).not.toContain("google maps");
     expect(webSource).not.toContain("mapbox");

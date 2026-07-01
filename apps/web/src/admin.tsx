@@ -32,9 +32,12 @@ import {
   getCustomerUpdateSharingMethodLabel,
   getCustomerUpdateSharingStatusLabel,
   getFinalSummaryShareMethodLabel,
+  getLocationQualityLabel,
   getPlannedEndDate,
   getProofReviewStatusLabel,
   getProofUploadStatusLabel,
+  getTrackingSessionStatusLabel,
+  getTrackingStopReasonLabel,
   getVehicleGpsDeviceStatusLabel,
   getVehicleStatusLabel,
   liveTrackingNeedLabels,
@@ -71,9 +74,12 @@ import type {
   ExecutionReleaseStatus,
   FinalSummaryShareMethod,
   LiveTrackingNeed,
+  LocationQuality,
   PackageInterest,
   ProofReviewStatus,
   ProofUploadStatus,
+  TrackingSessionStatus,
+  TrackingStopReason,
   VehicleGpsDeviceStatus,
   VehicleStatus,
   VehicleType,
@@ -142,6 +148,9 @@ type AdWorkRecord = {
   package_interest: PackageInterest;
   live_tracking_requested: LiveTrackingNeed;
   live_tracking_enabled: boolean;
+  mobile_location_proof_required: boolean;
+  mobile_location_proof_note: string | null;
+  mobile_location_tracking_mode: string;
   planning_status: AdWorkStatus;
   number_of_days: number;
   daily_start_time: string | null;
@@ -303,7 +312,45 @@ type AdWorkAssignmentRecord = {
   updated_at: string | null;
 };
 
+type TrackingSessionRecord = {
+  id: string;
+  ad_work_id: string | null;
+  ad_work_day_id: string | null;
+  assignment_id: string | null;
+  driver_id: string | null;
+  vehicle_id: string | null;
+  tracking_mode: string;
+  status: TrackingSessionStatus;
+  started_at: string | null;
+  ended_at: string | null;
+  stopped_by: string | null;
+  stop_reason: TrackingStopReason | null;
+  last_update_at: string | null;
+  point_count: number;
+  quality_status: LocationQuality;
+  created_at: string;
+  updated_at: string | null;
+};
 
+type LocationPointRecord = {
+  id: string;
+  tracking_session_id: string | null;
+  ad_work_id: string | null;
+  ad_work_day_id: string | null;
+  assignment_id: string | null;
+  driver_id: string | null;
+  vehicle_id: string | null;
+  source: string;
+  recorded_at: string;
+  received_at: string;
+  lat: number;
+  lng: number;
+  accuracy_meters: number | null;
+  speed: number | null;
+  heading: number | null;
+  quality: LocationQuality;
+  created_at: string;
+};
 
 type ProofUploadRecord = {
   id: string;
@@ -599,6 +646,9 @@ const adWorkSelectColumns = [
   "package_interest",
   "live_tracking_requested",
   "live_tracking_enabled",
+  "mobile_location_proof_required",
+  "mobile_location_proof_note",
+  "mobile_location_tracking_mode",
   "planning_status",
   "number_of_days",
   "daily_start_time",
@@ -675,6 +725,45 @@ const adWorkAssignmentSelectColumns = [
   "updated_at"
 ].join(",");
 
+const trackingSessionSelectColumns = [
+  "id",
+  "ad_work_id",
+  "ad_work_day_id",
+  "assignment_id",
+  "driver_id",
+  "vehicle_id",
+  "tracking_mode",
+  "status",
+  "started_at",
+  "ended_at",
+  "stopped_by",
+  "stop_reason",
+  "last_update_at",
+  "point_count",
+  "quality_status",
+  "created_at",
+  "updated_at"
+].join(",");
+
+const locationPointSelectColumns = [
+  "id",
+  "tracking_session_id",
+  "ad_work_id",
+  "ad_work_day_id",
+  "assignment_id",
+  "driver_id",
+  "vehicle_id",
+  "source",
+  "recorded_at",
+  "received_at",
+  "lat",
+  "lng",
+  "accuracy_meters",
+  "speed",
+  "heading",
+  "quality",
+  "created_at"
+].join(",");
 
 const proofUploadSelectColumns = [
   "id",
@@ -978,6 +1067,31 @@ async function fetchAdWorkAssignments(config: SupabaseConfig, session: AuthSessi
   return await response.json() as AdWorkAssignmentRecord[];
 }
 
+async function fetchTrackingSessions(config: SupabaseConfig, session: AuthSession, adWorkId?: string): Promise<TrackingSessionRecord[]> {
+  const filter = adWorkId ? "&ad_work_id=eq." + encodeURIComponent(adWorkId) : "";
+  const response = await fetch(config.url + "/rest/v1/tracking_sessions?select=" + trackingSessionSelectColumns + filter + "&order=updated_at.desc", {
+    headers: createHeaders(config, session.accessToken)
+  });
+
+  if (!response.ok) {
+    throw new Error("Could not load Phone Location Proof sessions.");
+  }
+
+  return await response.json() as TrackingSessionRecord[];
+}
+
+async function fetchLocationPoints(config: SupabaseConfig, session: AuthSession, adWorkId?: string): Promise<LocationPointRecord[]> {
+  const filter = adWorkId ? "&ad_work_id=eq." + encodeURIComponent(adWorkId) : "";
+  const response = await fetch(config.url + "/rest/v1/location_points?select=" + locationPointSelectColumns + filter + "&order=received_at.desc&limit=20", {
+    headers: createHeaders(config, session.accessToken)
+  });
+
+  if (!response.ok) {
+    throw new Error("Could not load Phone Location Proof points.");
+  }
+
+  return await response.json() as LocationPointRecord[];
+}
 
 async function fetchAdminProofUploads(config: SupabaseConfig, session: AuthSession, adWorkId?: string): Promise<ProofUploadRecord[]> {
   const filter = adWorkId ? "&ad_work_id=eq." + encodeURIComponent(adWorkId) : "";
@@ -1314,6 +1428,57 @@ async function updateAdminEnquiry(
   }
 }
 
+async function setMobileLocationProof(
+  config: SupabaseConfig,
+  session: AuthSession,
+  adWorkId: string,
+  required: boolean,
+  note: string
+) {
+  const response = await fetch(config.url + "/rest/v1/rpc/set_mobile_location_proof", {
+    method: "POST",
+    headers: createHeaders(config, session.accessToken, true),
+    body: JSON.stringify({
+      p_ad_work_id: adWorkId,
+      p_required: required,
+      p_note: note.trim() || null
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error("Could not save Phone Location Proof settings.");
+  }
+
+  return await response.json() as {
+    ad_work_id: string;
+    mobile_location_proof_required: boolean;
+    mobile_location_tracking_mode: string;
+    result_message: string;
+  }[];
+}
+
+async function adminStopMobileTracking(
+  config: SupabaseConfig,
+  session: AuthSession,
+  trackingSessionId: string
+) {
+  const response = await fetch(config.url + "/rest/v1/rpc/admin_stop_mobile_tracking", {
+    method: "POST",
+    headers: createHeaders(config, session.accessToken, true),
+    body: JSON.stringify({ p_tracking_session_id: trackingSessionId })
+  });
+
+  if (!response.ok) {
+    throw new Error("Could not stop Phone Location Proof.");
+  }
+
+  return await response.json() as {
+    tracking_session_id: string;
+    status: TrackingSessionStatus;
+    stop_reason: TrackingStopReason;
+    result_message: string;
+  }[];
+}
 async function createAdWorkFromEnquiry(
   config: SupabaseConfig,
   session: AuthSession,
@@ -3518,6 +3683,65 @@ function M8SummaryCards({ config, session, adWorks }: { config: SupabaseConfig; 
   );
 }
 
+function M9SummaryCards({ config, session, adWorks }: { config: SupabaseConfig; session: AuthSession; adWorks: AdWorkRecord[] }) {
+  const [sessions, setSessions] = useState<TrackingSessionRecord[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadSummary() {
+      const sessionRows = await fetchTrackingSessions(config, session);
+      if (!cancelled) {
+        setSessions(sessionRows);
+      }
+    }
+
+    loadSummary().catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [config, session]);
+
+  const today = new Date().toISOString().slice(0, 10);
+  const cards = [
+    {
+      label: "Location Proof Required",
+      value: adWorks.filter((adWork) => adWork.mobile_location_proof_required).length
+    },
+    {
+      label: "Phone Proof Running",
+      value: sessions.filter((sessionRow) => sessionRow.status === "running").length
+    },
+    {
+      label: "Permission Needed",
+      value: sessions.filter((sessionRow) => sessionRow.status === "permission_missing").length
+    },
+    {
+      label: "Weak Location",
+      value: sessions.filter((sessionRow) => sessionRow.quality_status === "weak").length
+    },
+    {
+      label: "Updated Today",
+      value: sessions.filter((sessionRow) => Boolean(sessionRow.last_update_at?.startsWith(today))).length
+    },
+    {
+      label: "Stopped",
+      value: sessions.filter((sessionRow) => sessionRow.status === "stopped" || sessionRow.status === "paused").length
+    }
+  ];
+
+  return (
+    <div className="admin-summary-grid" aria-label="Phone Location Proof summary">
+      {cards.map((card) => (
+        <div className="admin-summary-card" key={card.label}>
+          <span>{card.label}</span>
+          <strong>{card.value}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
 function AdminFinalProofSummaryPanel({
   config,
   session,
@@ -4148,6 +4372,184 @@ function AdminProofReviewPanel({
   );
 }
 
+function AdminMobileLocationProofPanel({
+  config,
+  session,
+  adWork,
+  onUpdated
+}: {
+  config: SupabaseConfig;
+  session: AuthSession;
+  adWork: AdWorkRecord;
+  onUpdated: () => Promise<void>;
+}) {
+  const [required, setRequired] = useState(adWork.mobile_location_proof_required);
+  const [note, setNote] = useState(adWork.mobile_location_proof_note ?? "");
+  const [sessions, setSessions] = useState<TrackingSessionRecord[]>([]);
+  const [points, setPoints] = useState<LocationPointRecord[]>([]);
+  const [message, setMessage] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+
+  const latestSession = sessions[0] ?? null;
+  const latestPoint = points[0] ?? null;
+  const activeSession = sessions.find((sessionRow) => ["running", "paused", "permission_missing", "failed", "not_started"].includes(sessionRow.status));
+  const warnings = [
+    required && adWork.execution_release_status !== "released_to_driver" ? "Release to driver before the driver can start Phone Location Proof." : "",
+    required && !latestSession ? "No Phone Location Proof session yet." : "",
+    latestSession?.status === "permission_missing" ? "Driver Must Allow Location before updates can be saved." : "",
+    latestSession?.status === "running" && !latestSession.last_update_at ? "Phone Location Proof is running but no update has been saved yet." : "",
+    latestSession?.status === "running" && latestSession.quality_status === "weak" ? "Weak Location. Ask driver to keep phone location on." : ""
+  ].filter(Boolean);
+
+  async function loadTrackingData() {
+    try {
+      const [sessionRows, pointRows] = await Promise.all([
+        fetchTrackingSessions(config, session, adWork.id),
+        fetchLocationPoints(config, session, adWork.id)
+      ]);
+      setSessions(sessionRows);
+      setPoints(pointRows);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not load Phone Location Proof.");
+    }
+  }
+
+  useEffect(() => {
+    setRequired(adWork.mobile_location_proof_required);
+    setNote(adWork.mobile_location_proof_note ?? "");
+    setMessage("");
+    void loadTrackingData();
+  }, [adWork.id, adWork.mobile_location_proof_required, adWork.mobile_location_proof_note]);
+
+  async function handleSave() {
+    setIsSaving(true);
+    setMessage("");
+
+    try {
+      const result = await setMobileLocationProof(config, session, adWork.id, required, note);
+      setMessage(result[0]?.result_message ?? "Phone Location Proof saved.");
+      await onUpdated();
+      await loadTrackingData();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not save Phone Location Proof.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function handleAdminStop(trackingSessionId: string) {
+    setIsSaving(true);
+    setMessage("");
+
+    try {
+      const result = await adminStopMobileTracking(config, session, trackingSessionId);
+      setMessage(result[0]?.result_message ?? "Phone Location Proof stopped.");
+      await loadTrackingData();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not stop Phone Location Proof.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  return (
+    <section className="form-section" aria-labelledby="mobile-location-proof-title">
+      <div className="panel-heading">
+        <div>
+          <h3 id="mobile-location-proof-title">{businessLabels.admin.phoneLocationProof}</h3>
+          <p>Phone location is collected only during assigned work after the driver allows it.</p>
+        </div>
+        <span className="status-pill">{required ? "Required" : "Not Required"}</span>
+      </div>
+
+      {message && <p className="form-status admin-message" role="status">{message}</p>}
+
+      <div className="checkbox-grid">
+        <label className="checkbox-row">
+          <input type="checkbox" checked={required} onChange={(event) => setRequired(event.target.checked)} />
+          <span>{businessLabels.admin.locationProofRequired}</span>
+        </label>
+      </div>
+
+      <label>
+        Admin note for driver
+        <textarea
+          value={note}
+          maxLength={500}
+          onChange={(event) => setNote(event.target.value)}
+        />
+      </label>
+
+      <div className="lead-detail-grid">
+        <div>
+          <dt>Mode</dt>
+          <dd>Phone Location</dd>
+        </div>
+        <div>
+          <dt>Driver permission</dt>
+          <dd>{businessLabels.admin.driverMustAllowLocation}</dd>
+        </div>
+        <div>
+          <dt>Start rule</dt>
+          <dd>{businessLabels.admin.trackingStartsOnlyDuringWork}</dd>
+        </div>
+        <div>
+          <dt>Stop rule</dt>
+          <dd>{businessLabels.admin.trackingStopsAfterWork}</dd>
+        </div>
+        <div>
+          <dt>Customer Live Tracking</dt>
+          <dd>No</dd>
+        </div>
+        <div>
+          <dt>Live Tracking</dt>
+          <dd>No</dd>
+        </div>
+      </div>
+
+      <div className="admin-action-row">
+        <button className="primary-button" type="button" onClick={() => void handleSave()} disabled={isSaving}>
+          {isSaving ? "Saving..." : "Save Phone Location Proof"}
+        </button>
+        <button className="secondary-button" type="button" onClick={() => void loadTrackingData()} disabled={isSaving}>
+          Refresh Location Health
+        </button>
+        <button className="secondary-button" type="button" onClick={() => activeSession && void handleAdminStop(activeSession.id)} disabled={isSaving || !activeSession}>
+          Stop Phone Location Proof
+        </button>
+      </div>
+
+      <div className="lead-submitted-copy">
+        <h3>Location health</h3>
+        <p>Status: {latestSession ? getTrackingSessionStatusLabel(latestSession.status) : "Not Started"}</p>
+        <p>Points saved: {latestSession?.point_count ?? 0}</p>
+        <p>Quality: {latestSession ? getLocationQualityLabel(latestSession.quality_status) : "Unknown"}</p>
+        <p>Last update: {formatDateTime(latestSession?.last_update_at)}</p>
+        <p>Stop reason: {latestSession?.stop_reason ? getTrackingStopReasonLabel(latestSession.stop_reason) : "Not stopped"}</p>
+        {latestPoint ? (
+          <p>Latest point: {latestPoint.lat}, {latestPoint.lng} | Accuracy: {latestPoint.accuracy_meters ?? "not set"} m | {formatDateTime(latestPoint.recorded_at)}</p>
+        ) : (
+          <p>No location points saved yet.</p>
+        )}
+        <h3>Warnings</h3>
+        {warnings.length === 0 ? (
+          <p>No warnings.</p>
+        ) : warnings.map((warning) => <p key={warning}>{warning}</p>)}
+      </div>
+
+      <div className="lead-submitted-copy">
+        <h3>Phone Location Proof sessions</h3>
+        {sessions.length === 0 ? (
+          <p>No sessions yet.</p>
+        ) : sessions.map((sessionRow) => (
+          <p key={sessionRow.id}>
+            {getTrackingSessionStatusLabel(sessionRow.status)} - {sessionRow.point_count} points - Last update {formatDateTime(sessionRow.last_update_at)} - Stop {sessionRow.stop_reason ? getTrackingStopReasonLabel(sessionRow.stop_reason) : "not stopped"}
+          </p>
+        ))}
+      </div>
+    </section>
+  );
+}
 function AdminExecutionPanel({
   config,
   session,
@@ -4764,6 +5166,7 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
         {activeView === "dashboard" && <M6SummaryCards adWorks={adWorks} adWorkDays={adWorkDays} />}
         {activeView === "dashboard" && <M7SummaryCards config={config} session={session} />}
         {activeView === "dashboard" && <M8SummaryCards config={config} session={session} adWorks={adWorks} />}
+        {activeView === "dashboard" && <M9SummaryCards config={config} session={session} adWorks={adWorks} />}
         {activeView === "enquiries" && <EnquirySummaryCards enquiries={enquiries} />}
 
         {loadError && <p className="form-alert admin-message" role="alert">{loadError}</p>}
@@ -5440,6 +5843,13 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
                     adWork={selectedAdWork}
                     dayDrafts={dayDrafts}
                     onReleased={loadData}
+                  />
+
+                  <AdminMobileLocationProofPanel
+                    config={config}
+                    session={session}
+                    adWork={selectedAdWork}
+                    onUpdated={loadData}
                   />
 
                   <AdminProofReviewPanel
