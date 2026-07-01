@@ -218,8 +218,7 @@ describe("M9 mobile GPS tracking foundation", () => {
     expect(m3Migration).toMatch(/live_tracking_enabled boolean not null default false/i);
   });
 
-  it("marks M9 complete without starting M10", () => {
+  it("marks M9 complete in the milestone ledger", () => {
     expect(tasks).toMatch(/## Milestone M9 - Mobile GPS Tracking Foundation[\s\S]*- \[x\]/);
-    expect(tasks).not.toMatch(/## Milestone M10[\s\S]*- \[x\]/);
   });
 });

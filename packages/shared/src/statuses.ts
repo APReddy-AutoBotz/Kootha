@@ -82,6 +82,15 @@ export const trackingSessionStatuses = ["not_started", "running", "paused", "sto
 export const trackingSources = ["phone"] as const;
 export const locationQualities = ["good", "weak", "unknown"] as const;
 export const trackingStopReasons = ["work_ended", "break_started", "admin_stopped", "permission_removed", "app_error", "other"] as const;
+export const trackingHealthStatuses = [
+  "healthy",
+  "no_recent_update",
+  "permission_missing",
+  "offline_saving",
+  "sync_pending",
+  "sync_failed",
+  "stopped"
+] as const;
 export const stoppedByValues = ["driver", "admin", "system"] as const;
 export const proofUploadTypes = ["photo", "audio", "video"] as const;
 export const alertTypes = [
@@ -149,6 +158,7 @@ export const statusGroups = {
   trackingSources,
   locationQualities,
   trackingStopReasons,
+  trackingHealthStatuses,
   stoppedByValues,
   proofUploadTypes,
   alertTypes,
@@ -192,6 +202,7 @@ export type TrackingSessionStatus = (typeof trackingSessionStatuses)[number];
 export type TrackingSource = (typeof trackingSources)[number];
 export type LocationQuality = (typeof locationQualities)[number];
 export type TrackingStopReason = (typeof trackingStopReasons)[number];
+export type TrackingHealthStatus = (typeof trackingHealthStatuses)[number];
 
 export const enquiryStatusLabels: Record<EnquiryStatus, string> = {
   new: "New",
@@ -540,6 +551,25 @@ export function getLocationQualityLabel(quality: string | null | undefined): str
   }
 
   return locationQualityLabels[quality as LocationQuality] ?? quality;
+}
+export const trackingHealthStatusLabels: Record<TrackingHealthStatus, string> = {
+  healthy: "Healthy",
+  no_recent_update: "No Recent Update",
+  permission_missing: "Permission Missing",
+  offline_saving: "Offline Saving",
+  sync_pending: "Sync Pending",
+  sync_failed: "Sync Failed",
+  stopped: "Stopped"
+};
+
+export const trackingHealthStatusOptions = trackingHealthStatuses;
+
+export function getTrackingHealthStatusLabel(status: string | null | undefined): string {
+  if (!status) {
+    return "Stopped";
+  }
+
+  return trackingHealthStatusLabels[status as TrackingHealthStatus] ?? status;
 }
 export function getAdWorkStatusLabel(status: string): string {
   return adWorkStatusLabels[status as AdWorkStatus] ?? status;

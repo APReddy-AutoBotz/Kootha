@@ -36,6 +36,7 @@ import {
   getPlannedEndDate,
   getProofReviewStatusLabel,
   getProofUploadStatusLabel,
+  getTrackingHealthStatusLabel,
   getTrackingSessionStatusLabel,
   getTrackingStopReasonLabel,
   getVehicleGpsDeviceStatusLabel,
@@ -78,6 +79,7 @@ import type {
   PackageInterest,
   ProofReviewStatus,
   ProofUploadStatus,
+  TrackingHealthStatus,
   TrackingSessionStatus,
   TrackingStopReason,
   VehicleGpsDeviceStatus,
@@ -328,6 +330,13 @@ type TrackingSessionRecord = {
   last_update_at: string | null;
   point_count: number;
   quality_status: LocationQuality;
+  tracking_health_status: TrackingHealthStatus;
+  client_pending_point_count: number;
+  client_last_capture_at: string | null;
+  last_successful_sync_at: string | null;
+  last_sync_attempt_at: string | null;
+  sync_failure_count: number;
+  sync_error_message: string | null;
   created_at: string;
   updated_at: string | null;
 };
@@ -349,6 +358,7 @@ type LocationPointRecord = {
   speed: number | null;
   heading: number | null;
   quality: LocationQuality;
+  client_point_id: string | null;
   created_at: string;
 };
 
@@ -741,6 +751,13 @@ const trackingSessionSelectColumns = [
   "last_update_at",
   "point_count",
   "quality_status",
+  "tracking_health_status",
+  "client_pending_point_count",
+  "client_last_capture_at",
+  "last_successful_sync_at",
+  "last_sync_attempt_at",
+  "sync_failure_count",
+  "sync_error_message",
   "created_at",
   "updated_at"
 ].join(",");
@@ -762,6 +779,7 @@ const locationPointSelectColumns = [
   "speed",
   "heading",
   "quality",
+  "client_point_id",
   "created_at"
 ].join(",");
 
@@ -4396,9 +4414,13 @@ function AdminMobileLocationProofPanel({
   const warnings = [
     required && adWork.execution_release_status !== "released_to_driver" ? "Release to driver before the driver can start Phone Location Proof." : "",
     required && !latestSession ? "No Phone Location Proof session yet." : "",
-    latestSession?.status === "permission_missing" ? "Driver Must Allow Location before updates can be saved." : "",
+    latestSession?.status === "permission_missing" || latestSession?.tracking_health_status === "permission_missing" ? "Driver Must Allow Location before updates can be saved." : "",
+    latestSession?.tracking_health_status === "no_recent_update" ? "No recent location update received from the driver phone." : "",
+    latestSession?.tracking_health_status === "sync_pending" || (latestSession?.client_pending_point_count ?? 0) > 0 ? "Offline points are pending sync from the driver phone." : "",
+    latestSession?.tracking_health_status === "sync_failed" || (latestSession?.sync_failure_count ?? 0) > 0 ? "Location sync failed. Ask driver to try Sync Now." : "",
     latestSession?.status === "running" && !latestSession.last_update_at ? "Phone Location Proof is running but no update has been saved yet." : "",
-    latestSession?.status === "running" && latestSession.quality_status === "weak" ? "Weak Location. Ask driver to keep phone location on." : ""
+    latestSession?.status === "running" && latestSession.quality_status === "weak" ? "Weak Location. Ask driver to keep phone location on." : "",
+    latestSession?.status === "stopped" && adWork.execution_overall_status === "completed" ? "Phone Location Proof stopped after work end." : ""
   ].filter(Boolean);
 
   async function loadTrackingData() {
@@ -4522,9 +4544,14 @@ function AdminMobileLocationProofPanel({
       <div className="lead-submitted-copy">
         <h3>Location health</h3>
         <p>Status: {latestSession ? getTrackingSessionStatusLabel(latestSession.status) : "Not Started"}</p>
+        <p>Health: {latestSession ? getTrackingHealthStatusLabel(latestSession.tracking_health_status) : "Stopped"}</p>
         <p>Points saved: {latestSession?.point_count ?? 0}</p>
+        <p>Unsynced points: {latestSession?.client_pending_point_count ?? 0}</p>
         <p>Quality: {latestSession ? getLocationQualityLabel(latestSession.quality_status) : "Unknown"}</p>
-        <p>Last update: {formatDateTime(latestSession?.last_update_at)}</p>
+        <p>Last location received: {formatDateTime(latestSession?.last_update_at)}</p>
+        <p>Last captured on phone: {formatDateTime(latestSession?.client_last_capture_at)}</p>
+        <p>Last sync: {formatDateTime(latestSession?.last_successful_sync_at)}</p>
+        <p>Sync attempts: {formatDateTime(latestSession?.last_sync_attempt_at)}</p>
         <p>Stop reason: {latestSession?.stop_reason ? getTrackingStopReasonLabel(latestSession.stop_reason) : "Not stopped"}</p>
         {latestPoint ? (
           <p>Latest point: {latestPoint.lat}, {latestPoint.lng} | Accuracy: {latestPoint.accuracy_meters ?? "not set"} m | {formatDateTime(latestPoint.recorded_at)}</p>
@@ -4543,7 +4570,7 @@ function AdminMobileLocationProofPanel({
           <p>No sessions yet.</p>
         ) : sessions.map((sessionRow) => (
           <p key={sessionRow.id}>
-            {getTrackingSessionStatusLabel(sessionRow.status)} - {sessionRow.point_count} points - Last update {formatDateTime(sessionRow.last_update_at)} - Stop {sessionRow.stop_reason ? getTrackingStopReasonLabel(sessionRow.stop_reason) : "not stopped"}
+            {getTrackingSessionStatusLabel(sessionRow.status)} - {getTrackingHealthStatusLabel(sessionRow.tracking_health_status)} - {sessionRow.point_count} points - {sessionRow.client_pending_point_count} unsynced - Last received {formatDateTime(sessionRow.last_update_at)} - Last sync {formatDateTime(sessionRow.last_successful_sync_at)} - Stop {sessionRow.stop_reason ? getTrackingStopReasonLabel(sessionRow.stop_reason) : "not stopped"}
           </p>
         ))}
       </div>

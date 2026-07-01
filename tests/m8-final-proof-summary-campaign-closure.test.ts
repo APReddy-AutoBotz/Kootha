@@ -252,9 +252,7 @@ describe("M8 final proof summary and campaign closure", () => {
     expect(m3Migration).toMatch(/live_tracking_enabled boolean not null default false/i);
   });
 
-  it("marks M8 complete without starting future milestones", () => {
+  it("marks M8 complete in the milestone ledger", () => {
     expect(tasks).toMatch(/## Milestone M8 - Final Proof Summary and Campaign Closure[\s\S]*- \[x\]/);
-    expect(tasks).toMatch(/## Milestone M9 - Mobile GPS Tracking Foundation[\s\S]*- \[x\]/);
-    expect(tasks).not.toMatch(/## Milestone M10[\s\S]*- \[x\]/);
   });
 });

@@ -1,6 +1,6 @@
 # Kootha / Prachar
 
-Kootha / Prachar is a low-cost local mic advertisement proof platform. The repository currently includes M0 foundation, M1 public website and enquiries, M2 admin lead management, M3 campaign planning and scheduling, M4 driver and vehicle onboarding, M5 driver and vehicle assignment to ad work, M6 ad work execution without GPS, M7 proof upload and customer update sharing, M8 final proof summary and campaign closure, and M9 mobile GPS tracking foundation.
+Kootha / Prachar is a low-cost local mic advertisement proof platform. The repository currently includes M0 foundation, M1 public website and enquiries, M2 admin lead management, M3 campaign planning and scheduling, M4 driver and vehicle onboarding, M5 driver and vehicle assignment to ad work, M6 ad work execution without GPS, M7 proof upload and customer update sharing, M8 final proof summary and campaign closure, M9 mobile GPS tracking foundation, and M10 mobile GPS reliability and offline buffer.
 
 ## Current Scope
 
@@ -21,12 +21,13 @@ Kootha / Prachar is a low-cost local mic advertisement proof platform. The repos
 - Customer update records that admins can copy and mark as shared by phone call, manual WhatsApp, manual SMS, in person, or other manual method without provider integration.
 - Admin Final Proof Summary review, Ready to Close status, Close Ad Work action, Closed with Issues status, and manual final summary share tracking.
 - Admin copy and print-friendly Final Proof Summary flow for manual sharing or browser print/save as PDF.
-- Admin Phone Location Proof controls, tracking health, and stop action for assigned Ad Works.
+- Admin Phone Location Proof controls, tracking health, offline sync warnings, and stop action for assigned Ad Works.
 - Driver foreground phone location proof with explicit consent, Start Location Proof, Stop Location Proof, and saved location updates only during assigned running work.
+- Driver local offline buffer for Phone Location Proof points with client idempotency keys, retry sync, Sync Now, and unsynced point status.
 - Shared product config, labels, statuses, planning helpers, onboarding validation helpers, execution and proof upload helpers, closure helpers, and public form validation helpers.
 - Supabase migrations with RLS enabled and privacy-safe defaults.
 
-## What is intentionally not included in M9
+## What is intentionally not included in M10
 
 - background location,
 - map integration or route map display,
@@ -243,11 +244,33 @@ Driver Phone Location Proof works from the Android driver app:
 6. Take Break, End Work, admin stop, revoked access, or closure stops Phone Location Proof.
 
 M9 does not add background location, maps, route display, GPS device ingestion, customer live tracking links, reports, payments, provider auto-send, customer app, iOS app, or PWA. Phone location proof records are admin-only. customer_live_enabled and live_tracking_enabled remain false.
+
+## M10 Mobile GPS Reliability And Offline Buffer
+
+Apply the M10 migration after M0 through M9. It adds Phone Location Proof reliability fields, a client idempotency key on location points, and a driver sync RPC for buffered foreground location points.
+
+Driver reliability works from the Android driver app:
+
+1. Start assigned work and choose Start Location Proof with foreground permission.
+2. Each foreground location capture receives a local client point id before upload.
+3. If the phone cannot reach Supabase after capture, the point is saved in AsyncStorage with its assigned work, day, assignment, driver, vehicle, and tracking session ids.
+4. The app retries sync while Location Proof is running and also provides Sync Now.
+5. Accepted client point ids are removed from the local buffer, and repeated failed attempts are shown as Sync Failed.
+
+Admin tracking health works from /admin:
+
+1. Open an Ad Work and review Phone Location Proof.
+2. Admins can see Health, unsynced point count, last phone capture, last received location, last sync, and sync attempt time.
+3. Admin warnings show permission missing, no recent update, sync pending, or sync failed states.
+4. Tracking sessions and location points remain admin-only through RLS. Driver sync access still validates mobile number, Work Code, released assignment, assigned driver, assigned vehicle, and the active or just-completed work window.
+
+M10 remains foreground-only. It does not add background location, route maps, GPS device ingestion, customer live tracking links, reports, payments, provider auto-send, customer app, iOS app, or PWA.
+
 ## Run Driver
 
     pnpm dev:driver
 
-The driver app is Expo React Native and Android-first. M9 requests foreground phone location permission only after the driver opens assigned work, starts work, reads the Location Proof notice, and chooses Start Location Proof. It does not request background location. M7 requests Android photo library access only for selecting photo proof uploads.
+The driver app is Expo React Native and Android-first. M9 requests foreground phone location permission only after the driver opens assigned work, starts work, reads the Location Proof notice, and chooses Start Location Proof. M10 buffers captured location points locally when sync fails and retries them while foreground Location Proof is active. It does not request background location. M7 requests Android photo library access only for selecting photo proof uploads.
 
 ## Verify
 
@@ -270,6 +293,7 @@ Migrations are in supabase/migrations:
 - 20260701070000_m7_proof_upload_customer_update_sharing.sql adds private proof photo storage, driver upload slot RPCs, admin proof review, and manual Customer Update sharing fields.
 - 20260701080000_m8_final_proof_summary_campaign_closure.sql adds admin-only Final Proof Summary records, closure statuses, closure RPCs, and manual final summary share tracking.
 - 20260701090000_m9_mobile_gps_tracking_foundation.sql adds admin-controlled Phone Location Proof, foreground driver tracking RPCs, admin-only tracking session and location point access, and automatic stop rules.
+- 20260701100000_m10_mobile_gps_reliability_offline_buffer.sql adds offline buffer sync metadata, location point client idempotency, driver sync RPCs, and admin tracking health warnings.
 
 M4 keeps customer_live_enabled and live_tracking_enabled false by default and does not add live tracking behavior.
 
@@ -282,3 +306,5 @@ M7 keeps customer_live_enabled and live_tracking_enabled false by default and do
 M8 keeps customer_live_enabled and live_tracking_enabled false by default and does not add live tracking behavior.
 
 M9 keeps customer_live_enabled and live_tracking_enabled false by default and does not add customer live tracking behavior.
+
+M10 keeps customer_live_enabled and live_tracking_enabled false by default and does not add customer live tracking behavior.

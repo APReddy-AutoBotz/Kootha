@@ -59,7 +59,13 @@ export const businessLabels = {
     stopLocationProof: "Stop Location Proof",
     locationProofRunning: "Location Proof Running",
     locationProofStopped: "Location Proof Stopped",
-    locationPermissionNeeded: "Location Permission Needed"
+    locationPermissionNeeded: "Location Permission Needed",
+    syncingLocationProof: "Syncing Location Proof",
+    locationSavedOffline: "Location Saved Offline",
+    locationSynced: "Location Synced",
+    syncFailed: "Sync Failed",
+    trySyncAgain: "Try Sync Again",
+    unsyncedPoints: "Unsynced Points"
   },
   customer: {
     home: "Home",
