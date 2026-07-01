@@ -145,8 +145,7 @@ describe("M10 mobile GPS reliability and offline buffer", () => {
     expect(existsSync(path.resolve("apps/driver/ios"))).toBe(false);
   });
 
-  it("marks M10 complete without starting M11", () => {
+  it("marks M10 complete in the milestone ledger", () => {
     expect(tasks).toMatch(/## Milestone M10 - Mobile GPS Reliability and Offline Buffer[\s\S]*- \[x\]/);
-    expect(tasks).not.toMatch(/## Milestone M11[\s\S]*- \[x\]/);
   });
 });

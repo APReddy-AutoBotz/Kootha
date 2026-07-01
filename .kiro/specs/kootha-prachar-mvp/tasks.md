@@ -78,4 +78,8 @@ Status values:
 
 ## Milestone M11 - Admin Tracking Review Without Maps
 
+- [x] Build admin-only Location Proof Review without maps, including day-wise review, warning summaries, review status/note, safe final summary wording, admin-only RLS, and no public/customer tracking surfaces.
+
+## Milestone M12 - Location Proof in Final Summary
+
 - [ ] Not started.

@@ -33,6 +33,8 @@ import {
   getCustomerUpdateSharingStatusLabel,
   getFinalSummaryShareMethodLabel,
   getLocationQualityLabel,
+  getLocationProofReviewStatusLabel,
+  getLocationProofWarningLabel,
   getPlannedEndDate,
   getProofReviewStatusLabel,
   getProofUploadStatusLabel,
@@ -46,6 +48,7 @@ import {
   packageInterestLabels,
   packageInterestOptions,
   finalSummaryShareMethodOptions,
+  locationProofReviewStatusOptions,
   proofReviewStatusOptions,
   executionProofNoteTypeOptions,
   vehicleCanBeAssigned,
@@ -76,6 +79,8 @@ import type {
   FinalSummaryShareMethod,
   LiveTrackingNeed,
   LocationQuality,
+  LocationProofReviewStatus,
+  LocationProofWarningType,
   PackageInterest,
   ProofReviewStatus,
   ProofUploadStatus,
@@ -360,6 +365,17 @@ type LocationPointRecord = {
   quality: LocationQuality;
   client_point_id: string | null;
   created_at: string;
+};
+
+type LocationProofReviewRecord = {
+  id: string;
+  ad_work_id: string;
+  review_status: LocationProofReviewStatus;
+  review_note: string | null;
+  reviewed_at: string | null;
+  reviewed_by: string | null;
+  created_at: string;
+  updated_at: string | null;
 };
 
 type ProofUploadRecord = {
@@ -783,6 +799,16 @@ const locationPointSelectColumns = [
   "created_at"
 ].join(",");
 
+const locationProofReviewSelectColumns = [
+  "id",
+  "ad_work_id",
+  "review_status",
+  "review_note",
+  "reviewed_at",
+  "reviewed_by",
+  "created_at",
+  "updated_at"
+].join(",");
 const proofUploadSelectColumns = [
   "id",
   "ad_work_id",
@@ -1111,6 +1137,18 @@ async function fetchLocationPoints(config: SupabaseConfig, session: AuthSession,
   return await response.json() as LocationPointRecord[];
 }
 
+async function fetchLocationProofReviews(config: SupabaseConfig, session: AuthSession, adWorkId?: string): Promise<LocationProofReviewRecord[]> {
+  const filter = adWorkId ? "&ad_work_id=eq." + encodeURIComponent(adWorkId) : "";
+  const response = await fetch(config.url + "/rest/v1/location_proof_reviews?select=" + locationProofReviewSelectColumns + filter + "&order=updated_at.desc", {
+    headers: createHeaders(config, session.accessToken)
+  });
+
+  if (!response.ok) {
+    throw new Error("Could not load Location Proof Review records.");
+  }
+
+  return await response.json() as LocationProofReviewRecord[];
+}
 async function fetchAdminProofUploads(config: SupabaseConfig, session: AuthSession, adWorkId?: string): Promise<ProofUploadRecord[]> {
   const filter = adWorkId ? "&ad_work_id=eq." + encodeURIComponent(adWorkId) : "";
   const response = await fetch(config.url + "/rest/v1/proof_uploads?select=" + proofUploadSelectColumns + filter + "&order=created_at.desc", {
@@ -1494,6 +1532,37 @@ async function adminStopMobileTracking(
     tracking_session_id: string;
     status: TrackingSessionStatus;
     stop_reason: TrackingStopReason;
+    result_message: string;
+  }[];
+}
+async function updateLocationProofReview(
+  config: SupabaseConfig,
+  session: AuthSession,
+  adWorkId: string,
+  reviewStatus: LocationProofReviewStatus,
+  reviewNote: string
+) {
+  const response = await fetch(config.url + "/rest/v1/rpc/update_location_proof_review", {
+    method: "POST",
+    headers: createHeaders(config, session.accessToken, true),
+    body: JSON.stringify({
+      p_ad_work_id: adWorkId,
+      p_review_status: reviewStatus,
+      p_review_note: reviewNote.trim() || null
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error("Could not save Location Proof Review.");
+  }
+
+  return await response.json() as {
+    review_id: string;
+    ad_work_id: string;
+    review_status: LocationProofReviewStatus;
+    review_note: string | null;
+    reviewed_at: string | null;
+    reviewed_by: string | null;
     result_message: string;
   }[];
 }
@@ -2208,6 +2277,149 @@ function formatDateTime(value: string | null | undefined) {
   }).format(new Date(value));
 }
 
+const locationProofLateFirstMinutes = 15;
+const locationProofLongGapMinutes = 30;
+const locationProofEndGraceMinutes = 5;
+
+function timestampMs(value: string | null | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const ms = new Date(value).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function formatCount(value: number): string {
+  return new Intl.NumberFormat("en-IN").format(value);
+}
+
+function getPointTime(point: LocationPointRecord): string | null {
+  return point.recorded_at ?? point.received_at ?? null;
+}
+
+function sortLocationPointsAsc(points: LocationPointRecord[]): LocationPointRecord[] {
+  return [...points].sort((left, right) => (timestampMs(getPointTime(left)) ?? 0) - (timestampMs(getPointTime(right)) ?? 0));
+}
+
+function getLatestSession(sessions: TrackingSessionRecord[]): TrackingSessionRecord | null {
+  return [...sessions].sort((left, right) => {
+    const rightMs = timestampMs(right.updated_at ?? right.last_update_at ?? right.created_at) ?? 0;
+    const leftMs = timestampMs(left.updated_at ?? left.last_update_at ?? left.created_at) ?? 0;
+    return rightMs - leftMs;
+  })[0] ?? null;
+}
+
+function plannedDateTimeMs(day: DayDraft, time: string | null | undefined): number | null {
+  if (!day.workDate || !time) {
+    return null;
+  }
+
+  const normalizedTime = time.length === 5 ? time + ":00" : time;
+  return timestampMs(day.workDate + "T" + normalizedTime);
+}
+
+function uniqueLocationProofWarnings(warnings: LocationProofWarningType[]): LocationProofWarningType[] {
+  return [...new Set(warnings)];
+}
+
+function getDayLocationProofWarnings(
+  day: DayDraft,
+  sessions: TrackingSessionRecord[],
+  points: LocationPointRecord[]
+): LocationProofWarningType[] {
+  const warnings: LocationProofWarningType[] = [];
+  const sortedPoints = sortLocationPointsAsc(points);
+  const firstPoint = sortedPoints[0] ?? null;
+  const latestSession = getLatestSession(sessions);
+
+  if (points.length === 0) {
+    warnings.push("no_location_points");
+  }
+
+  if (sessions.some((sessionRow) => sessionRow.status === "permission_missing" || sessionRow.tracking_health_status === "permission_missing")) {
+    warnings.push("permission_missing");
+  }
+
+  if (sessions.some((sessionRow) => sessionRow.tracking_health_status === "sync_failed" || sessionRow.sync_failure_count > 0 || Boolean(sessionRow.sync_error_message))) {
+    warnings.push("sync_failed");
+  }
+
+  const plannedStart = plannedDateTimeMs(day, day.plannedStartTime);
+  const firstPointMs = firstPoint ? timestampMs(getPointTime(firstPoint)) : null;
+  if (plannedStart !== null && firstPointMs !== null && firstPointMs - plannedStart > locationProofLateFirstMinutes * 60 * 1000) {
+    warnings.push("late_first_location");
+  }
+
+  for (let index = 1; index < sortedPoints.length; index += 1) {
+    const previousMs = timestampMs(getPointTime(sortedPoints[index - 1]));
+    const currentMs = timestampMs(getPointTime(sortedPoints[index]));
+    if (previousMs !== null && currentMs !== null && currentMs - previousMs > locationProofLongGapMinutes * 60 * 1000) {
+      warnings.push("long_gap");
+      break;
+    }
+  }
+
+  const plannedEnd = plannedDateTimeMs(day, day.plannedEndTime);
+  const endedMs = timestampMs(latestSession?.ended_at);
+  if (latestSession?.status === "stopped" && day.executionStatus !== "completed" && (plannedEnd === null || endedMs === null || endedMs < plannedEnd)) {
+    warnings.push("stopped_early");
+  }
+
+  const workEndMs = timestampMs(day.executionCompletedAt) ?? plannedEnd;
+  if (workEndMs !== null && sortedPoints.some((point) => {
+    const pointMs = timestampMs(getPointTime(point));
+    return pointMs !== null && pointMs - workEndMs > locationProofEndGraceMinutes * 60 * 1000;
+  })) {
+    warnings.push("points_after_work_end");
+  }
+
+  return uniqueLocationProofWarnings(warnings);
+}
+
+function getOverallLocationProofWarnings(
+  required: boolean,
+  dayDrafts: DayDraft[],
+  sessions: TrackingSessionRecord[],
+  points: LocationPointRecord[]
+): LocationProofWarningType[] {
+  if (!required) {
+    return [];
+  }
+
+  const dayWarnings = dayDrafts.flatMap((day) => {
+    const daySessions = sessions.filter((sessionRow) => sessionRow.ad_work_day_id === day.id);
+    const dayPoints = points.filter((point) => point.ad_work_day_id === day.id);
+    return getDayLocationProofWarnings(day, daySessions, dayPoints);
+  });
+
+  const warnings = [...dayWarnings];
+  if (points.length === 0) {
+    warnings.push("no_location_points");
+  }
+
+  return uniqueLocationProofWarnings(warnings);
+}
+
+function getLocationProofSummaryText(adWork: AdWorkRecord, review: LocationProofReviewRecord | null): string {
+  if (!adWork.mobile_location_proof_required) {
+    return "Phone Location Proof: Not required";
+  }
+
+  if (review?.review_status === "reviewed" || review?.review_status === "accepted") {
+    return "Phone Location Proof: Reviewed by admin";
+  }
+
+  if (review?.review_status === "needs_follow_up" || review?.review_status === "rejected") {
+    return "Phone Location Proof: Needs follow-up";
+  }
+
+  if (review?.review_status === "not_required") {
+    return "Phone Location Proof: Not required";
+  }
+
+  return "Phone Location Proof: Not available";
+}
 function DashboardCards({ adWorks }: { adWorks: AdWorkRecord[] }) {
   const cards = [
     {
@@ -3760,6 +3972,82 @@ function M9SummaryCards({ config, session, adWorks }: { config: SupabaseConfig; 
     </div>
   );
 }
+function M11SummaryCards({ config, session, adWorks }: { config: SupabaseConfig; session: AuthSession; adWorks: AdWorkRecord[] }) {
+  const [sessions, setSessions] = useState<TrackingSessionRecord[]>([]);
+  const [reviews, setReviews] = useState<LocationProofReviewRecord[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadSummary() {
+      const [sessionRows, reviewRows] = await Promise.all([
+        fetchTrackingSessions(config, session),
+        fetchLocationProofReviews(config, session)
+      ]);
+      if (!cancelled) {
+        setSessions(sessionRows);
+        setReviews(reviewRows);
+      }
+    }
+
+    loadSummary().catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [config, session]);
+
+  const today = new Date().toISOString().slice(0, 10);
+  const reviewsByAdWork = new Map(reviews.map((review) => [review.ad_work_id, review]));
+  const pointCountsByAdWork = new Map<string, number>();
+  sessions.forEach((sessionRow) => {
+    if (!sessionRow.ad_work_id) {
+      return;
+    }
+
+    pointCountsByAdWork.set(sessionRow.ad_work_id, (pointCountsByAdWork.get(sessionRow.ad_work_id) ?? 0) + (sessionRow.point_count ?? 0));
+  });
+  const offlineSyncAdWorkIds = new Set(sessions
+    .filter((sessionRow) => sessionRow.ad_work_id && (sessionRow.client_pending_point_count > 0 || sessionRow.sync_failure_count > 0 || Boolean(sessionRow.last_successful_sync_at)))
+    .map((sessionRow) => sessionRow.ad_work_id as string));
+  const requiredAdWorks = adWorks.filter((adWork) => adWork.mobile_location_proof_required);
+  const cards = [
+    {
+      label: "Location Proof Waiting Review",
+      value: requiredAdWorks.filter((adWork) => {
+        const review = reviewsByAdWork.get(adWork.id);
+        return !review || review.review_status === "not_reviewed";
+      }).length
+    },
+    {
+      label: "Needs Follow-up",
+      value: reviews.filter((review) => review.review_status === "needs_follow_up" || review.review_status === "rejected").length
+    },
+    {
+      label: "Ad Works with No Location Points",
+      value: requiredAdWorks.filter((adWork) => (pointCountsByAdWork.get(adWork.id) ?? 0) === 0).length
+    },
+    {
+      label: "Ad Works with Offline Sync",
+      value: offlineSyncAdWorkIds.size
+    },
+    {
+      label: "Location Proof Reviewed Today",
+      value: reviews.filter((review) => Boolean(review.reviewed_at?.startsWith(today))).length
+    }
+  ];
+
+  return (
+    <div className="admin-summary-grid" aria-label="Location Proof Review summary">
+      {cards.map((card) => (
+        <div className="admin-summary-card" key={card.label}>
+          <span>{card.label}</span>
+          <strong>{card.value}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
 function AdminFinalProofSummaryPanel({
   config,
   session,
@@ -4394,43 +4682,81 @@ function AdminMobileLocationProofPanel({
   config,
   session,
   adWork,
+  dayDrafts,
   onUpdated
 }: {
   config: SupabaseConfig;
   session: AuthSession;
   adWork: AdWorkRecord;
+  dayDrafts: DayDraft[];
   onUpdated: () => Promise<void>;
 }) {
   const [required, setRequired] = useState(adWork.mobile_location_proof_required);
   const [note, setNote] = useState(adWork.mobile_location_proof_note ?? "");
   const [sessions, setSessions] = useState<TrackingSessionRecord[]>([]);
   const [points, setPoints] = useState<LocationPointRecord[]>([]);
+  const [review, setReview] = useState<LocationProofReviewRecord | null>(null);
+  const [reviewStatus, setReviewStatus] = useState<LocationProofReviewStatus>("not_reviewed");
+  const [reviewNote, setReviewNote] = useState("");
+  const [showTechnicalLocationValues, setShowTechnicalLocationValues] = useState(false);
   const [message, setMessage] = useState("");
   const [isSaving, setIsSaving] = useState(false);
 
-  const latestSession = sessions[0] ?? null;
-  const latestPoint = points[0] ?? null;
+  const sortedPoints = sortLocationPointsAsc(points);
+  const firstPoint = sortedPoints[0] ?? null;
+  const latestPoint = sortedPoints[sortedPoints.length - 1] ?? null;
+  const latestSession = getLatestSession(sessions);
   const activeSession = sessions.find((sessionRow) => ["running", "paused", "permission_missing", "failed", "not_started"].includes(sessionRow.status));
-  const warnings = [
+  const totalPointsReceived = sessions.reduce((total, sessionRow) => total + (sessionRow.point_count ?? 0), 0) || points.length;
+  const offlinePointsSynced = points.filter((point) => Boolean(point.client_point_id)).length;
+  const unsyncedPoints = sessions.reduce((total, sessionRow) => total + (sessionRow.client_pending_point_count ?? 0), 0);
+  const syncFailureCount = sessions.reduce((total, sessionRow) => total + (sessionRow.sync_failure_count ?? 0), 0);
+  const lastSuccessfulSync = sessions
+    .map((sessionRow) => sessionRow.last_successful_sync_at)
+    .filter(Boolean)
+    .sort()
+    .at(-1) ?? null;
+  const warningTypes = getOverallLocationProofWarnings(required, dayDrafts, sessions, points);
+  const setupWarnings = [
     required && adWork.execution_release_status !== "released_to_driver" ? "Release to driver before the driver can start Phone Location Proof." : "",
     required && !latestSession ? "No Phone Location Proof session yet." : "",
-    latestSession?.status === "permission_missing" || latestSession?.tracking_health_status === "permission_missing" ? "Driver Must Allow Location before updates can be saved." : "",
     latestSession?.tracking_health_status === "no_recent_update" ? "No recent location update received from the driver phone." : "",
-    latestSession?.tracking_health_status === "sync_pending" || (latestSession?.client_pending_point_count ?? 0) > 0 ? "Offline points are pending sync from the driver phone." : "",
-    latestSession?.tracking_health_status === "sync_failed" || (latestSession?.sync_failure_count ?? 0) > 0 ? "Location sync failed. Ask driver to try Sync Now." : "",
-    latestSession?.status === "running" && !latestSession.last_update_at ? "Phone Location Proof is running but no update has been saved yet." : "",
-    latestSession?.status === "running" && latestSession.quality_status === "weak" ? "Weak Location. Ask driver to keep phone location on." : "",
-    latestSession?.status === "stopped" && adWork.execution_overall_status === "completed" ? "Phone Location Proof stopped after work end." : ""
+    latestSession?.tracking_health_status === "sync_pending" || unsyncedPoints > 0 ? "Offline points are pending sync from the driver phone." : "",
+    latestSession?.tracking_health_status === "sync_failed" || syncFailureCount > 0 ? "Location sync failed. Ask driver to try Sync Now." : ""
   ].filter(Boolean);
+  const dayReviews = dayDrafts.map((day) => {
+    const daySessions = sessions.filter((sessionRow) => sessionRow.ad_work_day_id === day.id);
+    const dayPoints = points.filter((point) => point.ad_work_day_id === day.id);
+    const sortedDayPoints = sortLocationPointsAsc(dayPoints);
+    const dayLatestSession = getLatestSession(daySessions);
+    const dayWarningTypes = getDayLocationProofWarnings(day, daySessions, dayPoints);
+    const pendingSync = daySessions.reduce((total, sessionRow) => total + (sessionRow.client_pending_point_count ?? 0), 0);
+    const failedSync = daySessions.reduce((total, sessionRow) => total + (sessionRow.sync_failure_count ?? 0), 0);
+
+    return {
+      day,
+      sessionStatus: dayLatestSession ? getTrackingSessionStatusLabel(dayLatestSession.status) : "Not Started",
+      firstPoint: sortedDayPoints[0] ?? null,
+      lastPoint: sortedDayPoints[sortedDayPoints.length - 1] ?? null,
+      pointCount: daySessions.reduce((total, sessionRow) => total + (sessionRow.point_count ?? 0), 0) || dayPoints.length,
+      offlineSyncStatus: failedSync > 0 ? "Sync Failed" : pendingSync > 0 ? "Sync Pending" : offlinePointsSynced > 0 ? "Synced" : "No Offline Points",
+      warningTypes: dayWarningTypes
+    };
+  });
 
   async function loadTrackingData() {
     try {
-      const [sessionRows, pointRows] = await Promise.all([
+      const [sessionRows, pointRows, reviewRows] = await Promise.all([
         fetchTrackingSessions(config, session, adWork.id),
-        fetchLocationPoints(config, session, adWork.id)
+        fetchLocationPoints(config, session, adWork.id),
+        fetchLocationProofReviews(config, session, adWork.id)
       ]);
+      const loadedReview = reviewRows[0] ?? null;
       setSessions(sessionRows);
       setPoints(pointRows);
+      setReview(loadedReview);
+      setReviewStatus(loadedReview?.review_status ?? "not_reviewed");
+      setReviewNote(loadedReview?.review_note ?? "");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not load Phone Location Proof.");
     }
@@ -4459,6 +4785,23 @@ function AdminMobileLocationProofPanel({
     }
   }
 
+  async function handleSaveLocationProofReview(statusOverride?: LocationProofReviewStatus) {
+    setIsSaving(true);
+    setMessage("");
+
+    try {
+      const nextStatus = statusOverride ?? reviewStatus;
+      const result = await updateLocationProofReview(config, session, adWork.id, nextStatus, reviewNote);
+      setMessage(result[0]?.result_message ?? "Location Proof Review saved.");
+      await onUpdated();
+      await loadTrackingData();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not save Location Proof Review.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
   async function handleAdminStop(trackingSessionId: string) {
     setIsSaving(true);
     setMessage("");
@@ -4479,9 +4822,9 @@ function AdminMobileLocationProofPanel({
       <div className="panel-heading">
         <div>
           <h3 id="mobile-location-proof-title">{businessLabels.admin.phoneLocationProof}</h3>
-          <p>Phone location is collected only during assigned work after the driver allows it.</p>
+          <p>Admin-only Location Proof Review uses phone points without maps, routes, distance billing, or customer live tracking.</p>
         </div>
-        <span className="status-pill">{required ? "Required" : "Not Required"}</span>
+        <span className="status-pill">{required ? "Mobile Location Proof Required" : "Not Required"}</span>
       </div>
 
       {message && <p className="form-status admin-message" role="status">{message}</p>}
@@ -4508,16 +4851,40 @@ function AdminMobileLocationProofPanel({
           <dd>Phone Location</dd>
         </div>
         <div>
-          <dt>Driver permission</dt>
-          <dd>{businessLabels.admin.driverMustAllowLocation}</dd>
+          <dt>Session Status</dt>
+          <dd>{latestSession ? getTrackingSessionStatusLabel(latestSession.status) : "Not Started"}</dd>
         </div>
         <div>
-          <dt>Start rule</dt>
-          <dd>{businessLabels.admin.trackingStartsOnlyDuringWork}</dd>
+          <dt>First Location Received</dt>
+          <dd>{formatDateTime(firstPoint?.received_at)}</dd>
         </div>
         <div>
-          <dt>Stop rule</dt>
-          <dd>{businessLabels.admin.trackingStopsAfterWork}</dd>
+          <dt>Last Location Received</dt>
+          <dd>{formatDateTime(latestSession?.last_update_at ?? latestPoint?.received_at)}</dd>
+        </div>
+        <div>
+          <dt>Points Received</dt>
+          <dd>{formatCount(totalPointsReceived)}</dd>
+        </div>
+        <div>
+          <dt>Offline Points Synced</dt>
+          <dd>{formatCount(offlinePointsSynced)}</dd>
+        </div>
+        <div>
+          <dt>Unsynced Points</dt>
+          <dd>{formatCount(unsyncedPoints)}</dd>
+        </div>
+        <div>
+          <dt>Last Sync</dt>
+          <dd>{formatDateTime(lastSuccessfulSync)}</dd>
+        </div>
+        <div>
+          <dt>Sync Failures</dt>
+          <dd>{formatCount(syncFailureCount)}</dd>
+        </div>
+        <div>
+          <dt>Quality</dt>
+          <dd>{latestSession ? getLocationQualityLabel(latestSession.quality_status) : "Unknown"}</dd>
         </div>
         <div>
           <dt>Customer Live Tracking</dt>
@@ -4542,26 +4909,138 @@ function AdminMobileLocationProofPanel({
       </div>
 
       <div className="lead-submitted-copy">
-        <h3>Location health</h3>
-        <p>Status: {latestSession ? getTrackingSessionStatusLabel(latestSession.status) : "Not Started"}</p>
-        <p>Health: {latestSession ? getTrackingHealthStatusLabel(latestSession.tracking_health_status) : "Stopped"}</p>
-        <p>Points saved: {latestSession?.point_count ?? 0}</p>
-        <p>Unsynced points: {latestSession?.client_pending_point_count ?? 0}</p>
-        <p>Quality: {latestSession ? getLocationQualityLabel(latestSession.quality_status) : "Unknown"}</p>
-        <p>Last location received: {formatDateTime(latestSession?.last_update_at)}</p>
-        <p>Last captured on phone: {formatDateTime(latestSession?.client_last_capture_at)}</p>
-        <p>Last sync: {formatDateTime(latestSession?.last_successful_sync_at)}</p>
-        <p>Sync attempts: {formatDateTime(latestSession?.last_sync_attempt_at)}</p>
-        <p>Stop reason: {latestSession?.stop_reason ? getTrackingStopReasonLabel(latestSession.stop_reason) : "Not stopped"}</p>
-        {latestPoint ? (
-          <p>Latest point: {latestPoint.lat}, {latestPoint.lng} | Accuracy: {latestPoint.accuracy_meters ?? "not set"} m | {formatDateTime(latestPoint.recorded_at)}</p>
-        ) : (
-          <p>No location points saved yet.</p>
-        )}
-        <h3>Warnings</h3>
-        {warnings.length === 0 ? (
+        <h3>Location Proof Review</h3>
+        <p>{getLocationProofSummaryText({ ...adWork, mobile_location_proof_required: required }, review)}</p>
+        <p>Review Status: {getLocationProofReviewStatusLabel(review?.review_status ?? reviewStatus)}</p>
+        <p>Reviewed: {formatDateTime(review?.reviewed_at)}</p>
+        <p>Reviewed By: {review?.reviewed_by ?? "Not set"}</p>
+        <label>
+          Review Location Proof
+          <select value={reviewStatus} onChange={(event) => setReviewStatus(event.target.value as LocationProofReviewStatus)}>
+            {locationProofReviewStatusOptions.map((status) => (
+              <option value={status} key={status}>{getLocationProofReviewStatusLabel(status)}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Review note
+          <textarea
+            value={reviewNote}
+            maxLength={1000}
+            onChange={(event) => setReviewNote(event.target.value)}
+          />
+        </label>
+        <div className="admin-action-row">
+          <button className="primary-button" type="button" onClick={() => void handleSaveLocationProofReview()} disabled={isSaving}>
+            Save Review
+          </button>
+          <button className="secondary-button" type="button" onClick={() => void handleSaveLocationProofReview("reviewed")} disabled={isSaving}>
+            Mark as Reviewed
+          </button>
+          <button className="secondary-button" type="button" onClick={() => void handleSaveLocationProofReview("needs_follow_up")} disabled={isSaving}>
+            Needs Follow-up
+          </button>
+        </div>
+      </div>
+
+      <div className="lead-submitted-copy">
+        <h3>Readiness Warnings</h3>
+        {setupWarnings.map((warning) => <p key={warning}>{warning}</p>)}
+        {warningTypes.length === 0 && setupWarnings.length === 0 ? (
           <p>No warnings.</p>
-        ) : warnings.map((warning) => <p key={warning}>{warning}</p>)}
+        ) : warningTypes.map((warning) => <p key={warning}>{getLocationProofWarningLabel(warning)}</p>)}
+      </div>
+
+      <div className="lead-submitted-copy">
+        <h3>Day-wise Tracking Review</h3>
+        <table className="admin-data-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Day Status</th>
+              <th>Planned Start / End</th>
+              <th>Session Status</th>
+              <th>First Point</th>
+              <th>Last Point</th>
+              <th>Point Count</th>
+              <th>Offline Sync Status</th>
+              <th>Warning Count</th>
+              <th>Review Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {dayReviews.length === 0 ? (
+              <tr>
+                <td colSpan={10}>No planned work days yet.</td>
+              </tr>
+            ) : dayReviews.map((dayReview) => (
+              <tr key={dayReview.day.id}>
+                <td>{formatDate(dayReview.day.workDate)}</td>
+                <td>{getAdWorkExecutionDayStatusLabel(dayReview.day.executionStatus)}</td>
+                <td>{dayReview.day.plannedStartTime || "Not set"} / {dayReview.day.plannedEndTime || "Not set"}</td>
+                <td>{dayReview.sessionStatus}</td>
+                <td>{formatDateTime(dayReview.firstPoint?.received_at)}</td>
+                <td>{formatDateTime(dayReview.lastPoint?.received_at)}</td>
+                <td>{formatCount(dayReview.pointCount)}</td>
+                <td>{dayReview.offlineSyncStatus}</td>
+                <td>{formatCount(dayReview.warningTypes.length)}</td>
+                <td>{getLocationProofReviewStatusLabel(review?.review_status ?? reviewStatus)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {dayReviews.some((dayReview) => dayReview.warningTypes.length > 0) && (
+          <div>
+            <h4>Day Warning Details</h4>
+            {dayReviews.map((dayReview) => dayReview.warningTypes.length > 0 ? (
+              <p key={dayReview.day.id}>{formatDate(dayReview.day.workDate)}: {dayReview.warningTypes.map(getLocationProofWarningLabel).join(", ")}</p>
+            ) : null)}
+          </div>
+        )}
+      </div>
+
+      <div className="lead-submitted-copy">
+        <div className="panel-heading">
+          <div>
+            <h3>Internal Point Review</h3>
+            <p>Coordinates stay hidden unless an admin opens technical location values.</p>
+          </div>
+          <button className="secondary-button" type="button" onClick={() => setShowTechnicalLocationValues((visible) => !visible)}>
+            {showTechnicalLocationValues ? "Hide technical location values" : "Show technical location values"}
+          </button>
+        </div>
+        <table className="admin-data-table">
+          <thead>
+            <tr>
+              <th>Captured</th>
+              <th>Received</th>
+              <th>Accuracy</th>
+              <th>Speed</th>
+              <th>Source</th>
+              <th>Sync Status</th>
+              <th>Quality</th>
+              {showTechnicalLocationValues && <th>Technical Location Values</th>}
+            </tr>
+          </thead>
+          <tbody>
+            {points.length === 0 ? (
+              <tr>
+                <td colSpan={showTechnicalLocationValues ? 8 : 7}>No location points saved yet.</td>
+              </tr>
+            ) : points.map((point) => (
+              <tr key={point.id}>
+                <td>{formatDateTime(point.recorded_at)}</td>
+                <td>{formatDateTime(point.received_at)}</td>
+                <td>{point.accuracy_meters === null ? "Not set" : point.accuracy_meters + " m"}</td>
+                <td>{point.speed === null ? "Not set" : point.speed}</td>
+                <td>Phone</td>
+                <td>{point.client_point_id ? "Synced from offline buffer" : "Saved"}</td>
+                <td>{getLocationQualityLabel(point.quality)}</td>
+                {showTechnicalLocationValues && <td>{point.lat}, {point.lng}</td>}
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
 
       <div className="lead-submitted-copy">
@@ -4570,14 +5049,13 @@ function AdminMobileLocationProofPanel({
           <p>No sessions yet.</p>
         ) : sessions.map((sessionRow) => (
           <p key={sessionRow.id}>
-            {getTrackingSessionStatusLabel(sessionRow.status)} - {getTrackingHealthStatusLabel(sessionRow.tracking_health_status)} - {sessionRow.point_count} points - {sessionRow.client_pending_point_count} unsynced - Last received {formatDateTime(sessionRow.last_update_at)} - Last sync {formatDateTime(sessionRow.last_successful_sync_at)} - Stop {sessionRow.stop_reason ? getTrackingStopReasonLabel(sessionRow.stop_reason) : "not stopped"}
+            {getTrackingSessionStatusLabel(sessionRow.status)} - {getTrackingHealthStatusLabel(sessionRow.tracking_health_status)} - {formatCount(sessionRow.point_count)} points - {formatCount(sessionRow.client_pending_point_count)} unsynced - Last received {formatDateTime(sessionRow.last_update_at)} - Last sync {formatDateTime(sessionRow.last_successful_sync_at)} - Stop {sessionRow.stop_reason ? getTrackingStopReasonLabel(sessionRow.stop_reason) : "not stopped"}
           </p>
         ))}
       </div>
     </section>
   );
-}
-function AdminExecutionPanel({
+}function AdminExecutionPanel({
   config,
   session,
   adWork,
@@ -5194,6 +5672,7 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
         {activeView === "dashboard" && <M7SummaryCards config={config} session={session} />}
         {activeView === "dashboard" && <M8SummaryCards config={config} session={session} adWorks={adWorks} />}
         {activeView === "dashboard" && <M9SummaryCards config={config} session={session} adWorks={adWorks} />}
+        {activeView === "dashboard" && <M11SummaryCards config={config} session={session} adWorks={adWorks} />}
         {activeView === "enquiries" && <EnquirySummaryCards enquiries={enquiries} />}
 
         {loadError && <p className="form-alert admin-message" role="alert">{loadError}</p>}
@@ -5876,6 +6355,7 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
                     config={config}
                     session={session}
                     adWork={selectedAdWork}
+                    dayDrafts={dayDrafts}
                     onUpdated={loadData}
                   />
 
