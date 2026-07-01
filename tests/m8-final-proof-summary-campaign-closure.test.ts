@@ -180,6 +180,7 @@ describe("M8 final proof summary and campaign closure", () => {
     expect(m8Migration).toContain("create or replace function public.prepare_final_proof_summary");
     expect(m8Migration).toContain("create or replace function public.close_ad_work_with_final_summary");
     expect(m8Migration).toContain("create or replace function public.mark_final_summary_shared");
+    expect(m8Migration).toContain("if v_day_count = 0 or v_incomplete_day_count > 0 then");
     expect(m8Migration).toContain("if not public.is_admin() then");
     expect(lowerSql).toContain("security definer");
     expect(lowerSql).toContain("set search_path = public");

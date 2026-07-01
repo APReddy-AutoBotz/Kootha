@@ -287,6 +287,7 @@ declare
   v_approved_proof_count integer := 0;
   v_issue_count integer := 0;
   v_incomplete_day_count integer := 0;
+  v_day_count integer := 0;
 begin
   if not public.is_admin() then
     raise exception 'Admin access required' using errcode = '42501';
@@ -307,15 +308,13 @@ begin
       and assignment.status = 'ready_for_execution'
   ) into v_has_assignment;
 
-  select count(*) into v_incomplete_day_count
+  select
+    count(*),
+    count(*) filter (where day_row.execution_status <> 'completed'),
+    count(*) filter (where day_row.execution_status = 'issue_reported')
+  into v_day_count, v_incomplete_day_count, v_issue_count
   from public.ad_work_days day_row
-  where day_row.ad_work_id = p_ad_work_id
-    and day_row.execution_status <> 'completed';
-
-  select count(*) into v_issue_count
-  from public.ad_work_days day_row
-  where day_row.ad_work_id = p_ad_work_id
-    and day_row.execution_status = 'issue_reported';
+  where day_row.ad_work_id = p_ad_work_id;
 
   select count(*) into v_waiting_proof_count
   from public.proof_uploads proof
@@ -348,7 +347,7 @@ begin
     v_warnings := array_append(v_warnings, 'Ad Work was not released to driver.');
   end if;
 
-  if v_incomplete_day_count > 0 then
+  if v_day_count = 0 or v_incomplete_day_count > 0 then
     v_warnings := array_append(v_warnings, 'Some planned days are not completed.');
     v_blocking_warning_count := v_blocking_warning_count + 1;
   end if;
