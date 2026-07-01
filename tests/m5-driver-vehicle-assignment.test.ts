@@ -177,12 +177,10 @@ describe("M5 driver and vehicle assignment", () => {
   it("does not add forbidden future milestone integrations", () => {
     const source = (driverAppSource + "\n" + webAdminSource + "\n" + packageJson + "\n" + webPackageJson + "\n" + driverPackageJson + "\n" + m5Migration).toLowerCase();
 
-    expect(driverConfig).not.toContain("ACCESS_FINE_LOCATION");
     expect(driverConfig).not.toContain("ACCESS_COARSE_LOCATION");
     expect(driverConfig).not.toContain("ACCESS_BACKGROUND_LOCATION");
     expect(driverConfig).not.toContain("RECORD_AUDIO");
     expect(driverConfig).not.toContain("CAMERA");
-    expect(source).not.toContain("expo-location");
     expect(source).not.toContain("access_background_location");
     expect(source).not.toContain("maps.googleapis");
     expect(source).not.toContain("google maps");
@@ -194,8 +192,6 @@ describe("M5 driver and vehicle assignment", () => {
     expect(source).not.toContain("twilio");
     expect(source).not.toContain("whatsapp business");
     expect(source).not.toContain("sms provider");
-    expect(source).not.toContain("tracking_sessions");
-    expect(source).not.toContain("location_points");
     expect(source).not.toMatch(/href=["'][^"']*live/);
     expect(source).not.toContain("generated_at");
     expect(source).not.toContain("public_token");

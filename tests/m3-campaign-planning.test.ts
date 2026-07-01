@@ -151,12 +151,10 @@ describe("M3 campaign planning and scheduling", () => {
     const combinedPackages = (packageJson + "\n" + webPackageJson + "\n" + driverPackageJson).toLowerCase();
     const frontendSource = (webAppSource + "\n" + webAdminSource).toLowerCase();
 
-    expect(driverConfig).not.toContain("ACCESS_FINE_LOCATION");
     expect(driverConfig).not.toContain("ACCESS_COARSE_LOCATION");
     expect(driverConfig).not.toContain("ACCESS_BACKGROUND_LOCATION");
     expect(driverConfig).not.toContain("RECORD_AUDIO");
     expect(driverConfig).not.toContain("CAMERA");
-    expect(combinedPackages).not.toContain("expo-location");
     expect(frontendSource).not.toContain("maps.googleapis");
     expect(frontendSource).not.toContain("google maps");
     expect(frontendSource).not.toContain("mapbox");
@@ -189,8 +187,6 @@ describe("M3 campaign planning and scheduling", () => {
 
     expect(combined).not.toContain("actual_start_time");
     expect(combined).not.toContain("actual_end_time");
-    expect(combined).not.toContain("tracking_sessions");
-    expect(combined).not.toContain("location_points");
     expect(combined).not.toContain("generated_at");
     expect(combined).not.toContain("public_token");
   });

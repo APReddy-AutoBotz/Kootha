@@ -121,19 +121,15 @@ describe("M6 ad work execution without GPS", () => {
   it("does not add GPS, report, payment, or provider behavior", () => {
     const source = (driverAppSource + "\n" + webAdminSource + "\n" + packageJson + "\n" + webPackageJson + "\n" + driverPackageJson + "\n" + m6Migration).toLowerCase();
 
-    expect(driverConfig).not.toContain("ACCESS_FINE_LOCATION");
     expect(driverConfig).not.toContain("ACCESS_COARSE_LOCATION");
     expect(driverConfig).not.toContain("ACCESS_BACKGROUND_LOCATION");
     expect(driverConfig).not.toContain("RECORD_AUDIO");
     expect(driverConfig).not.toContain("CAMERA");
-    expect(source).not.toContain("expo-location");
     expect(source).not.toContain("access_background_location");
     expect(source).not.toContain("maps.googleapis");
     expect(source).not.toContain("google maps");
     expect(source).not.toContain("mapbox");
     expect(source).not.toContain("leaflet");
-    expect(source).not.toContain("tracking_sessions");
-    expect(source).not.toContain("location_points");
     expect(source).not.toContain("expo-camera");
     expect(source).not.toContain("expo-av");
     expect(source).not.toContain("camera");

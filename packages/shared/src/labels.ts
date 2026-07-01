@@ -53,7 +53,13 @@ export const businessLabels = {
     areaOrPlaceName: "Area or Place Name",
     whatHappened: "What happened?",
     submitProof: "Submit Proof",
-    proofSent: "Proof Sent"
+    proofSent: "Proof Sent",
+    allowLocationProof: "Allow Location Proof",
+    startLocationProof: "Start Location Proof",
+    stopLocationProof: "Stop Location Proof",
+    locationProofRunning: "Location Proof Running",
+    locationProofStopped: "Location Proof Stopped",
+    locationPermissionNeeded: "Location Permission Needed"
   },
   customer: {
     home: "Home",
@@ -112,7 +118,12 @@ export const businessLabels = {
     copyMessage: "Copy Message",
     copyFinalSummary: "Copy Final Summary",
     markAsShared: "Mark as Shared",
-    customerUpdate: "Customer Update"
+    customerUpdate: "Customer Update",
+    phoneLocationProof: "Phone Location Proof",
+    locationProofRequired: "Location Proof Required",
+    driverMustAllowLocation: "Driver Must Allow Location",
+    trackingStartsOnlyDuringWork: "Tracking Starts Only During Work",
+    trackingStopsAfterWork: "Tracking Stops After Work"
   }
 } as const;
 

@@ -217,10 +217,8 @@ describe("M8 final proof summary and campaign closure", () => {
   it("does not add GPS tracking, maps, provider sending, payments, customer apps, iOS, or PWA", () => {
     const source = (driverAppSource + "\n" + webAdminSource + "\n" + packageJson + "\n" + webPackageJson + "\n" + driverPackageJson + "\n" + m8Migration).toLowerCase();
 
-    expect(driverConfig).not.toContain("ACCESS_FINE_LOCATION");
     expect(driverConfig).not.toContain("ACCESS_COARSE_LOCATION");
     expect(driverConfig).not.toContain("ACCESS_BACKGROUND_LOCATION");
-    expect(source).not.toContain("expo-location");
     expect(source).not.toContain("maps.googleapis");
     expect(source).not.toContain("google maps");
     expect(source).not.toContain("mapbox");
@@ -256,6 +254,7 @@ describe("M8 final proof summary and campaign closure", () => {
 
   it("marks M8 complete without starting future milestones", () => {
     expect(tasks).toMatch(/## Milestone M8 - Final Proof Summary and Campaign Closure[\s\S]*- \[x\]/);
-    expect(tasks).not.toMatch(/## Milestone M9[\s\S]*- \[x\]/);
+    expect(tasks).toMatch(/## Milestone M9 - Mobile GPS Tracking Foundation[\s\S]*- \[x\]/);
+    expect(tasks).not.toMatch(/## Milestone M10[\s\S]*- \[x\]/);
   });
 });

@@ -1,16 +1,21 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import * as ImagePicker from "expo-image-picker";
+import * as Location from "expo-location";
 import {
   adWorkExecutionDayStatusLabels,
   businessLabels,
   canEndWork,
   canResumeWork,
+  canStartMobileLocationProof,
   canStartWork,
   canTakeBreak,
   canUploadPhotoProof,
   executionProofNoteTypeLabels,
   executionProofNoteTypeOptions,
+  getLocationQualityFromAccuracy,
+  getTrackingSessionStatusLabel,
   initialDriverApplication,
+  mobileLocationProofConsentText,
   proofPhotoBucketName,
   resolveProductName,
   validateDriverApplication,
@@ -28,6 +33,8 @@ import type {
   DriverApplicationInput,
   DriverExecutionAction,
   ExecutionProofNoteType,
+  TrackingSessionStatus,
+  TrackingStopReason,
   VehicleOwnership,
   VehicleType,
   YesNoNotSure
@@ -71,6 +78,22 @@ type DriverWorkRow = {
   execution_status: AdWorkExecutionDayStatus;
   vehicle_number: string | null;
   special_instructions: string | null;
+  mobile_location_proof_required: boolean;
+  mobile_location_proof_note: string | null;
+  mobile_location_tracking_mode: string | null;
+  mobile_tracking_session_id: string | null;
+  mobile_tracking_status: TrackingSessionStatus;
+  mobile_location_point_count: number;
+  mobile_last_location_update_at: string | null;
+};
+
+type MobileTrackingResult = {
+  tracking_session_id: string;
+  status: TrackingSessionStatus;
+  point_count?: number;
+  quality_status?: string;
+  stop_reason?: TrackingStopReason;
+  result_message: string;
 };
 
 function getDriverSupabaseConfig() {
@@ -187,7 +210,137 @@ async function saveWorkAction(input: {
     throw new Error("Could not save work update.");
   }
 }
+async function startMobileTracking(input: {
+  mobileNumber: string;
+  workCode: string;
+  dayId: string;
+  driverConsent: boolean;
+}): Promise<MobileTrackingResult> {
+  const config = getDriverSupabaseConfig();
 
+  if (!config) {
+    throw new Error("Driver work access is not configured in this environment.");
+  }
+
+  const response = await fetch(config.url + "/rest/v1/rpc/driver_start_mobile_tracking", {
+    method: "POST",
+    headers: createPublicHeaders(config, true),
+    body: JSON.stringify({
+      p_mobile: input.mobileNumber.trim(),
+      p_work_code: input.workCode.trim(),
+      p_ad_work_day_id: input.dayId,
+      p_driver_consent: input.driverConsent
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error("Could not start Location Proof.");
+  }
+
+  const rows = await response.json() as MobileTrackingResult[];
+  return rows[0];
+}
+
+async function markMobileLocationPermissionMissing(input: {
+  mobileNumber: string;
+  workCode: string;
+  dayId: string;
+}): Promise<MobileTrackingResult> {
+  const config = getDriverSupabaseConfig();
+
+  if (!config) {
+    throw new Error("Driver work access is not configured in this environment.");
+  }
+
+  const response = await fetch(config.url + "/rest/v1/rpc/driver_mark_mobile_location_permission_missing", {
+    method: "POST",
+    headers: createPublicHeaders(config, true),
+    body: JSON.stringify({
+      p_mobile: input.mobileNumber.trim(),
+      p_work_code: input.workCode.trim(),
+      p_ad_work_day_id: input.dayId
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error("Location Permission Needed.");
+  }
+
+  const rows = await response.json() as MobileTrackingResult[];
+  return rows[0];
+}
+
+async function recordMobileLocationPoint(input: {
+  mobileNumber: string;
+  workCode: string;
+  trackingSessionId: string;
+  latitude: number;
+  longitude: number;
+  accuracy: number | null;
+  speed: number | null;
+  heading: number | null;
+  capturedAt: string;
+}): Promise<MobileTrackingResult> {
+  const config = getDriverSupabaseConfig();
+
+  if (!config) {
+    throw new Error("Driver work access is not configured in this environment.");
+  }
+
+  const response = await fetch(config.url + "/rest/v1/rpc/driver_record_mobile_location_point", {
+    method: "POST",
+    headers: createPublicHeaders(config, true),
+    body: JSON.stringify({
+      p_mobile: input.mobileNumber.trim(),
+      p_work_code: input.workCode.trim(),
+      p_tracking_session_id: input.trackingSessionId,
+      p_lat: input.latitude,
+      p_lng: input.longitude,
+      p_accuracy: input.accuracy,
+      p_speed: input.speed,
+      p_heading: input.heading,
+      p_captured_at: input.capturedAt
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error("Could not save location update.");
+  }
+
+  const rows = await response.json() as MobileTrackingResult[];
+  return rows[0];
+}
+
+async function stopMobileTracking(input: {
+  mobileNumber: string;
+  workCode: string;
+  trackingSessionId: string;
+  stopReason: TrackingStopReason;
+}): Promise<MobileTrackingResult> {
+  const config = getDriverSupabaseConfig();
+
+  if (!config) {
+    throw new Error("Driver work access is not configured in this environment.");
+  }
+
+  const response = await fetch(config.url + "/rest/v1/rpc/driver_stop_mobile_tracking", {
+    method: "POST",
+    headers: createPublicHeaders(config, true),
+    body: JSON.stringify({
+      p_mobile: input.mobileNumber.trim(),
+      p_work_code: input.workCode.trim(),
+      p_tracking_session_id: input.trackingSessionId,
+      p_stop_reason: input.stopReason
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error("Could not stop Location Proof.");
+  }
+
+  const rows = await response.json() as MobileTrackingResult[];
+  return rows[0];
+}
 function encodeStoragePath(path: string): string {
   return path.split("/").map((segment) => encodeURIComponent(segment)).join("/");
 }
@@ -390,6 +543,14 @@ export function App() {
   const [proofType, setProofType] = useState<ExecutionProofNoteType>("area_covered");
   const [proofPhoto, setProofPhoto] = useState<ImagePicker.ImagePickerAsset | null>(null);
   const [isProofSubmitting, setIsProofSubmitting] = useState(false);
+  const [locationUnderstanding, setLocationUnderstanding] = useState(false);
+  const [locationAgreement, setLocationAgreement] = useState(false);
+  const [locationSessionId, setLocationSessionId] = useState<string | null>(null);
+  const [locationStatus, setLocationStatus] = useState<TrackingSessionStatus>("not_started");
+  const [locationPointCount, setLocationPointCount] = useState(0);
+  const [lastLocationUpdate, setLastLocationUpdate] = useState<string | null>(null);
+  const [locationMessage, setLocationMessage] = useState("");
+  const [isLocationBusy, setIsLocationBusy] = useState(false);
   const configured = useMemo(() => Boolean(getDriverSupabaseConfig()), []);
   const today = new Date().toISOString().slice(0, 10);
   const currentWork = workRows.find((row) => row.planned_date === today)
@@ -397,6 +558,35 @@ export function App() {
     ?? workRows[0]
     ?? null;
   const currentStatus = currentWork?.execution_status ?? "planned";
+  const mobileLocationProofRequired = Boolean(currentWork?.mobile_location_proof_required);
+  const canStartLocationProof = currentWork ? canStartMobileLocationProof({
+    mobileLocationProofRequired,
+    assignmentStatus: "ready_for_execution",
+    releaseStatus: "released_to_driver",
+    dayStatus: currentStatus,
+    closureStatus: null
+  }) : false;
+  const canSaveLocationUpdate = Boolean(locationSessionId) && locationStatus === "running" && currentStatus === "running";
+
+  useEffect(() => {
+    setLocationSessionId(currentWork?.mobile_tracking_session_id ?? null);
+    setLocationStatus(currentWork?.mobile_tracking_status ?? "not_started");
+    setLocationPointCount(currentWork?.mobile_location_point_count ?? 0);
+    setLastLocationUpdate(currentWork?.mobile_last_location_update_at ?? null);
+    setLocationMessage("");
+  }, [currentWork?.ad_work_day_id, currentWork?.mobile_tracking_session_id, currentWork?.mobile_tracking_status, currentWork?.mobile_location_point_count, currentWork?.mobile_last_location_update_at]);
+
+  useEffect(() => {
+    if (!locationSessionId || locationStatus !== "running" || currentStatus !== "running") {
+      return undefined;
+    }
+
+    const timer = setInterval(() => {
+      void recordCurrentLocationPoint(locationSessionId, false);
+    }, 60000);
+
+    return () => clearInterval(timer);
+  }, [locationSessionId, locationStatus, currentStatus, mobileNumber, workCode]);
 
   function updateField<K extends keyof DriverApplicationInput>(field: K, value: DriverApplicationInput[K]) {
     setForm((current) => ({ ...current, [field]: value }));
@@ -427,6 +617,96 @@ export function App() {
     }
   }
 
+  async function recordCurrentLocationPoint(trackingSessionId: string, showMessage = true) {
+    try {
+      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const localQuality = getLocationQualityFromAccuracy(position.coords.accuracy);
+      const result = await recordMobileLocationPoint({
+        mobileNumber,
+        workCode,
+        trackingSessionId,
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        accuracy: position.coords.accuracy,
+        speed: position.coords.speed,
+        heading: position.coords.heading,
+        capturedAt: new Date(position.timestamp).toISOString()
+      });
+      setLocationPointCount(result?.point_count ?? locationPointCount + 1);
+      setLastLocationUpdate(new Date().toISOString());
+      setLocationStatus("running");
+      if (showMessage) {
+        setLocationMessage("Location update saved (" + localQuality + ").");
+      }
+    } catch (error) {
+      if (showMessage) {
+        setLocationMessage(error instanceof Error ? error.message : "Could not save location update.");
+      }
+    }
+  }
+
+  async function handleStartLocationProof() {
+    if (!currentWork) {
+      return;
+    }
+
+    if (!locationUnderstanding || !locationAgreement) {
+      setLocationMessage("Read and allow Location Proof first.");
+      return;
+    }
+
+    if (!canStartLocationProof) {
+      setLocationMessage("Start Work before Location Proof.");
+      return;
+    }
+
+    try {
+      setIsLocationBusy(true);
+      setLocationMessage("");
+      const permission = await Location.requestForegroundPermissionsAsync();
+
+      if (!permission.granted) {
+        const missing = await markMobileLocationPermissionMissing({ mobileNumber, workCode, dayId: currentWork.ad_work_day_id });
+        setLocationSessionId(missing?.tracking_session_id ?? null);
+        setLocationStatus("permission_missing");
+        setLocationMessage(driverLabels.locationPermissionNeeded + ".");
+        return;
+      }
+
+      const result = await startMobileTracking({
+        mobileNumber,
+        workCode,
+        dayId: currentWork.ad_work_day_id,
+        driverConsent: true
+      });
+      setLocationSessionId(result.tracking_session_id);
+      setLocationStatus(result.status);
+      setLocationPointCount(result.point_count ?? 0);
+      await recordCurrentLocationPoint(result.tracking_session_id, false);
+      setLocationMessage(driverLabels.locationProofRunning + ".");
+    } catch (error) {
+      setLocationMessage(error instanceof Error ? error.message : "Could not start Location Proof.");
+    } finally {
+      setIsLocationBusy(false);
+    }
+  }
+
+  async function handleStopLocationProof(stopReason: TrackingStopReason = "other") {
+    if (!locationSessionId) {
+      return;
+    }
+
+    try {
+      setIsLocationBusy(true);
+      const result = await stopMobileTracking({ mobileNumber, workCode, trackingSessionId: locationSessionId, stopReason });
+      setLocationStatus(result.status);
+      setLocationMessage(result.result_message || driverLabels.locationProofStopped + ".");
+    } catch (error) {
+      setLocationMessage(error instanceof Error ? error.message : "Could not stop Location Proof.");
+    } finally {
+      setIsLocationBusy(false);
+    }
+  }
   async function handleWorkAction(action: DriverExecutionAction) {
     if (!currentWork) {
       return;
@@ -457,6 +737,15 @@ export function App() {
         areaPlaceName: action === "add_proof_note" ? proofArea : undefined,
         proofType: action === "add_proof_note" ? proofType : undefined
       });
+      if (action === "take_break" && locationSessionId) {
+        await handleStopLocationProof("break_started");
+      }
+      if (action === "end" && locationSessionId) {
+        await handleStopLocationProof("work_ended");
+      }
+      if ((action === "start" || action === "resume") && currentWork.mobile_location_proof_required) {
+        setLocationMessage("Allow Location Proof, then choose Start Location Proof.");
+      }
       await refreshAssignedWork();
       setWorkMessage(action === "end" ? driverLabels.workCompleted : "Work update saved.");
       if (action === "end") {
@@ -635,7 +924,39 @@ export function App() {
               <SecondaryButton label={driverLabels.takeBreak} disabled={!canTakeBreak(currentStatus) || isWorkLoading} onPress={() => void handleWorkAction("take_break")} />
               <SecondaryButton label={driverLabels.resumeWork} disabled={!canResumeWork(currentStatus) || isWorkLoading} onPress={() => void handleWorkAction("resume")} />
             </View>
-
+            {mobileLocationProofRequired && (
+              <View style={styles.locationProofBox}>
+                <Text style={styles.sectionTitle}>{driverLabels.allowLocationProof}</Text>
+                <Text style={styles.body}>{mobileLocationProofConsentText}</Text>
+                {currentWork.mobile_location_proof_note ? <Text style={styles.notice}>{currentWork.mobile_location_proof_note}</Text> : null}
+                <Pressable
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: locationUnderstanding }}
+                  style={styles.consentRow}
+                  onPress={() => setLocationUnderstanding((current) => !current)}
+                >
+                  <View style={[styles.checkbox, locationUnderstanding && styles.checkboxChecked]} />
+                  <Text style={styles.consentText}>I understand Phone Location Proof starts after Start Work and stops after End Work or Break.</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: locationAgreement }}
+                  style={styles.consentRow}
+                  onPress={() => setLocationAgreement((current) => !current)}
+                >
+                  <View style={[styles.checkbox, locationAgreement && styles.checkboxChecked]} />
+                  <Text style={styles.consentText}>I allow Location Proof for this assigned work.</Text>
+                </Pressable>
+                <Text style={styles.statusText}>{getTrackingSessionStatusLabel(locationStatus)} | {locationPointCount} updates</Text>
+                <Text style={styles.body}>Last location update: {lastLocationUpdate || "Not yet"}</Text>
+                <View style={styles.actionGrid}>
+                  <SecondaryButton label={driverLabels.startLocationProof} disabled={!canStartLocationProof || isLocationBusy} onPress={() => void handleStartLocationProof()} />
+                  <SecondaryButton label="Save Location Update" disabled={!canSaveLocationUpdate || isLocationBusy} onPress={() => locationSessionId && void recordCurrentLocationPoint(locationSessionId)} />
+                  <SecondaryButton label={driverLabels.stopLocationProof} disabled={!locationSessionId || isLocationBusy || locationStatus === "stopped"} onPress={() => void handleStopLocationProof("other")} />
+                </View>
+                {locationMessage ? <Text style={styles.notice}>{locationMessage}</Text> : null}
+              </View>
+            )}
             <Text style={styles.label}>Completion note</Text>
             <TextInput
               style={[styles.input, styles.textArea]}
@@ -1005,6 +1326,14 @@ const styles = StyleSheet.create({
     borderColor: "#eadfce",
     borderRadius: 8,
     backgroundColor: "#fffaf1",
+    padding: 12,
+    gap: 10
+  },
+  locationProofBox: {
+    borderWidth: 1,
+    borderColor: "#cfc1ad",
+    borderRadius: 8,
+    backgroundColor: "#f6fbff",
     padding: 12,
     gap: 10
   },

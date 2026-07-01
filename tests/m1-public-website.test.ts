@@ -41,12 +41,10 @@ describe("M1 public website", () => {
   });
 
   it("does not add GPS permissions", () => {
-    expect(driverConfig).not.toContain("ACCESS_FINE_LOCATION");
     expect(driverConfig).not.toContain("ACCESS_COARSE_LOCATION");
     expect(driverConfig).not.toContain("ACCESS_BACKGROUND_LOCATION");
     expect(driverConfig).not.toContain("RECORD_AUDIO");
     expect(driverConfig).not.toContain("CAMERA");
-    expect(`${packageJson}\n${webPackageJson}\n${driverPackageJson}`).not.toContain("expo-location");
   });
 
   it("does not add Google Maps usage", () => {
