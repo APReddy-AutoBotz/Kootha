@@ -71,3 +71,11 @@ Status values:
 ## Milestone M9 - Mobile GPS Tracking Foundation
 
 - [x] Build admin Phone Location Proof control, foreground driver consent, Start/Stop Location Proof, location point saving during running assigned work, tracking health, and admin-only RLS without background location, maps, customer live tracking links, reports, payments, provider auto-send, customer app, iOS app, or PWA.
+
+## Milestone M10 - Mobile GPS Reliability and Offline Buffer
+
+- [x] Build foreground-only Phone Location Proof reliability, offline point buffering, retry sync, idempotent point upload, driver sync status, and admin tracking health warnings without background location, maps, customer live tracking links, GPS device ingestion, reports, payments, provider auto-send, customer app, iOS app, or PWA.
+
+## Milestone M11 - Admin Tracking Review Without Maps
+
+- [ ] Not started.
