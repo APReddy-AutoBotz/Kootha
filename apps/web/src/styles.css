@@ -649,6 +649,78 @@ textarea:focus {
   font-size: 16px;
 }
 
+.proof-review-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.9fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.proof-review-column,
+.proof-review-list,
+.customer-update-list {
+  display: grid;
+  gap: 14px;
+}
+
+.proof-review-column h4,
+.proof-review-card h5,
+.customer-update-card h5 {
+  margin: 0;
+}
+
+.proof-review-card,
+.customer-update-card {
+  border: 1px solid #eadfce;
+  border-radius: 8px;
+  background: #fffaf1;
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
+
+.proof-card-heading {
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.proof-card-heading p,
+.customer-update-message {
+  margin: 0;
+}
+
+.proof-photo-preview {
+  width: 100%;
+  max-height: 320px;
+  object-fit: contain;
+  border: 1px solid #eadfce;
+  border-radius: 8px;
+  background: #211d18;
+}
+
+.proof-detail-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.customer-update-message {
+  border-left: 4px solid #c84f20;
+  background: #fffdf8;
+  padding: 12px;
+}
+
+.proof-review-card label,
+.customer-update-card label {
+  display: grid;
+  gap: 8px;
+  color: #332e29;
+  font-weight: 850;
+}
+
+.proof-review-card textarea,
+.customer-update-card textarea {
+  min-height: 72px;
+}
+
 .admin-message {
   font-size: 15px;
 }
@@ -659,7 +731,8 @@ textarea:focus {
   }
 
   .admin-lead-layout,
-  .admin-login-surface {
+  .admin-login-surface,
+  .proof-review-layout {
     grid-template-columns: 1fr;
   }
 
@@ -679,6 +752,7 @@ textarea:focus {
   .admin-summary-grid,
   .admin-filter-grid,
   .lead-detail-grid,
+  .proof-detail-grid,
   .lead-row {
     grid-template-columns: 1fr;
   }

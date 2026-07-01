@@ -8,6 +8,10 @@ import type {
 
 export type DriverExecutionAction = "start" | "take_break" | "resume" | "end" | "issue" | "add_proof_note";
 
+export const proofPhotoBucketName = "proof-photos";
+export const maxProofPhotoBytes = 5 * 1024 * 1024;
+export const allowedProofPhotoMimeTypes = ["image/jpeg", "image/png", "image/webp"] as const;
+
 export interface ExecutionReleaseReadinessInput {
   assignmentStatus: AdWorkAssignmentStatus;
   releaseStatus?: ExecutionReleaseStatus | null;
@@ -90,6 +94,25 @@ export function canAddProofNote(status: AdWorkExecutionDayStatus): boolean {
   return status !== "cancelled";
 }
 
+export function canUploadPhotoProof(status: AdWorkExecutionDayStatus): boolean {
+  return status === "running" || status === "on_break";
+}
+
+export function validateProofPhotoFile(input: { mimeType?: string | null; fileSize?: number | null }): string[] {
+  const errors: string[] = [];
+  const mimeType = input.mimeType ?? "";
+
+  if (!allowedProofPhotoMimeTypes.includes(mimeType as (typeof allowedProofPhotoMimeTypes)[number])) {
+    errors.push("Choose a JPG, PNG, or WebP photo.");
+  }
+
+  if (typeof input.fileSize === "number" && input.fileSize > maxProofPhotoBytes) {
+    errors.push("Photo must be 5 MB or smaller.");
+  }
+
+  return errors;
+}
+
 export function validateDriverExecutionAction(
   status: AdWorkExecutionDayStatus,
   action: DriverExecutionAction,
@@ -129,6 +152,27 @@ export function validateDriverExecutionAction(
   }
 
   return errors;
+}
+
+export function validatePhotoProofInput(
+  status: AdWorkExecutionDayStatus,
+  input: { note: string; areaPlaceName: string; mimeType?: string | null; fileSize?: number | null }
+): string[] {
+  const errors: string[] = [];
+
+  if (!canUploadPhotoProof(status)) {
+    errors.push("Upload Photo Proof is allowed only when work is Running or On Break.");
+  }
+
+  if (!input.areaPlaceName.trim()) {
+    errors.push("Area or Place Name is required.");
+  }
+
+  if (!input.note.trim()) {
+    errors.push("What happened? is required.");
+  }
+
+  return [...errors, ...validateProofPhotoFile(input)];
 }
 
 export function isExecutionProofNoteType(value: string): value is ExecutionProofNoteType {

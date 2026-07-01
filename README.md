@@ -1,6 +1,6 @@
 # Kootha / Prachar
 
-Kootha / Prachar is a low-cost local mic advertisement proof platform. The repository currently includes M0 foundation, M1 public website and enquiries, M2 admin lead management, M3 campaign planning and scheduling, M4 driver and vehicle onboarding, M5 driver and vehicle assignment to ad work, and M6 ad work execution without GPS.
+Kootha / Prachar is a low-cost local mic advertisement proof platform. The repository currently includes M0 foundation, M1 public website and enquiries, M2 admin lead management, M3 campaign planning and scheduling, M4 driver and vehicle onboarding, M5 driver and vehicle assignment to ad work, M6 ad work execution without GPS, and M7 proof upload and customer update sharing.
 
 ## Current Scope
 
@@ -16,18 +16,23 @@ Kootha / Prachar is a low-cost local mic advertisement proof platform. The repos
 - Ready for Execution assignment status as an admin readiness marker only.
 - Admin release of Ready for Execution Ad Works to assigned drivers with a Work Code.
 - Driver Start Work, Take Break, Resume Work, End Work, Issue Reported, and text-only Proof Note flow.
-- Customer update records for manual sharing later, without automatic SMS or WhatsApp sending.
-- Shared product config, labels, statuses, planning helpers, onboarding validation helpers, execution helpers, and public form validation helpers.
+- Driver photo proof upload after mobile number and Work Code access, using a private proof-photos storage bucket.
+- Admin proof review with secure preview links, review notes, and Approve, Reject, or Needs More Info decisions.
+- Customer update records that admins can copy and mark as shared by phone call, manual WhatsApp, manual SMS, in person, or other manual method without provider integration.
+- Shared product config, labels, statuses, planning helpers, onboarding validation helpers, execution and proof upload helpers, and public form validation helpers.
 - Supabase migrations with RLS enabled and privacy-safe defaults.
 
-## What is intentionally not included in M6
+## What is intentionally not included in M7
 
 - GPS tracking,
 - background location,
 - map integration,
 - GPS device location ingest,
 - customer live tracking links,
-- report generation,
+- camera capture,
+- microphone,
+- video or audio proof upload,
+- final report generation,
 - payment gateway,
 - WhatsApp/SMS provider integration,
 - customer mobile app,
@@ -174,11 +179,32 @@ M6 does not request GPS permissions, background location, camera, or microphone 
 
 Customer update records are created for release, start, break, resume, proof note, completion, and issue events. They are records for manual copy/share only. M6 does not send SMS, WhatsApp, or provider messages automatically.
 
+## M7 Proof Upload And Customer Update Sharing
+
+Apply the M7 migration after M0 through M6. It adds the private proof-photos storage bucket, photo proof upload records, driver upload slot RPCs, admin review RPCs, and manual Customer Update sharing fields.
+
+Driver photo proof works from the Android driver app:
+
+1. Enter mobile number and Work Code.
+2. Open Assigned Work for a released assignment.
+3. Start Work or Take Break for today's planned work day.
+4. Choose Upload Photo Proof, enter Area or Place Name, choose a proof type, write What happened?, choose one JPG, PNG, or WebP photo up to 5 MB, and Submit Proof.
+5. The driver app shows Proof Sent after the private storage upload is completed.
+
+Admin proof review works from /admin:
+
+1. Open Ad Works and select an Ad Work.
+2. Review Proof Uploads and secure photo previews.
+3. Save an admin review note and mark proof as Approved, Rejected, or Needs More Info.
+4. Copy Customer Update messages and mark them shared by phone call, manual WhatsApp, manual SMS, in person, or other manual method.
+
+M7 uses Android photo library access for selecting proof photos. It does not request GPS permissions, background location, camera, microphone, maps, tracking sessions, customer live links, reports, payments, provider auto-send, customer app, iOS app, or PWA.
+
 ## Run Driver
 
     pnpm dev:driver
 
-The driver app is Expo React Native and Android-first. It does not request GPS or background location permissions in the current milestone.
+The driver app is Expo React Native and Android-first. It does not request GPS or background location permissions. M7 requests Android photo library access only for selecting photo proof uploads.
 
 ## Verify
 
@@ -198,9 +224,12 @@ Migrations are in supabase/migrations:
 - 20260630040000_m4_driver_vehicle_onboarding.sql adds public insert-only driver applications, admin-only driver and vehicle onboarding management, and approval linking.
 - 20260630050000_m5_driver_vehicle_assignment.sql adds admin-only Ad Work assignment records, assignment statuses, and readiness checks.
 - 20260630060000_m6_ad_work_execution_without_gps.sql adds admin release, Work Code access, day-wise execution status, text-only Proof Notes, and customer update records.
+- 20260701070000_m7_proof_upload_customer_update_sharing.sql adds private proof photo storage, driver upload slot RPCs, admin proof review, and manual Customer Update sharing fields.
 
 M4 keeps customer_live_enabled and live_tracking_enabled false by default and does not add live tracking behavior.
 
 M5 keeps customer_live_enabled and live_tracking_enabled false by default and does not add live tracking behavior.
 
 M6 keeps customer_live_enabled and live_tracking_enabled false by default and does not add live tracking behavior.
+
+M7 keeps customer_live_enabled and live_tracking_enabled false by default and does not add live tracking behavior.

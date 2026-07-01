@@ -54,6 +54,10 @@ export const adWorkAssignmentStatuses = [
 export const executionReleaseStatuses = ["not_released", "released_to_driver", "access_revoked"] as const;
 export const adWorkExecutionDayStatuses = ["planned", "ready", "running", "on_break", "completed", "issue_reported", "cancelled"] as const;
 export const executionProofNoteTypes = ["area_covered", "announcement_done", "customer_request", "issue", "other"] as const;
+export const proofUploadStatuses = ["pending_upload", "uploaded", "failed", "cancelled"] as const;
+export const proofReviewStatuses = ["waiting_review", "approved", "rejected", "needs_more_info"] as const;
+export const customerUpdateSharingStatuses = ["pending_sharing", "shared_manually"] as const;
+export const customerUpdateSharingMethods = ["phone_call", "manual_whatsapp", "manual_sms", "in_person", "other"] as const;
 
 export const trackingTypes = ["mobile", "device", "both"] as const;
 export const areaCoverageStatuses = ["pending", "covered", "missed", "manual"] as const;
@@ -113,6 +117,10 @@ export const statusGroups = {
   executionReleaseStatuses,
   adWorkExecutionDayStatuses,
   executionProofNoteTypes,
+  proofUploadStatuses,
+  proofReviewStatuses,
+  customerUpdateSharingStatuses,
+  customerUpdateSharingMethods,
   trackingTypes,
   areaCoverageStatuses,
   trackingSessionStatuses,
@@ -148,6 +156,10 @@ export type AdWorkAssignmentStatus = (typeof adWorkAssignmentStatuses)[number];
 export type ExecutionReleaseStatus = (typeof executionReleaseStatuses)[number];
 export type AdWorkExecutionDayStatus = (typeof adWorkExecutionDayStatuses)[number];
 export type ExecutionProofNoteType = (typeof executionProofNoteTypes)[number];
+export type ProofUploadStatus = (typeof proofUploadStatuses)[number];
+export type ProofReviewStatus = (typeof proofReviewStatuses)[number];
+export type CustomerUpdateSharingStatus = (typeof customerUpdateSharingStatuses)[number];
+export type CustomerUpdateSharingMethod = (typeof customerUpdateSharingMethods)[number];
 export type TrackingType = (typeof trackingTypes)[number];
 export type TrackingSessionStatus = (typeof trackingSessionStatuses)[number];
 
@@ -320,6 +332,60 @@ export const executionProofNoteTypeOptions = executionProofNoteTypes;
 
 export function getExecutionProofNoteTypeLabel(status: string): string {
   return executionProofNoteTypeLabels[status as ExecutionProofNoteType] ?? status;
+}
+export const proofUploadStatusLabels: Record<ProofUploadStatus, string> = {
+  pending_upload: "Pending Upload",
+  uploaded: "Uploaded",
+  failed: "Failed",
+  cancelled: "Cancelled"
+};
+
+export const proofUploadStatusOptions = proofUploadStatuses;
+
+export function getProofUploadStatusLabel(status: string): string {
+  return proofUploadStatusLabels[status as ProofUploadStatus] ?? status;
+}
+
+export const proofReviewStatusLabels: Record<ProofReviewStatus, string> = {
+  waiting_review: "Waiting Review",
+  approved: "Approved",
+  rejected: "Rejected",
+  needs_more_info: "Needs More Info"
+};
+
+export const proofReviewStatusOptions = proofReviewStatuses;
+
+export function getProofReviewStatusLabel(status: string): string {
+  return proofReviewStatusLabels[status as ProofReviewStatus] ?? status;
+}
+
+export const customerUpdateSharingStatusLabels: Record<CustomerUpdateSharingStatus, string> = {
+  pending_sharing: "Pending Sharing",
+  shared_manually: "Shared Manually"
+};
+
+export const customerUpdateSharingStatusOptions = customerUpdateSharingStatuses;
+
+export function getCustomerUpdateSharingStatusLabel(status: string): string {
+  return customerUpdateSharingStatusLabels[status as CustomerUpdateSharingStatus] ?? status;
+}
+
+export const customerUpdateSharingMethodLabels: Record<CustomerUpdateSharingMethod, string> = {
+  phone_call: "Phone Call",
+  manual_whatsapp: "Manual WhatsApp",
+  manual_sms: "Manual SMS",
+  in_person: "In Person",
+  other: "Other"
+};
+
+export const customerUpdateSharingMethodOptions = customerUpdateSharingMethods;
+
+export function getCustomerUpdateSharingMethodLabel(status: string | null | undefined): string {
+  if (!status) {
+    return "Not set";
+  }
+
+  return customerUpdateSharingMethodLabels[status as CustomerUpdateSharingMethod] ?? status;
 }
 
 export function getAdWorkStatusLabel(status: string): string {
