@@ -66,4 +66,4 @@ Status values:
 
 ## Milestone M8 - Final Proof Summary and Campaign Closure
 
-- [ ] Build final proof summary and campaign closure without GPS tracking, provider auto-send, payments, customer app, iOS app, or PWA.
+- [x] Build final proof summary and campaign closure without GPS tracking, provider auto-send, payments, customer app, iOS app, or PWA.

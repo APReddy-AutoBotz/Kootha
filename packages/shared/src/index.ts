@@ -1,5 +1,6 @@
 export * from "./assignment";
 export * from "./campaign";
+export * from "./closure";
 export * from "./driverOnboarding";
 export * from "./execution";
 export * from "./enquiry";

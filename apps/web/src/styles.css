@@ -931,3 +931,31 @@ textarea:focus {
     max-height: none;
   }
 }
+.final-summary-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(260px, 0.8fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.final-summary-preview pre {
+  max-height: 420px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border: 1px solid #eadfce;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 14px;
+  font: 13px/1.6 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+}
+
+.final-summary-section .proof-review-card {
+  margin-top: 12px;
+}
+
+@media (max-width: 900px) {
+  .final-summary-layout {
+    grid-template-columns: 1fr;
+  }
+}

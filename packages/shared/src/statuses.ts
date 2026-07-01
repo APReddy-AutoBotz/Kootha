@@ -58,6 +58,23 @@ export const proofUploadStatuses = ["pending_upload", "uploaded", "failed", "can
 export const proofReviewStatuses = ["waiting_review", "approved", "rejected", "needs_more_info"] as const;
 export const customerUpdateSharingStatuses = ["pending_sharing", "shared_manually"] as const;
 export const customerUpdateSharingMethods = ["phone_call", "manual_whatsapp", "manual_sms", "in_person", "other"] as const;
+export const campaignClosureStatuses = [
+  "not_ready",
+  "ready_for_review",
+  "ready_to_close",
+  "closed",
+  "closed_with_issues",
+  "cancelled"
+] as const;
+export const campaignClosureReasons = [
+  "rain_local_issue",
+  "customer_accepted_partial_work",
+  "driver_issue_resolved_manually",
+  "proof_not_required_by_customer",
+  "other"
+] as const;
+export const finalSummaryShareMethods = ["manual_whatsapp", "manual_sms", "phone_call", "printed_copy", "in_person", "other"] as const;
+export const customerAcceptanceStatuses = ["yes", "no", "not_confirmed"] as const;
 
 export const trackingTypes = ["mobile", "device", "both"] as const;
 export const areaCoverageStatuses = ["pending", "covered", "missed", "manual"] as const;
@@ -121,6 +138,10 @@ export const statusGroups = {
   proofReviewStatuses,
   customerUpdateSharingStatuses,
   customerUpdateSharingMethods,
+  campaignClosureStatuses,
+  campaignClosureReasons,
+  finalSummaryShareMethods,
+  customerAcceptanceStatuses,
   trackingTypes,
   areaCoverageStatuses,
   trackingSessionStatuses,
@@ -160,6 +181,10 @@ export type ProofUploadStatus = (typeof proofUploadStatuses)[number];
 export type ProofReviewStatus = (typeof proofReviewStatuses)[number];
 export type CustomerUpdateSharingStatus = (typeof customerUpdateSharingStatuses)[number];
 export type CustomerUpdateSharingMethod = (typeof customerUpdateSharingMethods)[number];
+export type CampaignClosureStatus = (typeof campaignClosureStatuses)[number];
+export type CampaignClosureReason = (typeof campaignClosureReasons)[number];
+export type FinalSummaryShareMethod = (typeof finalSummaryShareMethods)[number];
+export type CustomerAcceptanceStatus = (typeof customerAcceptanceStatuses)[number];
 export type TrackingType = (typeof trackingTypes)[number];
 export type TrackingSessionStatus = (typeof trackingSessionStatuses)[number];
 
@@ -386,6 +411,74 @@ export function getCustomerUpdateSharingMethodLabel(status: string | null | unde
   }
 
   return customerUpdateSharingMethodLabels[status as CustomerUpdateSharingMethod] ?? status;
+}
+
+export const campaignClosureStatusLabels: Record<CampaignClosureStatus, string> = {
+  not_ready: "Not Ready",
+  ready_for_review: "Ready for Review",
+  ready_to_close: "Ready to Close",
+  closed: "Closed",
+  closed_with_issues: "Closed with Issues",
+  cancelled: "Cancelled"
+};
+
+export const campaignClosureStatusOptions = campaignClosureStatuses;
+
+export function getCampaignClosureStatusLabel(status: string): string {
+  return campaignClosureStatusLabels[status as CampaignClosureStatus] ?? status;
+}
+
+export const campaignClosureReasonLabels: Record<CampaignClosureReason, string> = {
+  rain_local_issue: "Rain / Local Issue",
+  customer_accepted_partial_work: "Customer Accepted Partial Work",
+  driver_issue_resolved_manually: "Driver Issue Resolved Manually",
+  proof_not_required_by_customer: "Proof Not Required by Customer",
+  other: "Other"
+};
+
+export const campaignClosureReasonOptions = campaignClosureReasons;
+
+export function getCampaignClosureReasonLabel(reason: string | null | undefined): string {
+  if (!reason) {
+    return "Not set";
+  }
+
+  return campaignClosureReasonLabels[reason as CampaignClosureReason] ?? reason;
+}
+
+export const finalSummaryShareMethodLabels: Record<FinalSummaryShareMethod, string> = {
+  manual_whatsapp: "Manual WhatsApp",
+  manual_sms: "Manual SMS",
+  phone_call: "Phone Call",
+  printed_copy: "Printed Copy",
+  in_person: "In Person",
+  other: "Other"
+};
+
+export const finalSummaryShareMethodOptions = finalSummaryShareMethods;
+
+export function getFinalSummaryShareMethodLabel(method: string | null | undefined): string {
+  if (!method) {
+    return "Not set";
+  }
+
+  return finalSummaryShareMethodLabels[method as FinalSummaryShareMethod] ?? method;
+}
+
+export const customerAcceptanceStatusLabels: Record<CustomerAcceptanceStatus, string> = {
+  yes: "Yes",
+  no: "No",
+  not_confirmed: "Not Confirmed"
+};
+
+export const customerAcceptanceStatusOptions = customerAcceptanceStatuses;
+
+export function getCustomerAcceptanceStatusLabel(status: string | null | undefined): string {
+  if (!status) {
+    return "Not Confirmed";
+  }
+
+  return customerAcceptanceStatusLabels[status as CustomerAcceptanceStatus] ?? status;
 }
 
 export function getAdWorkStatusLabel(status: string): string {
