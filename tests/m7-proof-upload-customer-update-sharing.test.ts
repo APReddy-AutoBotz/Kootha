@@ -85,6 +85,10 @@ describe("M7 proof upload and customer update sharing", () => {
     expect(m7Migration).toContain("v_assignment.status <> 'ready_for_execution'");
     expect(m7Migration).toContain("v_day.work_date <> current_date");
     expect(m7Migration).toContain("v_day.execution_status not in ('running', 'on_break')");
+    expect(m7Migration).toContain("from storage.objects object_row");
+    expect(m7Migration).toContain("object_row.bucket_id = v_proof.file_bucket");
+    expect(m7Migration).toContain("object_row.name = v_proof.file_path");
+    expect(m7Migration).toContain("Proof photo was not uploaded");
     expect(lowerSql).toContain("security definer");
     expect(lowerSql).toContain("set search_path = public");
   });
@@ -102,6 +106,9 @@ describe("M7 proof upload and customer update sharing", () => {
     expect(lowerSql).toContain("for insert");
     expect(lowerSql).toContain("to anon");
     expect(lowerSql).toContain("public.is_valid_proof_upload_path(bucket_id, name)");
+    expect(lowerSql).toContain("join public.ad_work_days day_record on day_record.id = proof.ad_work_day_id");
+    expect(lowerSql).toContain("day_record.work_date = current_date");
+    expect(lowerSql).toContain("day_record.execution_status in ('running', 'on_break')");
     expect(m7Migration).not.toMatch(/for select\s+to anon/i);
     expect(m7Migration).not.toMatch(/public\s*=\s*true/i);
   });

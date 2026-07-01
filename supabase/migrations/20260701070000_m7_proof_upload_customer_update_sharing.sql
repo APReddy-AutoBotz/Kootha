@@ -167,10 +167,13 @@ as $$
   select exists (
     select 1
     from public.proof_uploads proof
+    join public.ad_work_days day_record on day_record.id = proof.ad_work_day_id
     where proof.file_bucket = p_bucket
       and proof.file_path = p_path
       and proof.upload_status = 'pending_upload'
       and proof.review_status = 'waiting_review'
+      and day_record.work_date = current_date
+      and day_record.execution_status in ('running', 'on_break')
   );
 $$;
 
@@ -346,6 +349,15 @@ begin
 
   if v_proof.upload_status <> 'pending_upload' then
     raise exception 'Proof upload is not waiting for a photo' using errcode = '22000';
+  end if;
+
+  if not exists (
+    select 1
+    from storage.objects object_row
+    where object_row.bucket_id = v_proof.file_bucket
+      and object_row.name = v_proof.file_path
+  ) then
+    raise exception 'Proof photo was not uploaded' using errcode = 'P0002';
   end if;
 
   update public.proof_uploads
