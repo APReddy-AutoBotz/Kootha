@@ -5,8 +5,11 @@ import {
   adWorkExecutionDayStatusOptions,
   adWorkStatusOptions,
   buildAssignmentReadiness,
+  buildCampaignClosureReadiness,
   buildExecutionReleaseReadiness,
   businessLabels,
+  campaignClosureReasonOptions,
+  customerAcceptanceStatusOptions,
   customerUpdateSharingMethodOptions,
   driverCanBeAssigned,
   driverApplicationStatusOptions,
@@ -16,6 +19,10 @@ import {
   getAdWorkAssignmentStatusLabel,
   getAdWorkExecutionDayStatusLabel,
   getAdWorkStatusLabel,
+  getApprovedFinalProofs,
+  getCampaignClosureReasonLabel,
+  getCampaignClosureStatusLabel,
+  getCustomerAcceptanceStatusLabel,
   getDriverApplicationStatusLabel,
   getDriverAvailabilityStatusLabel,
   getDriverStatusLabel,
@@ -24,6 +31,7 @@ import {
   getExecutionReleaseStatusLabel,
   getCustomerUpdateSharingMethodLabel,
   getCustomerUpdateSharingStatusLabel,
+  getFinalSummaryShareMethodLabel,
   getPlannedEndDate,
   getProofReviewStatusLabel,
   getProofUploadStatusLabel,
@@ -33,6 +41,7 @@ import {
   liveTrackingNeedOptions,
   packageInterestLabels,
   packageInterestOptions,
+  finalSummaryShareMethodOptions,
   proofReviewStatusOptions,
   executionProofNoteTypeOptions,
   vehicleCanBeAssigned,
@@ -49,6 +58,9 @@ import type {
   AdWorkStatus,
   AssignmentDriverCandidate,
   AssignmentVehicleCandidate,
+  CampaignClosureReason,
+  CampaignClosureStatus,
+  CustomerAcceptanceStatus,
   CustomerUpdateSharingMethod,
   CustomerUpdateSharingStatus,
   DriverApplicationStatus,
@@ -57,6 +69,7 @@ import type {
   EnquiryStatus,
   ExecutionProofNoteType,
   ExecutionReleaseStatus,
+  FinalSummaryShareMethod,
   LiveTrackingNeed,
   PackageInterest,
   ProofReviewStatus,
@@ -155,6 +168,20 @@ type AdWorkRecord = {
   work_access_code_created_at: string | null;
   work_access_revoked_at: string | null;
   execution_completed_at: string | null;
+  closure_status: CampaignClosureStatus;
+  closure_note: string | null;
+  closure_reason: CampaignClosureReason | null;
+  closure_customer_accepted: CustomerAcceptanceStatus;
+  closure_internal_admin_note: string | null;
+  closure_ready_at: string | null;
+  closure_closed_at: string | null;
+  closure_closed_by: string | null;
+  final_summary_reviewed: boolean;
+  final_summary_shared_status: CustomerUpdateSharingStatus;
+  final_summary_shared_method: FinalSummaryShareMethod | null;
+  final_summary_shared_at: string | null;
+  final_summary_shared_by: string | null;
+  final_summary_shared_note: string | null;
 };
 
 type AdWorkDayRecord = {
@@ -324,6 +351,26 @@ type CustomerUpdateRecord = {
   sharing_note: string | null;
   shared_at: string | null;
   created_at: string;
+  updated_at: string | null;
+};
+
+type FinalProofSummaryRecord = {
+  id: string;
+  ad_work_id: string;
+  closure_status: CampaignClosureStatus;
+  summary_text: string;
+  warnings: string[] | null;
+  reviewed_at: string | null;
+  ready_at: string | null;
+  closed_at: string | null;
+  closure_reason: CampaignClosureReason | null;
+  closure_note: string | null;
+  customer_accepted: CustomerAcceptanceStatus;
+  internal_admin_note: string | null;
+  shared_status: CustomerUpdateSharingStatus;
+  shared_method: FinalSummaryShareMethod | null;
+  shared_at: string | null;
+  shared_note: string | null;
   updated_at: string | null;
 };
 
@@ -577,7 +624,21 @@ const adWorkSelectColumns = [
   "work_access_code_hint",
   "work_access_code_created_at",
   "work_access_revoked_at",
-  "execution_completed_at"
+  "execution_completed_at",
+  "closure_status",
+  "closure_note",
+  "closure_reason",
+  "closure_customer_accepted",
+  "closure_internal_admin_note",
+  "closure_ready_at",
+  "closure_closed_at",
+  "closure_closed_by",
+  "final_summary_reviewed",
+  "final_summary_shared_status",
+  "final_summary_shared_method",
+  "final_summary_shared_at",
+  "final_summary_shared_by",
+  "final_summary_shared_note"
 ].join(",");
 
 const adWorkDaySelectColumns = [
@@ -661,6 +722,26 @@ const customerUpdateSelectColumns = [
   "sharing_note",
   "shared_at",
   "created_at",
+  "updated_at"
+].join(",");
+
+const finalProofSummarySelectColumns = [
+  "id",
+  "ad_work_id",
+  "closure_status",
+  "summary_text",
+  "warnings",
+  "reviewed_at",
+  "ready_at",
+  "closed_at",
+  "closure_reason",
+  "closure_note",
+  "customer_accepted",
+  "internal_admin_note",
+  "shared_status",
+  "shared_method",
+  "shared_at",
+  "shared_note",
   "updated_at"
 ].join(",");
 
@@ -936,6 +1017,19 @@ async function fetchCustomerUpdates(config: SupabaseConfig, session: AuthSession
   return await response.json() as CustomerUpdateRecord[];
 }
 
+async function fetchFinalProofSummaries(config: SupabaseConfig, session: AuthSession, adWorkId?: string): Promise<FinalProofSummaryRecord[]> {
+  const filter = adWorkId ? "&ad_work_id=eq." + encodeURIComponent(adWorkId) : "";
+  const response = await fetch(config.url + "/rest/v1/final_proof_summaries?select=" + finalProofSummarySelectColumns + filter + "&order=updated_at.desc", {
+    headers: createHeaders(config, session.accessToken)
+  });
+
+  if (!response.ok) {
+    throw new Error("Could not load Final Proof Summary records.");
+  }
+
+  return await response.json() as FinalProofSummaryRecord[];
+}
+
 
 async function fetchProofPhotoSignedUrl(config: SupabaseConfig, session: AuthSession, bucket: string, path: string): Promise<string> {
   const response = await fetch(config.url + "/storage/v1/object/sign/" + bucket + "/" + encodeStoragePath(path), {
@@ -1000,6 +1094,108 @@ async function markCustomerUpdateShared(
   if (!response.ok) {
     throw new Error("Could not mark Customer Update as shared.");
   }
+}
+
+async function prepareFinalProofSummary(
+  config: SupabaseConfig,
+  session: AuthSession,
+  adWorkId: string,
+  finalSummaryReviewed: boolean,
+  proofNotRequired: boolean,
+  customerUpdatesReviewed: boolean,
+  internalAdminNote: string
+) {
+  const response = await fetch(config.url + "/rest/v1/rpc/prepare_final_proof_summary", {
+    method: "POST",
+    headers: createHeaders(config, session.accessToken, true),
+    body: JSON.stringify({
+      p_ad_work_id: adWorkId,
+      p_final_summary_reviewed: finalSummaryReviewed,
+      p_proof_not_required: proofNotRequired,
+      p_customer_updates_reviewed: customerUpdatesReviewed,
+      p_internal_admin_note: internalAdminNote.trim() || null
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error("Could not save Final Proof Summary.");
+  }
+
+  return await response.json() as {
+    ad_work_id: string;
+    final_summary_id: string;
+    closure_status: CampaignClosureStatus;
+    warnings: string[];
+    summary_text: string;
+    result_message: string;
+  }[];
+}
+
+async function closeAdWorkWithFinalSummary(
+  config: SupabaseConfig,
+  session: AuthSession,
+  adWorkId: string,
+  closureReason: CampaignClosureReason | "",
+  closureNote: string,
+  customerAccepted: CustomerAcceptanceStatus,
+  internalAdminNote: string,
+  proofNotRequired: boolean,
+  customerUpdatesReviewed: boolean
+) {
+  const response = await fetch(config.url + "/rest/v1/rpc/close_ad_work_with_final_summary", {
+    method: "POST",
+    headers: createHeaders(config, session.accessToken, true),
+    body: JSON.stringify({
+      p_ad_work_id: adWorkId,
+      p_closure_reason: closureReason || null,
+      p_closure_note: closureNote.trim() || null,
+      p_customer_accepted: customerAccepted,
+      p_internal_admin_note: internalAdminNote.trim() || null,
+      p_proof_not_required: proofNotRequired,
+      p_customer_updates_reviewed: customerUpdatesReviewed
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error("Could not close Ad Work.");
+  }
+
+  return await response.json() as {
+    ad_work_id: string;
+    final_summary_id: string;
+    closure_status: CampaignClosureStatus;
+    warnings: string[];
+    result_message: string;
+  }[];
+}
+
+async function markFinalSummaryShared(
+  config: SupabaseConfig,
+  session: AuthSession,
+  adWorkId: string,
+  shareMethod: FinalSummaryShareMethod,
+  shareNote: string
+) {
+  const response = await fetch(config.url + "/rest/v1/rpc/mark_final_summary_shared", {
+    method: "POST",
+    headers: createHeaders(config, session.accessToken, true),
+    body: JSON.stringify({
+      p_ad_work_id: adWorkId,
+      p_share_method: shareMethod,
+      p_share_note: shareNote.trim() || null
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error("Could not mark Final Proof Summary as shared.");
+  }
+
+  return await response.json() as {
+    ad_work_id: string;
+    final_summary_id: string;
+    shared_status: CustomerUpdateSharingStatus;
+    result_message: string;
+  }[];
 }
 
 async function releaseAdWorkToDriver(
@@ -3262,6 +3458,395 @@ function M7SummaryCards({ config, session }: { config: SupabaseConfig; session: 
   );
 }
 
+function M8SummaryCards({ config, session, adWorks }: { config: SupabaseConfig; session: AuthSession; adWorks: AdWorkRecord[] }) {
+  const [proofUploads, setProofUploads] = useState<ProofUploadRecord[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadSummary() {
+      const proofRows = await fetchAdminProofUploads(config, session);
+      if (!cancelled) {
+        setProofUploads(proofRows);
+      }
+    }
+
+    loadSummary().catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [config, session]);
+
+  const today = new Date().toISOString().slice(0, 10);
+  const cards = [
+    {
+      label: "Ready to Close",
+      value: adWorks.filter((adWork) => adWork.closure_status === "ready_to_close").length
+    },
+    {
+      label: "Closed Today",
+      value: adWorks.filter((adWork) => Boolean(adWork.closure_closed_at?.startsWith(today))).length
+    },
+    {
+      label: "Closed with Issues",
+      value: adWorks.filter((adWork) => adWork.closure_status === "closed_with_issues").length
+    },
+    {
+      label: "Proof Review Pending",
+      value: proofUploads.filter((proof) => proof.upload_status === "uploaded" && (proof.review_status === "waiting_review" || proof.review_status === "needs_more_info")).length
+    },
+    {
+      label: "Final Summary Not Shared",
+      value: adWorks.filter((adWork) => (adWork.closure_status === "closed" || adWork.closure_status === "closed_with_issues") && adWork.final_summary_shared_status !== "shared_manually").length
+    },
+    {
+      label: "Customer Accepted",
+      value: adWorks.filter((adWork) => adWork.closure_customer_accepted === "yes").length
+    }
+  ];
+
+  return (
+    <div className="admin-summary-grid" aria-label="Final Proof Summary and closure summary">
+      {cards.map((card) => (
+        <div className="admin-summary-card" key={card.label}>
+          <span>{card.label}</span>
+          <strong>{card.value}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AdminFinalProofSummaryPanel({
+  config,
+  session,
+  adWork,
+  dayDrafts,
+  onUpdated
+}: {
+  config: SupabaseConfig;
+  session: AuthSession;
+  adWork: AdWorkRecord;
+  dayDrafts: DayDraft[];
+  onUpdated: () => Promise<void>;
+}) {
+  const [assignment, setAssignment] = useState<AdWorkAssignmentRecord | null>(null);
+  const [drivers, setDrivers] = useState<DriverRecord[]>([]);
+  const [vehicles, setVehicles] = useState<VehicleRecord[]>([]);
+  const [proofUploads, setProofUploads] = useState<ProofUploadRecord[]>([]);
+  const [customerUpdates, setCustomerUpdates] = useState<CustomerUpdateRecord[]>([]);
+  const [summary, setSummary] = useState<FinalProofSummaryRecord | null>(null);
+  const [previewUrls, setPreviewUrls] = useState<Record<string, string>>({});
+  const [finalSummaryReviewed, setFinalSummaryReviewed] = useState(adWork.final_summary_reviewed);
+  const [proofNotRequired, setProofNotRequired] = useState(adWork.closure_reason === "proof_not_required_by_customer");
+  const [customerUpdatesReviewed, setCustomerUpdatesReviewed] = useState(false);
+  const [closureReason, setClosureReason] = useState<CampaignClosureReason | "">(adWork.closure_reason ?? "");
+  const [closureNote, setClosureNote] = useState(adWork.closure_note ?? "");
+  const [customerAccepted, setCustomerAccepted] = useState<CustomerAcceptanceStatus>(adWork.closure_customer_accepted ?? "not_confirmed");
+  const [internalAdminNote, setInternalAdminNote] = useState(adWork.closure_internal_admin_note ?? "");
+  const [shareMethod, setShareMethod] = useState<FinalSummaryShareMethod>(adWork.final_summary_shared_method ?? "manual_whatsapp");
+  const [shareNote, setShareNote] = useState(adWork.final_summary_shared_note ?? "");
+  const [summaryText, setSummaryText] = useState("");
+  const [message, setMessage] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [savingKey, setSavingKey] = useState("");
+
+  const assignedDriver = assignment ? drivers.find((driver) => driver.id === assignment.driver_id) ?? null : null;
+  const assignedVehicle = assignment ? vehicles.find((vehicle) => vehicle.id === assignment.vehicle_id) ?? null : null;
+  const approvedProofRecords = proofUploads.filter((proof) => proof.upload_status === "uploaded" && proof.review_status === "approved");
+  const rejectedProofRecords = proofUploads.filter((proof) => proof.upload_status === "uploaded" && proof.review_status === "rejected");
+  const approvedProofs = getApprovedFinalProofs(proofUploads.map((proof) => ({
+    status: proof.review_status,
+    areaPlaceName: proof.area_place_name,
+    noteText: proof.note_text
+  })));
+  const readiness = buildCampaignClosureReadiness({
+    assignmentStatus: adWork.assignment_status,
+    releaseStatus: adWork.execution_release_status,
+    dayStatuses: dayDrafts.map((day) => day.executionStatus),
+    proofNeeded: adWork.photo_proof_needed,
+    proofReviewStatuses: proofUploads.filter((proof) => proof.upload_status === "uploaded").map((proof) => proof.review_status),
+    customerUpdateSharingStatuses: customerUpdates.map((update) => update.sharing_status),
+    liveTrackingRequested: adWork.live_tracking_requested,
+    liveTrackingEnabled: adWork.live_tracking_enabled,
+    finalSummaryReviewed,
+    customerUpdatesReviewed,
+    proofNotRequiredConfirmed: proofNotRequired,
+    closureReason
+  });
+
+  async function loadClosureData() {
+    setIsLoading(true);
+    setMessage("");
+
+    try {
+      const [assignmentRows, driverRows, vehicleRows, proofRows, updateRows, summaryRows] = await Promise.all([
+        fetchAdWorkAssignments(config, session, adWork.id),
+        fetchDrivers(config, session),
+        fetchVehicles(config, session),
+        fetchAdminProofUploads(config, session, adWork.id),
+        fetchCustomerUpdates(config, session, adWork.id),
+        fetchFinalProofSummaries(config, session, adWork.id)
+      ]);
+      const activeSummary = summaryRows[0] ?? null;
+      const approvedRows = proofRows.filter((proof) => proof.upload_status === "uploaded" && proof.review_status === "approved");
+      const previewEntries = await Promise.all(approvedRows.map(async (proof) => {
+        try {
+          const signedUrl = await fetchProofPhotoSignedUrl(config, session, proof.file_bucket, proof.file_path);
+          return [proof.id, signedUrl] as const;
+        } catch {
+          return [proof.id, ""] as const;
+        }
+      }));
+
+      setAssignment(assignmentRows[0] ?? null);
+      setDrivers(driverRows);
+      setVehicles(vehicleRows);
+      setProofUploads(proofRows);
+      setCustomerUpdates(updateRows);
+      setSummary(activeSummary);
+      setSummaryText(activeSummary?.summary_text ?? "");
+      setFinalSummaryReviewed(adWork.final_summary_reviewed || Boolean(activeSummary?.reviewed_at));
+      setProofNotRequired(adWork.closure_reason === "proof_not_required_by_customer");
+      setCustomerUpdatesReviewed(updateRows.length === 0 || updateRows.every((update) => update.sharing_status === "shared_manually"));
+      setClosureReason(adWork.closure_reason ?? "");
+      setClosureNote(activeSummary?.closure_note ?? adWork.closure_note ?? "");
+      setCustomerAccepted(activeSummary?.customer_accepted ?? adWork.closure_customer_accepted ?? "not_confirmed");
+      setInternalAdminNote(activeSummary?.internal_admin_note ?? adWork.closure_internal_admin_note ?? "");
+      setShareMethod(activeSummary?.shared_method ?? adWork.final_summary_shared_method ?? "manual_whatsapp");
+      setShareNote(activeSummary?.shared_note ?? adWork.final_summary_shared_note ?? "");
+      setPreviewUrls(Object.fromEntries(previewEntries.filter((entry) => Boolean(entry[1]))));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not load Final Proof Summary.");
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadClosureData();
+  }, [adWork.id]);
+
+  async function handlePrepareSummary() {
+    setSavingKey("prepare");
+    setMessage("");
+
+    try {
+      const result = await prepareFinalProofSummary(config, session, adWork.id, finalSummaryReviewed, proofNotRequired, customerUpdatesReviewed, internalAdminNote);
+      setSummaryText(result[0]?.summary_text ?? "");
+      setMessage(result[0]?.result_message ?? "Final Proof Summary saved.");
+      await onUpdated();
+      await loadClosureData();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not save Final Proof Summary.");
+    } finally {
+      setSavingKey("");
+    }
+  }
+
+  async function handleCloseAdWork() {
+    setSavingKey("close");
+    setMessage("");
+
+    try {
+      const result = await closeAdWorkWithFinalSummary(config, session, adWork.id, closureReason, closureNote, customerAccepted, internalAdminNote, proofNotRequired, customerUpdatesReviewed);
+      setMessage(result[0]?.result_message ?? "Ad Work closed.");
+      await onUpdated();
+      await loadClosureData();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not close Ad Work.");
+    } finally {
+      setSavingKey("");
+    }
+  }
+
+  async function handleMarkSummaryShared() {
+    setSavingKey("share");
+    setMessage("");
+
+    try {
+      const result = await markFinalSummaryShared(config, session, adWork.id, shareMethod, shareNote);
+      setMessage(result[0]?.result_message ?? "Final Proof Summary marked as shared.");
+      await onUpdated();
+      await loadClosureData();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not mark Final Proof Summary as shared.");
+    } finally {
+      setSavingKey("");
+    }
+  }
+
+  async function handleCopySummary() {
+    try {
+      await navigator.clipboard.writeText(summaryText || "Final Proof Summary is not prepared yet.");
+      setMessage("Final Proof Summary copied.");
+    } catch {
+      setMessage("Could not copy Final Proof Summary in this browser.");
+    }
+  }
+
+  function handlePrintSummary() {
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+      setMessage("Could not open print view in this browser.");
+      return;
+    }
+
+    const escapedSummary = (summaryText || "Final Proof Summary is not prepared yet.")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/\"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+    printWindow.document.write("<html><head><title>Final Proof Summary</title></head><body><pre>" + escapedSummary + "</pre><script>window.print()</script></body></html>");
+    printWindow.document.close();
+  }
+
+  return (
+    <section className="form-section final-summary-section" aria-labelledby="final-summary-title">
+      <div className="panel-heading">
+        <div>
+          <h3 id="final-summary-title">Final Proof Summary</h3>
+          <p>Review completed work, close Ad Work, and copy or print the customer-ready summary manually.</p>
+        </div>
+        <span className="status-pill">{getCampaignClosureStatusLabel(adWork.closure_status)}</span>
+      </div>
+
+      {message && <p className="form-status admin-message" role="status">{message}</p>}
+
+      <div className="admin-action-row">
+        <button className="secondary-button" type="button" onClick={() => void loadClosureData()} disabled={isLoading}>
+          {isLoading ? "Loading..." : "Refresh final summary"}
+        </button>
+      </div>
+
+      <div className="lead-submitted-copy">
+        <h4>Closure warnings</h4>
+        {readiness.hardStops.length === 0 && readiness.warnings.length === 0 ? (
+          <p>Ready to Close.</p>
+        ) : (
+          [...readiness.hardStops, ...readiness.warnings].map((warning) => <p key={warning}>{warning}</p>)
+        )}
+      </div>
+
+      <div className="form-grid">
+        <label className="checkbox-row">
+          <input type="checkbox" checked={finalSummaryReviewed} onChange={(event) => setFinalSummaryReviewed(event.target.checked)} />
+          <span>Final Proof Summary reviewed</span>
+        </label>
+        <label className="checkbox-row">
+          <input type="checkbox" checked={customerUpdatesReviewed} onChange={(event) => setCustomerUpdatesReviewed(event.target.checked)} />
+          <span>Customer update messages reviewed</span>
+        </label>
+        <label className="checkbox-row">
+          <input type="checkbox" checked={proofNotRequired} onChange={(event) => setProofNotRequired(event.target.checked)} />
+          <span>Proof not required by customer</span>
+        </label>
+        <label>
+          Closure reason
+          <select value={closureReason} onChange={(event) => setClosureReason(event.target.value as CampaignClosureReason | "")}>
+            <option value="">No reason needed</option>
+            {campaignClosureReasonOptions.map((reason) => (
+              <option key={reason} value={reason}>{getCampaignClosureReasonLabel(reason)}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Customer Accepted
+          <select value={customerAccepted} onChange={(event) => setCustomerAccepted(event.target.value as CustomerAcceptanceStatus)}>
+            {customerAcceptanceStatusOptions.map((status) => (
+              <option key={status} value={status}>{getCustomerAcceptanceStatusLabel(status)}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Closure Note
+          <textarea value={closureNote} maxLength={800} onChange={(event) => setClosureNote(event.target.value)} />
+        </label>
+        <label>
+          Internal admin note
+          <textarea value={internalAdminNote} maxLength={1200} onChange={(event) => setInternalAdminNote(event.target.value)} />
+        </label>
+      </div>
+
+      <div className="admin-action-row">
+        <button className="secondary-button" type="button" onClick={() => void handlePrepareSummary()} disabled={Boolean(savingKey)}>
+          {savingKey === "prepare" ? "Saving..." : "Mark Ready for Closure"}
+        </button>
+        <button className="primary-button" type="button" onClick={() => void handleCloseAdWork()} disabled={Boolean(savingKey)}>
+          {savingKey === "close" ? "Closing..." : "Close Ad Work"}
+        </button>
+      </div>
+
+      <div className="final-summary-layout">
+        <div className="lead-submitted-copy final-summary-preview">
+          <h4>Customer-ready summary text</h4>
+          <pre>{summaryText || "Prepare Final Proof Summary to create the customer-ready text."}</pre>
+          <div className="admin-action-row">
+            <button
+              className="secondary-button"
+              type="button"
+              title="Copy Final Summary"
+              onClick={() => void handleCopySummary()}
+            >
+              {businessLabels.admin.copyFinalSummary}
+            </button>
+            <button className="secondary-button" type="button" onClick={handlePrintSummary}>Print Summary</button>
+          </div>
+        </div>
+
+        <div className="lead-submitted-copy">
+          <h4>Approved proof uploads</h4>
+          <p>{approvedProofs.length} approved proof upload{approvedProofs.length === 1 ? "" : "s"} shown in the customer summary.</p>
+          {approvedProofRecords.length === 0 ? (
+            <p>No approved proof uploads yet.</p>
+          ) : approvedProofRecords.map((proof) => (
+            <article className="proof-review-card" key={proof.id}>
+              <h5>{proof.area_place_name || "Work area"}</h5>
+              <p>{proof.note_text || "Proof Checked"}</p>
+              {previewUrls[proof.id] ? <img className="proof-photo-preview" src={previewUrls[proof.id]} alt="Approved proof preview" /> : <p>Secure preview is not available yet.</p>}
+            </article>
+          ))}
+          {rejectedProofRecords.length > 0 && (
+            <p>Rejected proof is kept as an internal warning and is not treated as customer-approved proof.</p>
+          )}
+        </div>
+      </div>
+
+      <div className="lead-submitted-copy">
+        <h4>Customer update summary</h4>
+        {customerUpdates.length === 0 ? (
+          <p>No customer update records yet.</p>
+        ) : customerUpdates.map((update) => (
+          <p key={update.id}>{update.type.replace(/_/g, " ")} - {getCustomerUpdateSharingStatusLabel(update.sharing_status)} - {update.sharing_method ? getCustomerUpdateSharingMethodLabel(update.sharing_method) : "Not shared"}</p>
+        ))}
+      </div>
+
+      <div className="form-grid">
+        <label>
+          Final summary share method
+          <select value={shareMethod} onChange={(event) => setShareMethod(event.target.value as FinalSummaryShareMethod)}>
+            {finalSummaryShareMethodOptions.map((method) => (
+              <option key={method} value={method}>{getFinalSummaryShareMethodLabel(method)}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Final summary share note
+          <textarea value={shareNote} maxLength={500} onChange={(event) => setShareNote(event.target.value)} />
+        </label>
+      </div>
+      <div className="admin-action-row">
+        <button className="primary-button" type="button" onClick={() => void handleMarkSummaryShared()} disabled={Boolean(savingKey)}>
+          {savingKey === "share" ? "Saving..." : "Mark Final Summary as Shared"}
+        </button>
+        <span className="status-pill">{getCustomerUpdateSharingStatusLabel(summary?.shared_status ?? adWork.final_summary_shared_status)}</span>
+      </div>
+    </section>
+  );
+}
+
 function AdminProofReviewPanel({
   config,
   session,
@@ -4178,6 +4763,7 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
         {activeView === "dashboard" && <M5SummaryCards config={config} session={session} adWorks={adWorks} />}
         {activeView === "dashboard" && <M6SummaryCards adWorks={adWorks} adWorkDays={adWorkDays} />}
         {activeView === "dashboard" && <M7SummaryCards config={config} session={session} />}
+        {activeView === "dashboard" && <M8SummaryCards config={config} session={session} adWorks={adWorks} />}
         {activeView === "enquiries" && <EnquirySummaryCards enquiries={enquiries} />}
 
         {loadError && <p className="form-alert admin-message" role="alert">{loadError}</p>}
@@ -4861,6 +5447,14 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
                     session={session}
                     adWork={selectedAdWork}
                     dayDrafts={dayDrafts}
+                  />
+
+                  <AdminFinalProofSummaryPanel
+                    config={config}
+                    session={session}
+                    adWork={selectedAdWork}
+                    dayDrafts={dayDrafts}
+                    onUpdated={loadData}
                   />
 
                   <section className="form-section" aria-labelledby="proof-plan-title">

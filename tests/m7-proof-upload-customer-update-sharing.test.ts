@@ -189,9 +189,9 @@ describe("M7 proof upload and customer update sharing", () => {
     expect(m3Migration).toMatch(/live_tracking_enabled boolean not null default false/i);
   });
 
-  it("marks M7 complete and keeps M8 open", () => {
+  it("marks M7 and M8 complete", () => {
     expect(tasks).toMatch(/## Milestone M6 - Ad Work Execution Without GPS[\s\S]*- \[x\]/);
     expect(tasks).toMatch(/## Milestone M7 - Proof Upload and Customer Update Sharing[\s\S]*- \[x\]/);
-    expect(tasks).toMatch(/## Milestone M8 - Final Proof Summary and Campaign Closure[\s\S]*- \[ \]/);
+    expect(tasks).toMatch(/## Milestone M8 - Final Proof Summary and Campaign Closure[\s\S]*- \[x\]/);
   });
 });

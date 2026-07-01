@@ -1,6 +1,6 @@
 # Kootha / Prachar
 
-Kootha / Prachar is a low-cost local mic advertisement proof platform. The repository currently includes M0 foundation, M1 public website and enquiries, M2 admin lead management, M3 campaign planning and scheduling, M4 driver and vehicle onboarding, M5 driver and vehicle assignment to ad work, M6 ad work execution without GPS, and M7 proof upload and customer update sharing.
+Kootha / Prachar is a low-cost local mic advertisement proof platform. The repository currently includes M0 foundation, M1 public website and enquiries, M2 admin lead management, M3 campaign planning and scheduling, M4 driver and vehicle onboarding, M5 driver and vehicle assignment to ad work, M6 ad work execution without GPS, M7 proof upload and customer update sharing, and M8 final proof summary and campaign closure.
 
 ## Current Scope
 
@@ -19,10 +19,12 @@ Kootha / Prachar is a low-cost local mic advertisement proof platform. The repos
 - Driver photo proof upload after mobile number and Work Code access, using a private proof-photos storage bucket.
 - Admin proof review with secure preview links, review notes, and Approve, Reject, or Needs More Info decisions.
 - Customer update records that admins can copy and mark as shared by phone call, manual WhatsApp, manual SMS, in person, or other manual method without provider integration.
-- Shared product config, labels, statuses, planning helpers, onboarding validation helpers, execution and proof upload helpers, and public form validation helpers.
+- Admin Final Proof Summary review, Ready to Close status, Close Ad Work action, Closed with Issues status, and manual final summary share tracking.
+- Admin copy and print-friendly Final Proof Summary flow for manual sharing or browser print/save as PDF.
+- Shared product config, labels, statuses, planning helpers, onboarding validation helpers, execution and proof upload helpers, closure helpers, and public form validation helpers.
 - Supabase migrations with RLS enabled and privacy-safe defaults.
 
-## What is intentionally not included in M7
+## What is intentionally not included in M8
 
 - GPS tracking,
 - background location,
@@ -32,7 +34,7 @@ Kootha / Prachar is a low-cost local mic advertisement proof platform. The repos
 - camera capture,
 - microphone,
 - video or audio proof upload,
-- final report generation,
+- public final report generation,
 - payment gateway,
 - WhatsApp/SMS provider integration,
 - customer mobile app,
@@ -200,6 +202,25 @@ Admin proof review works from /admin:
 
 M7 uses Android photo library access for selecting proof photos. It does not request GPS permissions, background location, camera, microphone, maps, tracking sessions, customer live links, reports, payments, provider auto-send, customer app, iOS app, or PWA.
 
+## M8 Final Proof Summary And Campaign Closure
+
+Apply the M8 migration after M0 through M7. It adds admin-only closure fields, admin-only Final Proof Summary records, closure RPCs, manual final summary share tracking, and Ready to Close dashboard cards.
+
+Admin closure works from /admin:
+
+1. Open Ad Works and select a completed Ad Work.
+2. Review day-wise execution status, completion notes, issue notes, approved proof uploads, and Customer Update records.
+3. Confirm Final Proof Summary reviewed and Customer Update messages reviewed.
+4. If proof is not required by the customer, mark Proof not required by customer.
+5. Choose Mark Ready for Closure to create or refresh the admin-only Final Proof Summary.
+6. Choose Close Ad Work when checks pass, or choose a Closure Reason when partial work, rejected proof, unresolved issue, or unshared updates must be accepted manually.
+7. Copy Final Summary, open the print-friendly summary view, or use browser print/save as PDF manually.
+8. Mark Final Summary as Shared using Manual WhatsApp, Manual SMS, Phone Call, Printed Copy, In Person, or Other.
+
+The Final Proof Summary shows customer details, Ad Work details, assigned driver and vehicle, Mic System status, day-wise execution, approved proof notes/photos, Customer Update sharing status, closure status, Closure Note, closed time, and Customer Accepted status. Rejected or waiting proof is not shown as customer-approved proof; it remains an internal warning.
+
+M8 does not use GPS, maps, route tracking, background location, customer live tracking links, paid PDF generation, automatic email, WhatsApp/SMS provider sending, payments, customer app, iOS app, or PWA. Proof photos remain private in the proof-photos bucket. Admin previews use short-lived signed URLs only.
+
 ## Run Driver
 
     pnpm dev:driver
@@ -225,6 +246,7 @@ Migrations are in supabase/migrations:
 - 20260630050000_m5_driver_vehicle_assignment.sql adds admin-only Ad Work assignment records, assignment statuses, and readiness checks.
 - 20260630060000_m6_ad_work_execution_without_gps.sql adds admin release, Work Code access, day-wise execution status, text-only Proof Notes, and customer update records.
 - 20260701070000_m7_proof_upload_customer_update_sharing.sql adds private proof photo storage, driver upload slot RPCs, admin proof review, and manual Customer Update sharing fields.
+- 20260701080000_m8_final_proof_summary_campaign_closure.sql adds admin-only Final Proof Summary records, closure statuses, closure RPCs, and manual final summary share tracking.
 
 M4 keeps customer_live_enabled and live_tracking_enabled false by default and does not add live tracking behavior.
 
@@ -233,3 +255,5 @@ M5 keeps customer_live_enabled and live_tracking_enabled false by default and do
 M6 keeps customer_live_enabled and live_tracking_enabled false by default and does not add live tracking behavior.
 
 M7 keeps customer_live_enabled and live_tracking_enabled false by default and does not add live tracking behavior.
+
+M8 keeps customer_live_enabled and live_tracking_enabled false by default and does not add live tracking behavior.
