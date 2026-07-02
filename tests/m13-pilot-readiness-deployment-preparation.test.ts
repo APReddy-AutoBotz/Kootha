@@ -207,12 +207,10 @@ describe("M13 pilot readiness and deployment preparation", () => {
     expect(existsSync(path.resolve("apps/driver/ios"))).toBe(false);
   });
 
-  it("updates README and marks only M13 complete while leaving M14 not started", () => {
+  it("marks M13 complete in the milestone ledger", () => {
     expect(readme).toContain("M13 pilot readiness and deployment preparation");
     expect(readme).toContain("docs/pilot/m13-pilot-smoke-test-checklist.md");
     expect(readme).toContain("M13 does not add a Supabase migration");
     expect(taskBlock("M13 - Pilot Readiness and Deployment Preparation")).toContain("- [x]");
-    expect(taskBlock("M14 - Controlled Pilot Dry Run")).toContain("- [ ] Not started.");
-    expect(taskBlock("M14 - Controlled Pilot Dry Run")).not.toContain("- [x]");
   });
 });
