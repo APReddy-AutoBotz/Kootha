@@ -108,6 +108,15 @@ export const locationProofWarningTypes = [
   "sync_failed",
   "points_after_work_end"
 ] as const;
+export const finalSummaryLocationProofStatuses = [
+  "reviewed_by_team",
+  "needs_follow_up",
+  "not_required",
+  "not_available",
+  "not_reviewed"
+] as const;
+export const finalSummaryLocationProofActiveStatuses = ["yes", "no", "not_confirmed"] as const;
+export const finalSummaryLocationProofSyncStatuses = ["synced", "pending", "not_applicable", "not_available"] as const;
 export const stoppedByValues = ["driver", "admin", "system"] as const;
 export const proofUploadTypes = ["photo", "audio", "video"] as const;
 export const alertTypes = [
@@ -178,6 +187,9 @@ export const statusGroups = {
   trackingHealthStatuses,
   locationProofReviewStatuses,
   locationProofWarningTypes,
+  finalSummaryLocationProofStatuses,
+  finalSummaryLocationProofActiveStatuses,
+  finalSummaryLocationProofSyncStatuses,
   stoppedByValues,
   proofUploadTypes,
   alertTypes,
@@ -224,6 +236,9 @@ export type TrackingStopReason = (typeof trackingStopReasons)[number];
 export type TrackingHealthStatus = (typeof trackingHealthStatuses)[number];
 export type LocationProofReviewStatus = (typeof locationProofReviewStatuses)[number];
 export type LocationProofWarningType = (typeof locationProofWarningTypes)[number];
+export type FinalSummaryLocationProofStatus = (typeof finalSummaryLocationProofStatuses)[number];
+export type FinalSummaryLocationProofActiveStatus = (typeof finalSummaryLocationProofActiveStatuses)[number];
+export type FinalSummaryLocationProofSyncStatus = (typeof finalSummaryLocationProofSyncStatuses)[number];
 
 export const enquiryStatusLabels: Record<EnquiryStatus, string> = {
   new: "New",
@@ -630,6 +645,56 @@ export function getLocationProofWarningLabel(warning: string | null | undefined)
   }
 
   return locationProofWarningLabels[warning as LocationProofWarningType] ?? warning;
+}
+export const finalSummaryLocationProofStatusLabels: Record<FinalSummaryLocationProofStatus, string> = {
+  reviewed_by_team: "Reviewed by Team",
+  needs_follow_up: "Needs Follow-up",
+  not_required: "Not Required",
+  not_available: "Not Available",
+  not_reviewed: "Not Reviewed"
+};
+
+export const finalSummaryLocationProofStatusOptions = finalSummaryLocationProofStatuses;
+
+export function getFinalSummaryLocationProofStatusLabel(status: string | null | undefined): string {
+  if (!status) {
+    return "Not Available";
+  }
+
+  return finalSummaryLocationProofStatusLabels[status as FinalSummaryLocationProofStatus] ?? status;
+}
+
+export const finalSummaryLocationProofActiveLabels: Record<FinalSummaryLocationProofActiveStatus, string> = {
+  yes: "Yes",
+  no: "No",
+  not_confirmed: "Not Confirmed"
+};
+
+export const finalSummaryLocationProofActiveOptions = finalSummaryLocationProofActiveStatuses;
+
+export function getFinalSummaryLocationProofActiveLabel(status: string | null | undefined): string {
+  if (!status) {
+    return "Not Confirmed";
+  }
+
+  return finalSummaryLocationProofActiveLabels[status as FinalSummaryLocationProofActiveStatus] ?? status;
+}
+
+export const finalSummaryLocationProofSyncLabels: Record<FinalSummaryLocationProofSyncStatus, string> = {
+  synced: "Synced",
+  pending: "Pending",
+  not_applicable: "Not Applicable",
+  not_available: "Not Available"
+};
+
+export const finalSummaryLocationProofSyncOptions = finalSummaryLocationProofSyncStatuses;
+
+export function getFinalSummaryLocationProofSyncLabel(status: string | null | undefined): string {
+  if (!status) {
+    return "Not Available";
+  }
+
+  return finalSummaryLocationProofSyncLabels[status as FinalSummaryLocationProofSyncStatus] ?? status;
 }
 export function getAdWorkStatusLabel(status: string): string {
   return adWorkStatusLabels[status as AdWorkStatus] ?? status;

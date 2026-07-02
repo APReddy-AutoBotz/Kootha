@@ -7,6 +7,7 @@ import {
   buildAssignmentReadiness,
   buildCampaignClosureReadiness,
   buildExecutionReleaseReadiness,
+  buildFinalSummaryLocationProofLines,
   businessLabels,
   campaignClosureReasonOptions,
   customerAcceptanceStatusOptions,
@@ -32,6 +33,9 @@ import {
   getCustomerUpdateSharingMethodLabel,
   getCustomerUpdateSharingStatusLabel,
   getFinalSummaryShareMethodLabel,
+  getFinalSummaryLocationProofActiveLabel,
+  getFinalSummaryLocationProofStatusLabel,
+  getFinalSummaryLocationProofSyncLabel,
   getLocationQualityLabel,
   getLocationProofReviewStatusLabel,
   getLocationProofWarningLabel,
@@ -76,6 +80,9 @@ import type {
   EnquiryStatus,
   ExecutionProofNoteType,
   ExecutionReleaseStatus,
+  FinalSummaryLocationProofActiveStatus,
+  FinalSummaryLocationProofStatus,
+  FinalSummaryLocationProofSyncStatus,
   FinalSummaryShareMethod,
   LiveTrackingNeed,
   LocationQuality,
@@ -444,6 +451,15 @@ type FinalProofSummaryRecord = {
   shared_method: FinalSummaryShareMethod | null;
   shared_at: string | null;
   shared_note: string | null;
+  include_phone_location_proof: boolean;
+  phone_location_proof_customer_note: string | null;
+  phone_location_proof_customer_safe_confirmed: boolean;
+  phone_location_proof_status: FinalSummaryLocationProofStatus;
+  phone_location_proof_required: boolean;
+  phone_location_proof_active_during_work: FinalSummaryLocationProofActiveStatus;
+  phone_location_first_received_at: string | null;
+  phone_location_last_received_at: string | null;
+  phone_location_offline_sync_status: FinalSummaryLocationProofSyncStatus;
   updated_at: string | null;
 };
 
@@ -875,6 +891,15 @@ const finalProofSummarySelectColumns = [
   "shared_method",
   "shared_at",
   "shared_note",
+  "include_phone_location_proof",
+  "phone_location_proof_customer_note",
+  "phone_location_proof_customer_safe_confirmed",
+  "phone_location_proof_status",
+  "phone_location_proof_required",
+  "phone_location_proof_active_during_work",
+  "phone_location_first_received_at",
+  "phone_location_last_received_at",
+  "phone_location_offline_sync_status",
   "updated_at"
 ].join(",");
 
@@ -1124,9 +1149,10 @@ async function fetchTrackingSessions(config: SupabaseConfig, session: AuthSessio
   return await response.json() as TrackingSessionRecord[];
 }
 
-async function fetchLocationPoints(config: SupabaseConfig, session: AuthSession, adWorkId?: string): Promise<LocationPointRecord[]> {
+async function fetchLocationPoints(config: SupabaseConfig, session: AuthSession, adWorkId?: string, limit = 20): Promise<LocationPointRecord[]> {
   const filter = adWorkId ? "&ad_work_id=eq." + encodeURIComponent(adWorkId) : "";
-  const response = await fetch(config.url + "/rest/v1/location_points?select=" + locationPointSelectColumns + filter + "&order=received_at.desc&limit=20", {
+  const safeLimit = Math.max(1, Math.min(limit, 1000));
+  const response = await fetch(config.url + "/rest/v1/location_points?select=" + locationPointSelectColumns + filter + "&order=received_at.desc&limit=" + safeLimit, {
     headers: createHeaders(config, session.accessToken)
   });
 
@@ -1273,7 +1299,10 @@ async function prepareFinalProofSummary(
   finalSummaryReviewed: boolean,
   proofNotRequired: boolean,
   customerUpdatesReviewed: boolean,
-  internalAdminNote: string
+  internalAdminNote: string,
+  includePhoneLocationProof: boolean,
+  phoneLocationProofCustomerNote: string,
+  phoneLocationProofCustomerSafeConfirmed: boolean
 ) {
   const response = await fetch(config.url + "/rest/v1/rpc/prepare_final_proof_summary", {
     method: "POST",
@@ -1283,7 +1312,10 @@ async function prepareFinalProofSummary(
       p_final_summary_reviewed: finalSummaryReviewed,
       p_proof_not_required: proofNotRequired,
       p_customer_updates_reviewed: customerUpdatesReviewed,
-      p_internal_admin_note: internalAdminNote.trim() || null
+      p_internal_admin_note: internalAdminNote.trim() || null,
+      p_include_phone_location_proof: includePhoneLocationProof,
+      p_phone_location_proof_customer_note: phoneLocationProofCustomerNote.trim() || null,
+      p_phone_location_proof_customer_safe_confirmed: phoneLocationProofCustomerSafeConfirmed
     })
   });
 
@@ -1310,7 +1342,10 @@ async function closeAdWorkWithFinalSummary(
   customerAccepted: CustomerAcceptanceStatus,
   internalAdminNote: string,
   proofNotRequired: boolean,
-  customerUpdatesReviewed: boolean
+  customerUpdatesReviewed: boolean,
+  includePhoneLocationProof: boolean,
+  phoneLocationProofCustomerNote: string,
+  phoneLocationProofCustomerSafeConfirmed: boolean
 ) {
   const response = await fetch(config.url + "/rest/v1/rpc/close_ad_work_with_final_summary", {
     method: "POST",
@@ -1322,7 +1357,10 @@ async function closeAdWorkWithFinalSummary(
       p_customer_accepted: customerAccepted,
       p_internal_admin_note: internalAdminNote.trim() || null,
       p_proof_not_required: proofNotRequired,
-      p_customer_updates_reviewed: customerUpdatesReviewed
+      p_customer_updates_reviewed: customerUpdatesReviewed,
+      p_include_phone_location_proof: includePhoneLocationProof,
+      p_phone_location_proof_customer_note: phoneLocationProofCustomerNote.trim() || null,
+      p_phone_location_proof_customer_safe_confirmed: phoneLocationProofCustomerSafeConfirmed
     })
   });
 
@@ -2419,6 +2457,131 @@ function getLocationProofSummaryText(adWork: AdWorkRecord, review: LocationProof
   }
 
   return "Phone Location Proof: Not available";
+}
+function getFinalSummaryLocationProofStatusForAdWork(
+  adWork: AdWorkRecord,
+  review: LocationProofReviewRecord | null,
+  pointCount: number
+): FinalSummaryLocationProofStatus {
+  if (!adWork.mobile_location_proof_required) {
+    return "not_required";
+  }
+
+  if (review?.review_status === "not_required") {
+    return "not_required";
+  }
+
+  if (review?.review_status === "needs_follow_up" || review?.review_status === "rejected") {
+    return "needs_follow_up";
+  }
+
+  if ((review?.review_status === "reviewed" || review?.review_status === "accepted") && pointCount > 0) {
+    return "reviewed_by_team";
+  }
+
+  if (review?.review_status === "reviewed" || review?.review_status === "accepted") {
+    return "not_available";
+  }
+
+  return "not_reviewed";
+}
+
+function getFinalSummaryLocationProofActiveStatus(
+  adWork: AdWorkRecord,
+  sessions: TrackingSessionRecord[],
+  points: LocationPointRecord[]
+): FinalSummaryLocationProofActiveStatus {
+  if (points.length > 0 || sessions.some((sessionRow) => Boolean(sessionRow.started_at))) {
+    return "yes";
+  }
+
+  if (adWork.mobile_location_proof_required && sessions.length === 0) {
+    return "no";
+  }
+
+  return "not_confirmed";
+}
+
+function getFinalSummaryLocationProofSyncStatus(
+  adWork: AdWorkRecord,
+  sessions: TrackingSessionRecord[],
+  points: LocationPointRecord[]
+): FinalSummaryLocationProofSyncStatus {
+  if (!adWork.mobile_location_proof_required) {
+    return "not_applicable";
+  }
+
+  if (sessions.some((sessionRow) => sessionRow.client_pending_point_count > 0 || sessionRow.sync_failure_count > 0 || Boolean(sessionRow.sync_error_message))) {
+    return "pending";
+  }
+
+  if (sessions.some((sessionRow) => Boolean(sessionRow.last_successful_sync_at)) || points.some((point) => Boolean(point.client_point_id))) {
+    return "synced";
+  }
+
+  return "not_available";
+}
+
+function getLocationProofFirstReceivedAt(points: LocationPointRecord[]): string | null {
+  return sortLocationPointsAsc(points)[0]?.received_at ?? null;
+}
+
+function getLocationProofLastReceivedAt(points: LocationPointRecord[]): string | null {
+  const sortedPoints = sortLocationPointsAsc(points);
+  return sortedPoints[sortedPoints.length - 1]?.received_at ?? null;
+}
+
+function getFinalSummaryLocationProofWarnings(
+  adWork: AdWorkRecord,
+  status: FinalSummaryLocationProofStatus,
+  sessions: TrackingSessionRecord[],
+  points: LocationPointRecord[]
+): string[] {
+  if (!adWork.mobile_location_proof_required) {
+    return [];
+  }
+
+  const warnings: string[] = [];
+
+  if (status === "not_reviewed") {
+    warnings.push("Phone Location Proof is not reviewed.");
+  }
+
+  if (points.length === 0) {
+    warnings.push("No phone location updates were received.");
+  }
+
+  if (sessions.some((sessionRow) => sessionRow.client_pending_point_count > 0 || sessionRow.sync_failure_count > 0 || Boolean(sessionRow.sync_error_message))) {
+    warnings.push("Some location updates need follow-up.");
+  }
+
+  return warnings;
+}
+
+function buildPhoneLocationProofPreview(
+  include: boolean,
+  adWork: AdWorkRecord,
+  status: FinalSummaryLocationProofStatus,
+  activeDuringWork: FinalSummaryLocationProofActiveStatus,
+  offlineSync: FinalSummaryLocationProofSyncStatus,
+  firstReceivedAt: string | null,
+  lastReceivedAt: string | null,
+  teamReviewNote: string
+): string {
+  if (!include) {
+    return "Phone Location Proof is not included in the customer summary.";
+  }
+
+  return buildFinalSummaryLocationProofLines({
+    include: true,
+    status,
+    required: adWork.mobile_location_proof_required,
+    activeDuringWork,
+    firstLocationReceived: firstReceivedAt ? formatDateTime(firstReceivedAt) : null,
+    lastLocationReceived: lastReceivedAt ? formatDateTime(lastReceivedAt) : null,
+    offlineSync,
+    teamReviewNote
+  }).join("\n");
 }
 function DashboardCards({ adWorks }: { adWorks: AdWorkRecord[] }) {
   const cards = [
@@ -4067,6 +4230,9 @@ function AdminFinalProofSummaryPanel({
   const [proofUploads, setProofUploads] = useState<ProofUploadRecord[]>([]);
   const [customerUpdates, setCustomerUpdates] = useState<CustomerUpdateRecord[]>([]);
   const [summary, setSummary] = useState<FinalProofSummaryRecord | null>(null);
+  const [locationProofSessions, setLocationProofSessions] = useState<TrackingSessionRecord[]>([]);
+  const [locationProofPoints, setLocationProofPoints] = useState<LocationPointRecord[]>([]);
+  const [locationProofReview, setLocationProofReview] = useState<LocationProofReviewRecord | null>(null);
   const [previewUrls, setPreviewUrls] = useState<Record<string, string>>({});
   const [finalSummaryReviewed, setFinalSummaryReviewed] = useState(adWork.final_summary_reviewed);
   const [proofNotRequired, setProofNotRequired] = useState(adWork.closure_reason === "proof_not_required_by_customer");
@@ -4077,6 +4243,9 @@ function AdminFinalProofSummaryPanel({
   const [internalAdminNote, setInternalAdminNote] = useState(adWork.closure_internal_admin_note ?? "");
   const [shareMethod, setShareMethod] = useState<FinalSummaryShareMethod>(adWork.final_summary_shared_method ?? "manual_whatsapp");
   const [shareNote, setShareNote] = useState(adWork.final_summary_shared_note ?? "");
+  const [includePhoneLocationProof, setIncludePhoneLocationProof] = useState(false);
+  const [locationProofCustomerNote, setLocationProofCustomerNote] = useState("");
+  const [locationProofCustomerSafeConfirmed, setLocationProofCustomerSafeConfirmed] = useState(false);
   const [summaryText, setSummaryText] = useState("");
   const [message, setMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -4091,6 +4260,24 @@ function AdminFinalProofSummaryPanel({
     areaPlaceName: proof.area_place_name,
     noteText: proof.note_text
   })));
+  const locationProofStatus = getFinalSummaryLocationProofStatusForAdWork(adWork, locationProofReview, locationProofPoints.length);
+  const locationProofActiveStatus = getFinalSummaryLocationProofActiveStatus(adWork, locationProofSessions, locationProofPoints);
+  const locationProofSyncStatus = getFinalSummaryLocationProofSyncStatus(adWork, locationProofSessions, locationProofPoints);
+  const locationProofFirstReceivedAt = getLocationProofFirstReceivedAt(locationProofPoints);
+  const locationProofLastReceivedAt = getLocationProofLastReceivedAt(locationProofPoints);
+  const locationProofWarnings = getFinalSummaryLocationProofWarnings(adWork, locationProofStatus, locationProofSessions, locationProofPoints);
+  const canIncludePhoneLocationProof = locationProofStatus !== "not_reviewed";
+  const effectiveIncludePhoneLocationProof = includePhoneLocationProof && canIncludePhoneLocationProof;
+  const locationProofPreview = buildPhoneLocationProofPreview(
+    effectiveIncludePhoneLocationProof,
+    adWork,
+    locationProofStatus,
+    locationProofActiveStatus,
+    locationProofSyncStatus,
+    locationProofFirstReceivedAt,
+    locationProofLastReceivedAt,
+    locationProofCustomerNote
+  );
   const readiness = buildCampaignClosureReadiness({
     assignmentStatus: adWork.assignment_status,
     releaseStatus: adWork.execution_release_status,
@@ -4105,21 +4292,28 @@ function AdminFinalProofSummaryPanel({
     proofNotRequiredConfirmed: proofNotRequired,
     closureReason
   });
+  const allClosureWarnings = [...readiness.hardStops, ...readiness.warnings, ...locationProofWarnings];
 
   async function loadClosureData() {
     setIsLoading(true);
     setMessage("");
 
     try {
-      const [assignmentRows, driverRows, vehicleRows, proofRows, updateRows, summaryRows] = await Promise.all([
+      const [assignmentRows, driverRows, vehicleRows, proofRows, updateRows, summaryRows, sessionRows, pointRows, reviewRows] = await Promise.all([
         fetchAdWorkAssignments(config, session, adWork.id),
         fetchDrivers(config, session),
         fetchVehicles(config, session),
         fetchAdminProofUploads(config, session, adWork.id),
         fetchCustomerUpdates(config, session, adWork.id),
-        fetchFinalProofSummaries(config, session, adWork.id)
+        fetchFinalProofSummaries(config, session, adWork.id),
+        fetchTrackingSessions(config, session, adWork.id),
+        fetchLocationPoints(config, session, adWork.id, 1000),
+        fetchLocationProofReviews(config, session, adWork.id)
       ]);
       const activeSummary = summaryRows[0] ?? null;
+      const activeReview = reviewRows[0] ?? null;
+      const loadedStatus = getFinalSummaryLocationProofStatusForAdWork(adWork, activeReview, pointRows.length);
+      const savedInclude = Boolean(activeSummary?.include_phone_location_proof) && loadedStatus !== "not_reviewed";
       const approvedRows = proofRows.filter((proof) => proof.upload_status === "uploaded" && proof.review_status === "approved");
       const previewEntries = await Promise.all(approvedRows.map(async (proof) => {
         try {
@@ -4136,6 +4330,9 @@ function AdminFinalProofSummaryPanel({
       setProofUploads(proofRows);
       setCustomerUpdates(updateRows);
       setSummary(activeSummary);
+      setLocationProofSessions(sessionRows);
+      setLocationProofPoints(pointRows);
+      setLocationProofReview(activeReview);
       setSummaryText(activeSummary?.summary_text ?? "");
       setFinalSummaryReviewed(adWork.final_summary_reviewed || Boolean(activeSummary?.reviewed_at));
       setProofNotRequired(adWork.closure_reason === "proof_not_required_by_customer");
@@ -4146,6 +4343,9 @@ function AdminFinalProofSummaryPanel({
       setInternalAdminNote(activeSummary?.internal_admin_note ?? adWork.closure_internal_admin_note ?? "");
       setShareMethod(activeSummary?.shared_method ?? adWork.final_summary_shared_method ?? "manual_whatsapp");
       setShareNote(activeSummary?.shared_note ?? adWork.final_summary_shared_note ?? "");
+      setIncludePhoneLocationProof(savedInclude);
+      setLocationProofCustomerNote(activeSummary?.phone_location_proof_customer_note ?? "");
+      setLocationProofCustomerSafeConfirmed(savedInclude && Boolean(activeSummary?.phone_location_proof_customer_safe_confirmed));
       setPreviewUrls(Object.fromEntries(previewEntries.filter((entry) => Boolean(entry[1]))));
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not load Final Proof Summary.");
@@ -4163,7 +4363,18 @@ function AdminFinalProofSummaryPanel({
     setMessage("");
 
     try {
-      const result = await prepareFinalProofSummary(config, session, adWork.id, finalSummaryReviewed, proofNotRequired, customerUpdatesReviewed, internalAdminNote);
+      const result = await prepareFinalProofSummary(
+        config,
+        session,
+        adWork.id,
+        finalSummaryReviewed,
+        proofNotRequired,
+        customerUpdatesReviewed,
+        internalAdminNote,
+        effectiveIncludePhoneLocationProof,
+        locationProofCustomerNote,
+        effectiveIncludePhoneLocationProof && locationProofCustomerSafeConfirmed
+      );
       setSummaryText(result[0]?.summary_text ?? "");
       setMessage(result[0]?.result_message ?? "Final Proof Summary saved.");
       await onUpdated();
@@ -4180,7 +4391,20 @@ function AdminFinalProofSummaryPanel({
     setMessage("");
 
     try {
-      const result = await closeAdWorkWithFinalSummary(config, session, adWork.id, closureReason, closureNote, customerAccepted, internalAdminNote, proofNotRequired, customerUpdatesReviewed);
+      const result = await closeAdWorkWithFinalSummary(
+        config,
+        session,
+        adWork.id,
+        closureReason,
+        closureNote,
+        customerAccepted,
+        internalAdminNote,
+        proofNotRequired,
+        customerUpdatesReviewed,
+        effectiveIncludePhoneLocationProof,
+        locationProofCustomerNote,
+        effectiveIncludePhoneLocationProof && locationProofCustomerSafeConfirmed
+      );
       setMessage(result[0]?.result_message ?? "Ad Work closed.");
       await onUpdated();
       await loadClosureData();
@@ -4253,10 +4477,10 @@ function AdminFinalProofSummaryPanel({
 
       <div className="lead-submitted-copy">
         <h4>Closure warnings</h4>
-        {readiness.hardStops.length === 0 && readiness.warnings.length === 0 ? (
+        {allClosureWarnings.length === 0 ? (
           <p>Ready to Close.</p>
         ) : (
-          [...readiness.hardStops, ...readiness.warnings].map((warning) => <p key={warning}>{warning}</p>)
+          allClosureWarnings.map((warning) => <p key={warning}>{warning}</p>)
         )}
       </div>
 
@@ -4298,6 +4522,88 @@ function AdminFinalProofSummaryPanel({
           Internal admin note
           <textarea value={internalAdminNote} maxLength={1200} onChange={(event) => setInternalAdminNote(event.target.value)} />
         </label>
+      </div>
+
+      <div className="lead-submitted-copy">
+        <h4>Phone Location Proof in Final Summary</h4>
+        <dl className="lead-detail-grid">
+          <div>
+            <dt>Phone Location Proof Status</dt>
+            <dd>{getFinalSummaryLocationProofStatusLabel(locationProofStatus)}</dd>
+          </div>
+          <div>
+            <dt>Location Proof Required</dt>
+            <dd>{adWork.mobile_location_proof_required ? "Yes" : "No"}</dd>
+          </div>
+          <div>
+            <dt>Location Proof Active During Work</dt>
+            <dd>{getFinalSummaryLocationProofActiveLabel(locationProofActiveStatus)}</dd>
+          </div>
+          <div>
+            <dt>First Location Received</dt>
+            <dd>{formatDateTime(locationProofFirstReceivedAt)}</dd>
+          </div>
+          <div>
+            <dt>Last Location Received</dt>
+            <dd>{formatDateTime(locationProofLastReceivedAt)}</dd>
+          </div>
+          <div>
+            <dt>Offline Location Sync</dt>
+            <dd>{getFinalSummaryLocationProofSyncLabel(locationProofSyncStatus)}</dd>
+          </div>
+          <div>
+            <dt>Points Received</dt>
+            <dd>{formatCount(locationProofPoints.length)}</dd>
+          </div>
+          <div>
+            <dt>Review</dt>
+            <dd>{getLocationProofReviewStatusLabel(locationProofReview?.review_status)}</dd>
+          </div>
+        </dl>
+        {locationProofWarnings.length > 0 && (
+          <div className="admin-warning-list">
+            {locationProofWarnings.map((warning) => <p key={warning}>{warning}</p>)}
+          </div>
+        )}
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
+            checked={includePhoneLocationProof}
+            disabled={!canIncludePhoneLocationProof}
+            onChange={(event) => {
+              setIncludePhoneLocationProof(event.target.checked);
+              if (!event.target.checked) {
+                setLocationProofCustomerSafeConfirmed(false);
+              }
+            }}
+          />
+          <span>Include Phone Location Proof in customer summary</span>
+        </label>
+        {!canIncludePhoneLocationProof && <p>Phone Location Proof must be reviewed before it can be included.</p>}
+        <label>
+          Customer-safe location proof note
+          <textarea
+            value={locationProofCustomerNote}
+            maxLength={500}
+            onChange={(event) => {
+              setLocationProofCustomerNote(event.target.value);
+              setLocationProofCustomerSafeConfirmed(false);
+            }}
+          />
+        </label>
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
+            checked={locationProofCustomerSafeConfirmed}
+            disabled={!effectiveIncludePhoneLocationProof}
+            onChange={(event) => setLocationProofCustomerSafeConfirmed(event.target.checked)}
+          />
+          <span>I confirm this Phone Location Proof wording is customer-safe.</span>
+        </label>
+        <div className="lead-submitted-copy final-summary-preview">
+          <h5>Customer-safe wording preview</h5>
+          <pre>{locationProofPreview}</pre>
+        </div>
       </div>
 
       <div className="admin-action-row">
@@ -4376,7 +4682,6 @@ function AdminFinalProofSummaryPanel({
     </section>
   );
 }
-
 function AdminProofReviewPanel({
   config,
   session,

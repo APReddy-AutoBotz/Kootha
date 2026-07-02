@@ -7,7 +7,15 @@ import type {
   CustomerAcceptanceStatus,
   CustomerUpdateSharingStatus,
   ExecutionReleaseStatus,
+  FinalSummaryLocationProofActiveStatus,
+  FinalSummaryLocationProofStatus,
+  FinalSummaryLocationProofSyncStatus,
   ProofReviewStatus
+} from "./statuses";
+import {
+  getFinalSummaryLocationProofActiveLabel,
+  getFinalSummaryLocationProofStatusLabel,
+  getFinalSummaryLocationProofSyncLabel
 } from "./statuses";
 
 export interface CampaignClosureReadinessInput {
@@ -46,6 +54,17 @@ export interface FinalProofSummaryDay {
   issueNote?: string | null;
 }
 
+export interface FinalSummaryLocationProof {
+  include: boolean;
+  status: FinalSummaryLocationProofStatus;
+  required: boolean;
+  activeDuringWork: FinalSummaryLocationProofActiveStatus;
+  firstLocationReceived?: string | null;
+  lastLocationReceived?: string | null;
+  offlineSync: FinalSummaryLocationProofSyncStatus;
+  teamReviewNote?: string | null;
+}
+
 export interface FinalProofSummaryInput {
   customerName: string;
   businessName?: string | null;
@@ -62,6 +81,7 @@ export interface FinalProofSummaryInput {
   days: readonly FinalProofSummaryDay[];
   proofs: readonly FinalProofSummaryProof[];
   customerUpdatesShared: boolean;
+  locationProof?: FinalSummaryLocationProof | null;
   closureStatusLabel: string;
   customerAccepted: CustomerAcceptanceStatus;
   closureNote?: string | null;
@@ -160,6 +180,29 @@ function valueOrNotSet(value: string | null | undefined): string {
   return trimmed || "Not set";
 }
 
+function valueOrNotAvailable(value: string | null | undefined): string {
+  const trimmed = (value ?? "").trim();
+  return trimmed || "Not Available";
+}
+
+export function buildFinalSummaryLocationProofLines(locationProof: FinalSummaryLocationProof | null | undefined): string[] {
+  if (!locationProof?.include) {
+    return [];
+  }
+
+  return [
+    "Phone Location Proof",
+    "Phone Location Proof Status: " + getFinalSummaryLocationProofStatusLabel(locationProof.status),
+    "Location Proof Required: " + (locationProof.required ? "Yes" : "No"),
+    "Location Proof Active During Work: " + getFinalSummaryLocationProofActiveLabel(locationProof.activeDuringWork),
+    "First Location Received: " + valueOrNotAvailable(locationProof.firstLocationReceived),
+    "Last Location Received: " + valueOrNotAvailable(locationProof.lastLocationReceived),
+    "Offline Location Sync: " + getFinalSummaryLocationProofSyncLabel(locationProof.offlineSync),
+    "Team Review Note: " + valueOrNotAvailable(locationProof.teamReviewNote),
+    "Phone Location Proof is supporting evidence only. It does not certify route, map, distance, or full area coverage."
+  ];
+}
+
 export function buildFinalProofSummaryText(input: FinalProofSummaryInput): string {
   const approvedProofs = getApprovedFinalProofs(input.proofs);
   const dayLines = input.days.map((day) => {
@@ -191,6 +234,7 @@ export function buildFinalProofSummaryText(input: FinalProofSummaryInput): strin
     "Approved proof:",
     ...(proofLines.length > 0 ? proofLines : ["No customer-approved photo proof selected."]),
     "Customer Update Shared: " + (input.customerUpdatesShared ? "Yes" : "No"),
+    ...buildFinalSummaryLocationProofLines(input.locationProof),
     "Closure status: " + input.closureStatusLabel,
     "Customer Accepted: " + input.customerAccepted.replace(/_/g, " "),
     "Closure Note: " + valueOrNotSet(input.closureNote),
