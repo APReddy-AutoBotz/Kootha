@@ -122,13 +122,13 @@ describe("M16 real device pilot execution evidence", () => {
     expect(existsSync(path.resolve("apps/driver/ios"))).toBe(false);
   });
 
-  it("updates README and marks only M16 complete while leaving M17 not started", () => {
+  it("updates README and marks M16 complete while later M17 remediation is complete", () => {
     expect(readme).toContain("M16 real device pilot execution evidence");
     expect(readme).toContain("docs/pilot/m16-real-device-pilot-execution-evidence.md");
     expect(readme).toContain("M16 result: blocked.");
     expect(readme).toContain("M16 does not add a Supabase migration");
     expect(taskBlock("M16 - Real Device Pilot Execution Evidence")).toContain("- [x]");
-    expect(taskBlock("M17 - Real Device Pilot Blocker Remediation")).toContain("- [ ] Not started.");
-    expect(taskBlock("M17 - Real Device Pilot Blocker Remediation")).not.toContain("- [x]");
+    expect(taskBlock("M17 - Real Device Pilot Blocker Remediation")).toContain("- [x]");
+    expect(taskBlock("M18 - Real Device Pilot Evidence Retry")).toContain("- [ ] Not started.");
   });
 });
