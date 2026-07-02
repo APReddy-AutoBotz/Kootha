@@ -5,6 +5,7 @@ export * from "./driverOnboarding";
 export * from "./execution";
 export * from "./enquiry";
 export * from "./labels";
+export * from "./pilotReadiness";
 export * from "./product";
 export * from "./statuses";
 export * from "./tracking";

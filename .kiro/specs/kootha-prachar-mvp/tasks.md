@@ -86,4 +86,8 @@ Status values:
 
 ## Milestone M13 - Pilot Readiness and Deployment Preparation
 
+- [x] Build pilot readiness docs, deployment preparation docs, smoke checklist, operations runbook, driver consent text, customer communication text, pilot environment validation helper, and guardrail tests without adding future product features.
+
+## Milestone M14 - Controlled Pilot Dry Run
+
 - [ ] Not started.
