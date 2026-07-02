@@ -65,6 +65,14 @@ M13 does not add a Supabase migration.
 5. Confirm foreground Phone Location Proof asks for permission only after the driver chooses Start Location Proof.
 6. Confirm location proof stops after break, end work, access revoke, or closure.
 
+## Preview And Production Build Notes
+
+- Use `pnpm build` as the preview and production web build check.
+- Use placeholder-free web and driver public environment values before creating preview or production-like builds.
+- Preview deployments should use pilot Supabase values outside Git and should not reuse local placeholder values.
+- Production-like deployments require AP approval, a known pilot Supabase project, and a clean verification run.
+- M13 does not add hosting automation; the pilot owner must record where the preview or production build is deployed.
+
 ## Deployment Checks
 
 - No real secrets or API keys are committed.

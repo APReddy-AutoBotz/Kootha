@@ -22,6 +22,10 @@ Phone Location Proof is used only as work proof for your assigned Prachar Ad Wor
 - microphone recording,
 - camera capture by the app.
 
+## Admin Review
+
+Admin reviews the photo proof, proof notes, and Phone Location Proof status for assigned work. Customers do not get a live tracking link by default.
+
 ## When It Stops
 
 Phone Location Proof stops when you take a break, end work, the admin stops it, the Work Code is revoked, or the Ad Work is closed.

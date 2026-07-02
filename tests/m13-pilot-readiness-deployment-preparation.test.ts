@@ -51,6 +51,9 @@ describe("M13 pilot readiness and deployment preparation", () => {
     expect(m13Docs).toContain("customer_live_enabled");
     expect(m13Docs).toContain("live_tracking_enabled");
     expect(m13Docs).toContain("M13 does not add a Supabase migration.");
+    expect(m13Docs).toContain("Preview And Production Build Notes");
+    expect(m13Docs).toContain("Admin reviews the photo proof");
+    expect(m13Docs).toContain("Customers do not get a live tracking link by default.");
     expect(m13Docs).toContain("Stop Conditions");
     expect(m13Docs).toContain("Driver Confirmation");
   });
