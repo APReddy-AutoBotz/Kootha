@@ -198,13 +198,11 @@ describe("M15 real device pilot setup and deployment", () => {
     expect(existsSync(path.resolve("apps/driver/ios"))).toBe(false);
   });
 
-  it("updates README and marks only M15 complete while leaving M16 not started", () => {
+  it("marks M15 complete in the milestone ledger", () => {
     expect(readme).toContain("M15 real device pilot setup and deployment preparation");
     expect(readme).toContain("docs/pilot/m15-real-device-pilot-setup.md");
     expect(readme).toContain("pnpm check:pilot-env");
     expect(readme).toContain("M15 does not add a Supabase migration");
     expect(taskBlock("M15 - Real Device Pilot Setup and Deployment")).toContain("- [x]");
-    expect(taskBlock("M16 - Real Device Pilot Execution Evidence")).toContain("- [ ] Not started.");
-    expect(taskBlock("M16 - Real Device Pilot Execution Evidence")).not.toContain("- [x]");
   });
 });

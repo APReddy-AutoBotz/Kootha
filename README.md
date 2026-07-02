@@ -1,6 +1,6 @@
 # Kootha / Prachar
 
-Kootha / Prachar is a low-cost local mic advertisement proof platform. The repository currently includes M0 foundation, M1 public website and enquiries, M2 admin lead management, M3 campaign planning and scheduling, M4 driver and vehicle onboarding, M5 driver and vehicle assignment to ad work, M6 ad work execution without GPS, M7 proof upload and customer update sharing, M8 final proof summary and campaign closure, M9 mobile GPS tracking foundation, M10 mobile GPS reliability and offline buffer, M11 admin tracking review without maps, M12 location proof in final summary, M13 pilot readiness and deployment preparation, M14 controlled pilot dry run preparation, and M15 real device pilot setup and deployment preparation.
+Kootha / Prachar is a low-cost local mic advertisement proof platform. The repository currently includes M0 foundation, M1 public website and enquiries, M2 admin lead management, M3 campaign planning and scheduling, M4 driver and vehicle onboarding, M5 driver and vehicle assignment to ad work, M6 ad work execution without GPS, M7 proof upload and customer update sharing, M8 final proof summary and campaign closure, M9 mobile GPS tracking foundation, M10 mobile GPS reliability and offline buffer, M11 admin tracking review without maps, M12 location proof in final summary, M13 pilot readiness and deployment preparation, M14 controlled pilot dry run preparation, M15 real device pilot setup and deployment preparation, and M16 real device pilot execution evidence.
 
 ## Current Scope
 
@@ -31,8 +31,9 @@ Kootha / Prachar is a low-cost local mic advertisement proof platform. The repos
 - Pilot readiness docs, deployment preparation guide, smoke checklist, operations runbook, driver consent text, customer communication text, and pilot environment readiness helper.
 - Controlled pilot dry-run scenario, end-to-end checklist, results template, blocker and limitation notes, fake data guide, and go/no-go checklist.
 - Real-device pilot setup docs, deployment runbook, Android test checklist, Supabase target checklist, pilot operator checklist, evidence template, and safe pilot environment check.
+- Real-device pilot execution evidence document with a blocked outcome because the required physical device and target environment were unavailable.
 
-## What is intentionally not included in M15
+## What is intentionally not included in M16
 
 - background location,
 - map integration or route map display,
@@ -363,11 +364,19 @@ M15 docs:
 
 Before a real customer pilot, AP should verify target Supabase setup, proof photo bucket privacy, admin user setup, driver app environment values, web/admin environment values, real Android foreground location behavior, photo proof upload, offline buffer and Sync Now, and customer-safe Final Proof Summary wording. Real evidence references must stay outside this repository.
 
+## M16 Real Device Pilot Execution Evidence
+
+M16 records the real-device pilot execution evidence outcome. The evidence document is at `docs/pilot/m16-real-device-pilot-execution-evidence.md`.
+
+M16 result: blocked. Real-device pilot execution was not completed because required environment/device was unavailable. No real customer pilot should start until the physical Android device, target Supabase project, admin user, private proof storage, deployed web/admin environment, and driver app installation are available and the M16 evidence run is repeated.
+
+M16 does not add product behavior, Google Maps, customer live tracking links, GPS device ingestion, payments, provider integrations, customer app, iOS app, or PWA.
+
 ## Run Driver
 
     pnpm dev:driver
 
-The driver app is Expo React Native and Android-first. M9 requests foreground phone location permission only after the driver opens assigned work, starts work, reads the Location Proof notice, and chooses Start Location Proof. M10 buffers captured location points locally when sync fails and retries them while foreground Location Proof is active. M11 adds admin review without maps and keeps technical coordinates hidden by default. M12 adds customer-safe final summary wording without exposing raw location values. M13 adds pilot readiness docs and deployment guidance without changing driver app behavior. M14 adds dry-run documentation and requires real Android device testing before a real pilot. M15 adds real-device setup and deployment preparation docs plus a safe environment check. It does not request background location. M7 requests Android photo library access only for selecting photo proof uploads.
+The driver app is Expo React Native and Android-first. M9 requests foreground phone location permission only after the driver opens assigned work, starts work, reads the Location Proof notice, and chooses Start Location Proof. M10 buffers captured location points locally when sync fails and retries them while foreground Location Proof is active. M11 adds admin review without maps and keeps technical coordinates hidden by default. M12 adds customer-safe final summary wording without exposing raw location values. M13 adds pilot readiness docs and deployment guidance without changing driver app behavior. M14 adds dry-run documentation and requires real Android device testing before a real pilot. M15 adds real-device setup and deployment preparation docs plus a safe environment check. M16 records a blocked real-device pilot execution evidence outcome because required device/environment access was unavailable. It does not request background location. M7 requests Android photo library access only for selecting photo proof uploads.
 
 ## Verify
 
@@ -397,6 +406,7 @@ Migrations are in supabase/migrations:
 - M13 does not add a Supabase migration; it adds pilot readiness docs, deployment preparation docs, and a shared environment readiness helper.
 - M14 does not add a Supabase migration; it adds controlled dry-run docs, fake data guidance, go/no-go checks, and guardrail tests.
 - M15 does not add a Supabase migration; it adds real-device pilot setup docs, deployment runbook, Supabase target checklist, safe environment check, and guardrail tests.
+- M16 does not add a Supabase migration; it adds an evidence document for the blocked real-device pilot execution run and guardrail tests.
 
 M4 keeps customer_live_enabled and live_tracking_enabled false by default and does not add live tracking behavior.
 
@@ -422,3 +432,5 @@ M13 keeps customer_live_enabled and live_tracking_enabled false by default and d
 M14 keeps customer_live_enabled and live_tracking_enabled false by default and does not add customer live tracking behavior.
 
 M15 keeps customer_live_enabled and live_tracking_enabled false by default and does not add customer live tracking behavior.
+
+M16 keeps customer_live_enabled and live_tracking_enabled false by default and does not add customer live tracking behavior.

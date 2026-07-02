@@ -98,4 +98,8 @@ Status values:
 
 ## Milestone M16 - Real Device Pilot Execution Evidence
 
+- [x] Record real-device pilot execution evidence as blocked because required physical Android device, target Supabase project, admin user, storage setup, and deployed environment were unavailable; add README updates and guardrail tests without adding future product features.
+
+## Milestone M17 - Real Device Pilot Blocker Remediation
+
 - [ ] Not started.
