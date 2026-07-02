@@ -90,4 +90,8 @@ Status values:
 
 ## Milestone M14 - Controlled Pilot Dry Run
 
+- [x] Build controlled pilot dry-run scenario, end-to-end checklist, results template, blocker and limitation notes, fake data guide, go/no-go checklist, README updates, task ledger update, and guardrail tests without adding future product features.
+
+## Milestone M15 - Real Device Pilot Setup and Deployment
+
 - [ ] Not started.
