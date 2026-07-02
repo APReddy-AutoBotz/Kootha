@@ -614,8 +614,8 @@ begin
     raise exception 'Closure Reason is required when warnings remain' using errcode = '22000';
   end if;
 
-  if v_location_blocking_warning_count > 0 and nullif(trim(coalesce(p_closure_reason, '')), '') is null and v_customer_note is null then
-    raise exception 'Closure Reason or customer-safe Phone Location Proof note is required when location proof warnings remain' using errcode = '22000';
+  if v_location_blocking_warning_count > 0 and nullif(trim(coalesce(p_closure_reason, '')), '') is null then
+    raise exception 'Closure Reason is required when location proof warnings remain' using errcode = '22000';
   end if;
 
   if v_standard_blocking_warning_count + v_location_blocking_warning_count > 0 then

@@ -303,7 +303,7 @@ Admin final summary location proof works from /admin:
 
 Customer summary wording is limited to Phone Location Proof Status, Location Proof Required, Location Proof Active During Work, First Location Received, Last Location Received, Offline Location Sync, and Team Review Note. It does not expose latitude, longitude, accuracy, raw location points, tracking session ids, internal review notes, storage paths, route drawings, maps, distance billing, or public live tracking.
 
-Closure warnings include Phone Location Proof is not reviewed, No phone location updates were received, and Some location updates need follow-up. Closing with location warnings requires a Closure Reason or a customer-safe Phone Location Proof note.
+Closure warnings include Phone Location Proof is not reviewed, No phone location updates were received, and Some location updates need follow-up. Closing with location warnings requires a Closure Reason. A customer-safe Phone Location Proof note can explain the customer wording, but it does not replace the Closure Reason.
 
 M12 remains admin-only and no-map. It does not add background location, Google Maps, route maps, GPS device ingestion, public location access, customer live tracking links, reports, payments, provider auto-send, customer app, iOS app, or PWA.
 ## Run Driver

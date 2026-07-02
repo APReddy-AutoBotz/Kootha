@@ -123,7 +123,8 @@ describe("M12 location proof in final summary", () => {
     expect(m12Migration).toContain("Some location updates need follow-up.");
     expect(m12Migration).toContain("Phone Location Proof must be reviewed before it can be included in the customer summary");
     expect(m12Migration).toContain("Confirm customer-safe Phone Location Proof wording before including it");
-    expect(m12Migration).toContain("Closure Reason or customer-safe Phone Location Proof note is required when location proof warnings remain");
+    expect(m12Migration).toContain("Closure Reason is required when location proof warnings remain");
+    expect(m12Migration).not.toContain("is null and v_customer_note is null");
   });
 
   it("keeps final summaries, tracking sessions, and location points admin-only", () => {
