@@ -1,6 +1,6 @@
 # Kootha / Prachar
 
-Kootha / Prachar is a low-cost local mic advertisement proof platform. The repository currently includes M0 foundation, M1 public website and enquiries, M2 admin lead management, M3 campaign planning and scheduling, M4 driver and vehicle onboarding, M5 driver and vehicle assignment to ad work, M6 ad work execution without GPS, M7 proof upload and customer update sharing, M8 final proof summary and campaign closure, M9 mobile GPS tracking foundation, M10 mobile GPS reliability and offline buffer, M11 admin tracking review without maps, and M12 location proof in final summary.
+Kootha / Prachar is a low-cost local mic advertisement proof platform. The repository currently includes M0 foundation, M1 public website and enquiries, M2 admin lead management, M3 campaign planning and scheduling, M4 driver and vehicle onboarding, M5 driver and vehicle assignment to ad work, M6 ad work execution without GPS, M7 proof upload and customer update sharing, M8 final proof summary and campaign closure, M9 mobile GPS tracking foundation, M10 mobile GPS reliability and offline buffer, M11 admin tracking review without maps, M12 location proof in final summary, and M13 pilot readiness and deployment preparation.
 
 ## Current Scope
 
@@ -28,8 +28,9 @@ Kootha / Prachar is a low-cost local mic advertisement proof platform. The repos
 - Driver local offline buffer for Phone Location Proof points with client idempotency keys, retry sync, Sync Now, and unsynced point status.
 - Shared product config, labels, statuses, planning helpers, onboarding validation helpers, execution and proof upload helpers, closure helpers, and public form validation helpers.
 - Supabase migrations with RLS enabled and privacy-safe defaults.
+- Pilot readiness docs, deployment preparation guide, smoke checklist, operations runbook, driver consent text, customer communication text, and pilot environment readiness helper.
 
-## What is intentionally not included in M12
+## What is intentionally not included in M13
 
 - background location,
 - map integration or route map display,
@@ -306,11 +307,27 @@ Customer summary wording is limited to Phone Location Proof Status, Location Pro
 Closure warnings include Phone Location Proof is not reviewed, No phone location updates were received, and Some location updates need follow-up. Closing with location warnings requires a Closure Reason. A customer-safe Phone Location Proof note can explain the customer wording, but it does not replace the Closure Reason.
 
 M12 remains admin-only and no-map. It does not add background location, Google Maps, route maps, GPS device ingestion, public location access, customer live tracking links, reports, payments, provider auto-send, customer app, iOS app, or PWA.
+
+## M13 Pilot Readiness And Deployment Preparation
+
+M13 prepares the M0 through M12 workflow for a controlled pilot in Ongole and Addanki. It adds pilot documentation, deployment preparation guidance, driver consent wording, customer communication wording, and a shared environment readiness helper. M13 does not add a Supabase migration or new app behavior.
+
+Pilot readiness docs:
+
+- docs/pilot/m13-pilot-readiness-and-deployment-preparation.md
+- docs/deployment/deployment-preparation.md
+- docs/pilot/m13-pilot-smoke-test-checklist.md
+- docs/pilot/m13-pilot-operations-runbook.md
+- docs/pilot/m13-driver-consent-text.md
+- docs/pilot/m13-customer-communication-text.md
+
+The pilot readiness guide keeps Phone Location Proof as admin-reviewed supporting evidence only. It does not expose raw coordinates, public location links, route drawings, distance billing, automatic provider messages, or customer live tracking.
+
 ## Run Driver
 
     pnpm dev:driver
 
-The driver app is Expo React Native and Android-first. M9 requests foreground phone location permission only after the driver opens assigned work, starts work, reads the Location Proof notice, and chooses Start Location Proof. M10 buffers captured location points locally when sync fails and retries them while foreground Location Proof is active. M11 adds admin review without maps and keeps technical coordinates hidden by default. M12 adds customer-safe final summary wording without exposing raw location values. It does not request background location. M7 requests Android photo library access only for selecting photo proof uploads.
+The driver app is Expo React Native and Android-first. M9 requests foreground phone location permission only after the driver opens assigned work, starts work, reads the Location Proof notice, and chooses Start Location Proof. M10 buffers captured location points locally when sync fails and retries them while foreground Location Proof is active. M11 adds admin review without maps and keeps technical coordinates hidden by default. M12 adds customer-safe final summary wording without exposing raw location values. M13 adds pilot readiness docs and deployment guidance without changing driver app behavior. It does not request background location. M7 requests Android photo library access only for selecting photo proof uploads.
 
 ## Verify
 
@@ -336,6 +353,7 @@ Migrations are in supabase/migrations:
 - 20260701100000_m10_mobile_gps_reliability_offline_buffer.sql adds offline buffer sync metadata, location point client idempotency, driver sync RPCs, and admin tracking health warnings.
 - 20260701110000_m11_admin_tracking_review_without_maps.sql adds admin-only Location Proof Review records, review RPCs, dashboard queues, and safe final summary Phone Location Proof wording.
 - 20260701120000_m12_location_proof_in_final_summary.sql adds admin-confirmed, customer-safe Phone Location Proof fields to Final Proof Summary records, closure warnings, and safe summary RPC checks.
+- M13 does not add a Supabase migration; it adds pilot readiness docs, deployment preparation docs, and a shared environment readiness helper.
 
 M4 keeps customer_live_enabled and live_tracking_enabled false by default and does not add live tracking behavior.
 
@@ -355,3 +373,5 @@ M10 keeps customer_live_enabled and live_tracking_enabled false by default and d
 M11 keeps customer_live_enabled and live_tracking_enabled false by default and does not add customer live tracking behavior.
 
 M12 keeps customer_live_enabled and live_tracking_enabled false by default and does not add customer live tracking behavior.
+
+M13 keeps customer_live_enabled and live_tracking_enabled false by default and does not add customer live tracking behavior.

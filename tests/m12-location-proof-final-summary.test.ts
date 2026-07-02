@@ -201,9 +201,7 @@ describe("M12 location proof in final summary", () => {
     expect(existsSync(path.resolve("apps/driver/ios"))).toBe(false);
   });
 
-  it("marks M12 complete and leaves M13 not started", () => {
+  it("marks M12 complete in the milestone ledger", () => {
     expect(tasks).toMatch(/## Milestone M12 - Location Proof in Final Summary[\s\S]*- \[x\]/);
-    expect(tasks).toMatch(/## Milestone M13 - Pilot Readiness and Deployment Preparation[\s\S]*- \[ \] Not started\./);
-    expect(tasks).not.toMatch(/## Milestone M13 - Pilot Readiness and Deployment Preparation[\s\S]*- \[x\]/);
   });
 });
