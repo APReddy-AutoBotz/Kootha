@@ -1,6 +1,12 @@
 export type PilotReadinessMode = "local" | "preview" | "production";
 export type PilotReadinessSeverity = "error" | "warning" | "info";
 export type PilotReadinessScope = "web" | "driver" | "database" | "general";
+export type PilotReadinessStatus =
+  | "configured"
+  | "missing"
+  | "placeholder"
+  | "unsafe_key_name_detected"
+  | "unsafe_default";
 
 export interface PilotReadinessEnvInput {
   mode?: PilotReadinessMode;
@@ -17,6 +23,7 @@ export interface PilotReadinessCheck {
   scope: PilotReadinessScope;
   ok: boolean;
   severity: PilotReadinessSeverity;
+  status: PilotReadinessStatus;
   message: string;
 }
 
@@ -46,7 +53,7 @@ function isPlaceholderValue(value: string | undefined): boolean {
   }
 
   const normalizedValue = value.trim().toLowerCase();
-  if (!normalizedValue) {
+  if (normalizedValue.length === 0) {
     return false;
   }
 
@@ -63,12 +70,13 @@ function addRequiredVariableChecks(
   for (const variableName of variables) {
     const value = env[variableName];
     const hasValue = typeof value === "string" && value.trim().length > 0;
-    if (!hasValue) {
+    if (hasValue === false) {
       checks.push({
         id: `${scope}-${variableName}-present`,
         scope,
         ok: false,
-        severity: "error",
+        severity: isProductionLike(mode) ? "error" : "warning",
+        status: "missing",
         message: `${variableName} is required for pilot deployment readiness.`
       });
       continue;
@@ -80,6 +88,7 @@ function addRequiredVariableChecks(
         scope,
         ok: false,
         severity: isProductionLike(mode) ? "error" : "warning",
+        status: "placeholder",
         message: `${variableName} still looks like a placeholder.`
       });
       continue;
@@ -90,6 +99,7 @@ function addRequiredVariableChecks(
       scope,
       ok: true,
       severity: "info",
+      status: "configured",
       message: `${variableName} is present.`
     });
   }
@@ -110,6 +120,7 @@ function addPrivilegedKeyChecks(
         scope,
         ok: false,
         severity: "error",
+        status: "unsafe_key_name_detected",
         message: `${variableName} must not be exposed to browser or driver app environments.`
       });
     }
@@ -128,6 +139,7 @@ function addFeatureFlagDefaultChecks(
     scope: "database",
     ok: customerLiveDefault === false,
     severity: customerLiveDefault === false ? "info" : "error",
+    status: customerLiveDefault === false ? "configured" : "unsafe_default",
     message: "customer_live_enabled must default to false for the pilot."
   });
 
@@ -136,6 +148,7 @@ function addFeatureFlagDefaultChecks(
     scope: "database",
     ok: liveTrackingDefault === false,
     severity: liveTrackingDefault === false ? "info" : "error",
+    status: liveTrackingDefault === false ? "configured" : "unsafe_default",
     message: "live_tracking_enabled must default to false for the pilot."
   });
 }
@@ -156,5 +169,9 @@ export function validatePilotReadinessEnvironment(input: PilotReadinessEnvInput 
 }
 
 export function hasBlockingPilotReadinessIssue(checks: readonly PilotReadinessCheck[]): boolean {
-  return checks.some((check) => !check.ok && check.severity === "error");
+  return checks.some((check) => check.ok === false && check.severity === "error");
+}
+
+export function formatPilotReadinessCheck(check: PilotReadinessCheck): string {
+  return `${check.scope}: ${check.status} (${check.severity})`;
 }

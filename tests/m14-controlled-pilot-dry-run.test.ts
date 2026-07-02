@@ -144,12 +144,10 @@ describe("M14 controlled pilot dry run", () => {
     expect(existsSync(path.resolve("apps/driver/ios"))).toBe(false);
   });
 
-  it("updates README and marks only M14 complete while leaving M15 not started", () => {
+  it("marks M14 complete in the milestone ledger", () => {
     expect(readme).toContain("M14 controlled pilot dry run preparation");
     expect(readme).toContain("docs/pilot/m14-controlled-pilot-dry-run.md");
     expect(readme).toContain("M14 does not add a Supabase migration");
     expect(taskBlock("M14 - Controlled Pilot Dry Run")).toContain("- [x]");
-    expect(taskBlock("M15 - Real Device Pilot Setup and Deployment")).toContain("- [ ] Not started.");
-    expect(taskBlock("M15 - Real Device Pilot Setup and Deployment")).not.toContain("- [x]");
   });
 });
