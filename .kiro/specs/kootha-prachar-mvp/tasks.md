@@ -94,4 +94,8 @@ Status values:
 
 ## Milestone M15 - Real Device Pilot Setup and Deployment
 
+- [x] Build real-device pilot setup docs, deployment runbook, Android testing checklist, Supabase target checklist, pilot operator checklist, real-device evidence template, safe pilot environment check, README updates, and guardrail tests without adding future product features.
+
+## Milestone M16 - Real Device Pilot Execution Evidence
+
 - [ ] Not started.

@@ -11,7 +11,8 @@
     "lint": "node scripts/lint.mjs",
     "typecheck": "pnpm --recursive --if-present run typecheck",
     "test": "vitest run",
-    "build": "pnpm --recursive --if-present run build"
+    "build": "pnpm --recursive --if-present run build",
+    "check:pilot-env": "node scripts/check-pilot-env.mjs"
   },
   "devDependencies": {
     "@types/node": "^20.17.19",
