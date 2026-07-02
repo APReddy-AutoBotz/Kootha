@@ -12,7 +12,8 @@
     "typecheck": "pnpm --recursive --if-present run typecheck",
     "test": "vitest run",
     "build": "pnpm --recursive --if-present run build",
-    "check:pilot-env": "node scripts/check-pilot-env.mjs"
+    "check:pilot-env": "node scripts/check-pilot-env.mjs",
+    "check:pilot-readiness": "node scripts/check-pilot-readiness.mjs"
   },
   "devDependencies": {
     "@types/node": "^20.17.19",

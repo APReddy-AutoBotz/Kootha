@@ -102,4 +102,8 @@ Status values:
 
 ## Milestone M17 - Real Device Pilot Blocker Remediation
 
+- [x] Build the real-device pilot blocker remediation package with M16 blocker summary, Android setup guide, driver app build guide, Supabase target remediation guide, web/admin preview guide, blank evidence template, safe readiness check, README updates, and guardrail tests without adding future product features.
+
+## Milestone M18 - Real Device Pilot Evidence Retry
+
 - [ ] Not started.
