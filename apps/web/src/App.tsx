@@ -296,20 +296,6 @@ function PublicWebsite() {
             </article>
           ))}
         </div>
-        <p className="quiet-note">These are proof levels, not fixed prices. The Kootha team will confirm scope and payment before work starts.</p>
-      </section>
-
-      <section className="section-band two-column" aria-labelledby="cities-title">
-        <div>
-          <p className="eyebrow">Service areas</p>
-          <h2 id="cities-title">Available in and around Ongole and Addanki</h2>
-        </div>
-        <div className="city-list kootha-city-list">
-          <span>Ongole</span>
-          <span>Addanki</span>
-          <span>Nearby towns</span>
-          <span>Nearby villages</span>
-        </div>
       </section>
 
       <section className="section-band" aria-labelledby="faq-title">
