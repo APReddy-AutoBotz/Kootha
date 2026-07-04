@@ -1,4 +1,4 @@
-﻿# M18 Supabase Env Preflight Check
+# M18 Supabase Env Preflight Check
 
 This document records a safe local preflight for the real-device pilot setup. It does not add product features and does not include secrets, Supabase URLs, anon keys, service role keys, real customer data, real driver data, real phone numbers, real Work Codes, raw GPS coordinates, screenshots, or proof file paths.
 
@@ -81,24 +81,22 @@ Result: passed for target storage bucket existence, private flag, and no public 
 
 ## Admin User Result
 
-Admin Auth user verification was performed through a linked status-only SQL query. No admin email, password, or identity value was printed. No service role key was requested or used.
+Admin Auth user verification was performed through a linked status-only SQL query and AP confirmation. No admin email, password, or identity value was printed. No service role key was requested or used.
 
-Current result: blocked because no admin profile with `role = 'admin'` was found by the status-only query.
+Current result: passed because an admin profile with `role = 'admin'` was found by the status-only query. Admin login was verified by AP.
 
 Manual AP action:
 
-- Create or verify the admin Auth user.
-- Set or verify `public.user_profiles.role = 'admin'` for that user.
-- Confirm admin login works from the web/admin app.
+- Keep admin email, password, and account details outside Git.
+- Use the admin account only through the target web/admin app.
+- Continue real-device evidence with fake customer, driver, vehicle, and Ad Work data only.
 
 ## Remaining Manual Steps
 
-1. Create or verify the admin Auth user.
-2. Set or verify `public.user_profiles.role = 'admin'` for the admin user.
-3. Confirm admin login works from the web/admin app.
-4. Run the web/admin app against the target project.
-5. Run the driver app on the Android phone.
-6. Use fake data only for real-device pilot evidence.
+1. Run the web/admin app against the target project.
+2. Run the driver app on the Android phone.
+3. Use fake data only for real-device pilot evidence.
+4. Keep Work Codes, phone numbers, screenshots, proof paths, and raw coordinates outside Git.
 
 ## Privacy And Security Confirmation
 
