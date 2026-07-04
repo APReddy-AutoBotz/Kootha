@@ -1,6 +1,6 @@
-# Kootha / Prachar
+# Kootha
 
-Kootha / Prachar is a low-cost local mic advertisement proof platform. The repository currently includes M0 foundation, M1 public website and enquiries, M2 admin lead management, M3 campaign planning and scheduling, M4 driver and vehicle onboarding, M5 driver and vehicle assignment to ad work, M6 ad work execution without GPS, M7 proof upload and customer update sharing, M8 final proof summary and campaign closure, M9 mobile GPS tracking foundation, M10 mobile GPS reliability and offline buffer, M11 admin tracking review without maps, M12 location proof in final summary, M13 pilot readiness and deployment preparation, M14 controlled pilot dry run preparation, M15 real device pilot setup and deployment preparation, M16 real device pilot execution evidence, M17 real device pilot blocker remediation, and M18 real-device pilot evidence retry preflight.
+Kootha is a low-cost local mic advertisement proof platform. The repository currently includes M0 foundation, M1 public website and enquiries, M2 admin lead management, M3 campaign planning and scheduling, M4 driver and vehicle onboarding, M5 driver and vehicle assignment to ad work, M6 ad work execution without GPS, M7 proof upload and customer update sharing, M8 final proof summary and campaign closure, M9 mobile GPS tracking foundation, M10 mobile GPS reliability and offline buffer, M11 admin tracking review without maps, M12 location proof in final summary, M13 pilot readiness and deployment preparation, M14 controlled pilot dry run preparation, M15 real device pilot setup and deployment preparation, M16 real device pilot execution evidence, M17 real device pilot blocker remediation, and M18 real-device pilot evidence retry preflight.
 
 ## Current Scope
 
@@ -80,11 +80,11 @@ This checks that the M17 remediation docs exist, required public environment var
 
 Copy .env.example and fill local values outside Git. Keep committed files placeholder-only.
 
-    VITE_PRODUCT_NAME=Prachar
+    VITE_PRODUCT_NAME=Kootha
     VITE_SUPABASE_URL=https://your-project.supabase.co
     VITE_SUPABASE_ANON_KEY=replace-with-public-anon-key
 
-    EXPO_PUBLIC_PRODUCT_NAME=Prachar
+    EXPO_PUBLIC_PRODUCT_NAME=Kootha
     EXPO_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
     EXPO_PUBLIC_SUPABASE_ANON_KEY=replace-with-public-anon-key
 

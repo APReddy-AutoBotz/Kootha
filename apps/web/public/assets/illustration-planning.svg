@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 160" role="img" aria-labelledby="title desc">
+  <title id="title">Admin planning</title>
+  <desc id="desc">An admin plans dates, areas, and proof for ad work.</desc>
+  <rect width="240" height="160" rx="18" fill="#fff8ec"/>
+  <rect x="28" y="28" width="184" height="104" rx="12" fill="#fffdf8" stroke="#d8c3a9" stroke-width="4"/>
+  <path d="M56 58h48M56 82h78M56 106h52" stroke="#24201c" stroke-width="8" stroke-linecap="round"/>
+  <rect x="148" y="54" width="34" height="34" rx="6" fill="#d94f18"/>
+  <path d="M156 71l7 7 13-17" fill="none" stroke="#fff8ec" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M154 108h40" stroke="#d94f18" stroke-width="8" stroke-linecap="round"/>
+</svg>

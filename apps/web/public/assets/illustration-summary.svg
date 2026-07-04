@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 160" role="img" aria-labelledby="title desc">
+  <title id="title">Final proof summary</title>
+  <desc id="desc">A final proof summary is ready for the customer.</desc>
+  <rect width="240" height="160" rx="18" fill="#fff8ec"/>
+  <rect x="48" y="24" width="116" height="112" rx="12" fill="#fffdf8" stroke="#d8c3a9" stroke-width="4"/>
+  <path d="M70 56h70M70 78h56M70 100h44" stroke="#24201c" stroke-width="7" stroke-linecap="round"/>
+  <circle cx="170" cy="104" r="28" fill="#2f7d46"/>
+  <path d="M156 104l11 11 19-24" fill="none" stroke="#fff8ec" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

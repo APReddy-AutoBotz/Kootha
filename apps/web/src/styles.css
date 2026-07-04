@@ -959,3 +959,370 @@ textarea:focus {
     grid-template-columns: 1fr;
   }
 }
+
+/* Kootha full UI redesign overrides */
+:root {
+  --kootha-ivory: #fff8ec;
+  --kootha-panel: #fffdf8;
+  --kootha-orange: #d94f18;
+  --kootha-orange-dark: #b83f12;
+  --kootha-charcoal: #24201c;
+  --kootha-muted: #65594f;
+  --kootha-border: #d8c3a9;
+  --kootha-green: #2f7d46;
+  --kootha-red: #b83222;
+  --kootha-soft-orange: #fff0dc;
+  color: var(--kootha-charcoal);
+  background: var(--kootha-ivory);
+}
+
+body {
+  background: var(--kootha-ivory);
+}
+
+.topbar {
+  border-bottom-color: var(--kootha-border);
+  background: rgba(255, 248, 236, 0.98);
+}
+
+.kootha-brand img {
+  display: block;
+  width: 156px;
+  height: auto;
+}
+
+.brand {
+  color: var(--kootha-orange);
+}
+
+.nav-link,
+.primary-button {
+  min-height: 48px;
+  border-radius: 8px;
+  background: var(--kootha-orange);
+  color: var(--kootha-ivory);
+  box-shadow: 0 4px 0 var(--kootha-orange-dark);
+}
+
+.nav-link:hover,
+.primary-button:hover {
+  background: var(--kootha-orange-dark);
+}
+
+.secondary-button {
+  min-height: 48px;
+  border-color: var(--kootha-border);
+  background: var(--kootha-panel);
+  color: var(--kootha-charcoal);
+}
+
+h1 {
+  font-size: clamp(42px, 7vw, 76px);
+  line-height: 0.98;
+}
+
+h2 {
+  font-size: clamp(30px, 4.5vw, 48px);
+}
+
+.admin-shell h1 {
+  font-size: clamp(34px, 5vw, 64px);
+}
+
+.eyebrow {
+  color: var(--kootha-orange-dark);
+}
+
+.kootha-hero {
+  min-height: calc(100vh - 86px);
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.8fr);
+}
+
+.hero-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.hero-visual {
+  display: grid;
+  gap: 16px;
+  border: 2px solid var(--kootha-border);
+  border-radius: 8px;
+  background: var(--kootha-panel);
+  padding: clamp(18px, 4vw, 28px);
+  box-shadow: 0 12px 0 rgba(36, 32, 28, 0.08);
+}
+
+.hero-visual img,
+.proof-step-card img,
+.enquiry-side-image {
+  width: 100%;
+  height: auto;
+}
+
+.hero-visual strong {
+  display: block;
+  color: var(--kootha-charcoal);
+  font-size: clamp(24px, 4vw, 38px);
+  line-height: 1.05;
+}
+
+.hero-visual span {
+  display: block;
+  margin-top: 8px;
+  color: var(--kootha-muted);
+  font-size: 18px;
+  line-height: 1.45;
+}
+
+.proof-step-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 22px;
+}
+
+.proof-step-card,
+.info-card,
+.admin-summary-card,
+.admin-dashboard-panel,
+.form-section,
+.enquiry-form,
+.lead-list-panel,
+.lead-detail-panel,
+.proof-review-card,
+.customer-update-card {
+  border: 2px solid var(--kootha-border);
+  border-radius: 8px;
+  background: var(--kootha-panel);
+  box-shadow: none;
+}
+
+.proof-step-card {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  padding: 16px;
+}
+
+.proof-step-card h3,
+.proof-step-card p {
+  margin: 0;
+}
+
+.proof-step-card p,
+.info-card p,
+.quiet-note,
+.contact-placeholder {
+  color: var(--kootha-muted);
+}
+
+.kootha-enquiry-section {
+  align-items: start;
+}
+
+.enquiry-side-image {
+  max-width: 260px;
+  margin-top: 18px;
+}
+
+input,
+select,
+textarea {
+  min-height: 50px;
+  border: 2px solid var(--kootha-border);
+  background: #fffaf1;
+  color: var(--kootha-charcoal);
+  font-size: 16px;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: 4px solid rgba(217, 79, 24, 0.18);
+  border-color: var(--kootha-orange);
+}
+
+.form-status {
+  border-left-color: var(--kootha-green);
+  background: #edf8ef;
+}
+
+.form-alert {
+  border-left-color: var(--kootha-red);
+  background: #fff0eb;
+}
+
+.status-pill {
+  border-radius: 8px;
+  background: var(--kootha-soft-orange);
+  color: var(--kootha-orange-dark);
+}
+
+.admin-surface {
+  padding-top: 34px;
+}
+
+.admin-heading {
+  align-items: flex-end;
+}
+
+.admin-heading p {
+  max-width: 760px;
+}
+
+.admin-nav-tabs {
+  scrollbar-width: thin;
+}
+
+.admin-nav-tabs button {
+  min-height: 46px;
+  border: 2px solid var(--kootha-border);
+}
+
+.admin-nav-tabs button.is-active {
+  border-color: var(--kootha-orange);
+  background: var(--kootha-soft-orange);
+  color: var(--kootha-orange-dark);
+}
+
+.admin-lead-layout {
+  grid-template-columns: minmax(300px, 0.65fr) minmax(0, 1.35fr);
+  gap: 20px;
+}
+
+.ad-work-layout {
+  grid-template-columns: 1fr;
+}
+
+.ad-work-layout .lead-list-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.ad-work-layout .lead-list {
+  max-height: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  overflow: visible;
+}
+
+.ad-work-row,
+.dashboard-work-row,
+.lead-row {
+  border-width: 2px;
+  border-color: var(--kootha-border);
+  background: #fffaf1;
+}
+
+.ad-work-row {
+  grid-template-columns: 1fr;
+  min-height: 0;
+}
+
+.ad-work-row span,
+.ad-work-row small {
+  overflow-wrap: anywhere;
+}
+
+.ad-work-detail-panel {
+  max-height: none;
+  overflow: visible;
+}
+
+.ad-work-form {
+  gap: 16px;
+}
+
+.ad-work-stepper {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.ad-work-stepper button {
+  min-height: 54px;
+  border: 2px solid var(--kootha-border);
+  border-radius: 8px;
+  background: var(--kootha-panel);
+  color: var(--kootha-charcoal);
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.ad-work-stepper button.is-active {
+  border-color: var(--kootha-orange);
+  background: var(--kootha-orange);
+  color: var(--kootha-ivory);
+}
+
+.ad-work-step-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.more-details-block {
+  border: 2px dashed var(--kootha-border);
+  border-radius: 8px;
+  background: #fffaf1;
+  padding: 14px;
+}
+
+.more-details-block summary {
+  cursor: pointer;
+  color: var(--kootha-charcoal);
+  font-weight: 900;
+}
+
+.more-details-block > *:not(summary) {
+  margin-top: 14px;
+}
+
+.day-schedule-row {
+  grid-template-columns: 72px repeat(2, minmax(120px, 1fr));
+}
+
+.day-schedule-row label:nth-of-type(4),
+.day-schedule-row label:nth-of-type(5) {
+  grid-column: span 2;
+}
+
+.sticky-action-row {
+  bottom: 0;
+  border-top: 2px solid var(--kootha-border);
+  background: rgba(255, 253, 248, 0.98);
+}
+
+@media (max-width: 1180px) {
+  .proof-step-grid,
+  .ad-work-stepper {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .admin-lead-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .kootha-brand img {
+    width: 138px;
+  }
+
+  .proof-step-grid,
+  .ad-work-stepper,
+  .day-schedule-row,
+  .day-schedule-row label:nth-of-type(4),
+  .day-schedule-row label:nth-of-type(5) {
+    grid-template-columns: 1fr;
+    grid-column: auto;
+  }
+
+  .hero-action-row .primary-button,
+  .hero-action-row .secondary-button {
+    width: 100%;
+  }
+}

@@ -1,6 +1,6 @@
 # Deployment Preparation
 
-This document prepares the M0 through M13 Kootha / Prachar MVP for a controlled pilot deployment. It is a readiness guide only and does not add hosting automation.
+This document prepares the M0 through M13 Kootha MVP for a controlled pilot deployment. It is a readiness guide only and does not add hosting automation.
 
 ## Deployment Targets
 

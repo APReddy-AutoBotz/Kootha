@@ -27,14 +27,19 @@ const validEnquiry = {
 };
 
 describe("M0 shared foundation", () => {
-  it("defaults the product name to Prachar", () => {
-    expect(DEFAULT_PRODUCT_NAME).toBe("Prachar");
-    expect(resolveProductName()).toBe("Prachar");
+  it("defaults the product name to Kootha", () => {
+    expect(DEFAULT_PRODUCT_NAME).toBe("Kootha");
+    expect(resolveProductName()).toBe("Kootha");
   });
 
   it("resolves Kootha from shared config", () => {
     expect(resolveProductName({ productName: "Kootha" })).toBe("Kootha");
     expect(resolveProductName({ productName: "kootha" })).toBe("Kootha");
+  });
+
+  it("keeps Prachar as a legacy configurable name", () => {
+    expect(resolveProductName({ productName: "Prachar" })).toBe("Prachar");
+    expect(resolveProductName({ productName: "prachar" })).toBe("Prachar");
   });
 
   it("keeps shared enum values unique inside each group", () => {

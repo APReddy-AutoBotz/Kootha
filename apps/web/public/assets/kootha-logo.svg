@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 96" role="img" aria-labelledby="title desc">
+  <title id="title">Kootha logo</title>
+  <desc id="desc">Kootha wordmark with a local announcement microphone mark.</desc>
+  <rect width="360" height="96" rx="18" fill="#fff8ec"/>
+  <circle cx="50" cy="48" r="30" fill="#d94f18"/>
+  <rect x="40" y="25" width="20" height="34" rx="10" fill="#fff8ec"/>
+  <path d="M32 46c0 14 8 24 18 24s18-10 18-24" fill="none" stroke="#24201c" stroke-width="6" stroke-linecap="round"/>
+  <path d="M50 70v12M38 82h24" fill="none" stroke="#24201c" stroke-width="6" stroke-linecap="round"/>
+  <path d="M76 30c15 7 24 18 28 32M83 18c23 10 38 27 45 51" fill="none" stroke="#d94f18" stroke-width="7" stroke-linecap="round"/>
+  <text x="138" y="61" fill="#24201c" font-family="Inter, Arial, sans-serif" font-size="46" font-weight="900" letter-spacing="0">Kootha</text>
+</svg>

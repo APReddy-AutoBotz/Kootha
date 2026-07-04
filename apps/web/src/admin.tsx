@@ -242,6 +242,7 @@ type AreaRecord = {
 };
 
 type AdminView = "enquiries" | "adWorks" | "driverApplications" | "drivers" | "vehicles" | "dashboard";
+type AdWorkWorkflowStep = "plan" | "assign" | "release" | "proof" | "close";
 
 type AdminFilters = {
   status: string;
@@ -600,6 +601,14 @@ type VehicleCandidateFilters = {
 const adminSessionKey = "kootha-admin-session";
 const publicKeyHeader = ["api", "key"].join("");
 const adminRoles = new Set(["admin"]);
+const adWorkWorkflowSteps: { id: AdWorkWorkflowStep; label: string; helper: string }[] = [
+  { id: "plan", label: "Plan", helper: "Customer, date, time, areas" },
+  { id: "assign", label: "Assign", helper: "Driver and vehicle" },
+  { id: "release", label: "Release", helper: "Work Code and Location Proof" },
+  { id: "proof", label: "Proof", helper: "Photos and updates" },
+  { id: "close", label: "Close", helper: "Final summary" }
+];
+
 const emptyFilters: AdminFilters = {
   status: "all",
   city: "all",
@@ -5669,6 +5678,7 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
   const [adWorkFilters, setAdWorkFilters] = useState<AdWorkFilters>(emptyAdWorkFilters);
   const [selectedEnquiryId, setSelectedEnquiryId] = useState<string | null>(null);
   const [selectedAdWorkId, setSelectedAdWorkId] = useState<string | null>(null);
+  const [activeAdWorkStep, setActiveAdWorkStep] = useState<AdWorkWorkflowStep>("plan");
   const [draft, setDraft] = useState<AdminDraft | null>(null);
   const [adWorkDraft, setAdWorkDraft] = useState<AdWorkDraft | null>(null);
   const [dayDrafts, setDayDrafts] = useState<DayDraft[]>([]);
@@ -5710,6 +5720,7 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
 
     setAdWorkDraft(toAdWorkDraft(selectedAdWork));
     setDayDrafts(selectedAdWorkDays.map(toDayDraft));
+    setActiveAdWorkStep("plan");
   }, [selectedAdWork, selectedAdWorkDays]);
 
   async function loadData() {
@@ -6381,6 +6392,22 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
                     <span className="status-pill">{getAdWorkStatusLabel(adWorkDraft.planningStatus)}</span>
                   </div>
 
+                  <div className="ad-work-stepper" aria-label="Ad Work steps">
+                    {adWorkWorkflowSteps.map((step) => (
+                      <button
+                        className={activeAdWorkStep === step.id ? "is-active" : ""}
+                        key={step.id}
+                        type="button"
+                        onClick={() => setActiveAdWorkStep(step.id)}
+                      >
+                        <span>{step.label}</span>
+                        <small>{step.helper}</small>
+                      </button>
+                    ))}
+                  </div>
+
+                  {activeAdWorkStep === "plan" && (
+                    <div className="ad-work-step-panel">
                   <section className="form-section" aria-labelledby="customer-details-title">
                     <h3 id="customer-details-title">Customer details</h3>
                     <div className="form-grid">
@@ -6483,22 +6510,25 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
                         </select>
                       </label>
                     </div>
-                    <label>
-                      Special instructions
-                      <textarea
-                        value={adWorkDraft.specialInstructions}
-                        maxLength={1000}
-                        onChange={(event) => updateAdWorkDraft("specialInstructions", event.target.value)}
-                      />
-                    </label>
-                    <label>
-                      Internal planning note
-                      <textarea
-                        value={adWorkDraft.internalPlanningNote}
-                        maxLength={1200}
-                        onChange={(event) => updateAdWorkDraft("internalPlanningNote", event.target.value)}
-                      />
-                    </label>
+                    <details className="more-details-block">
+                      <summary>More planning details</summary>
+                      <label>
+                        Special instructions
+                        <textarea
+                          value={adWorkDraft.specialInstructions}
+                          maxLength={1000}
+                          onChange={(event) => updateAdWorkDraft("specialInstructions", event.target.value)}
+                        />
+                      </label>
+                      <label>
+                        Internal planning note
+                        <textarea
+                          value={adWorkDraft.internalPlanningNote}
+                          maxLength={1200}
+                          onChange={(event) => updateAdWorkDraft("internalPlanningNote", event.target.value)}
+                        />
+                      </label>
+                    </details>
                   </section>
 
                   <section className="form-section" aria-labelledby="schedule-title">
@@ -6588,7 +6618,9 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
                     </label>
                   </section>
 
-                  <section className="form-section" aria-labelledby="day-wise-title">
+                  <details className="more-details-block">
+                    <summary>Day-wise schedule</summary>
+                    <section className="form-section" aria-labelledby="day-wise-title">
                     <h3 id="day-wise-title">Day-wise schedule</h3>
                     <div className="day-schedule-list">
                       {dayDrafts.map((day, index) => (
@@ -6639,15 +6671,22 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
                         <p className="quiet-note">Save a start date and number of days to create day-wise rows.</p>
                       )}
                     </div>
-                  </section>
+                    </section>
+                  </details>
+                    </div>
+                  )}
 
+                  {activeAdWorkStep === "assign" && (
                   <AdWorkAssignmentPanel
                     config={config}
                     session={session}
                     adWork={selectedAdWork}
                     dayDrafts={dayDrafts}
                   />
+                  )}
 
+                  {activeAdWorkStep === "release" && (
+                    <div className="ad-work-step-panel">
                   <AdminExecutionPanel
                     config={config}
                     session={session}
@@ -6663,14 +6702,19 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
                     dayDrafts={dayDrafts}
                     onUpdated={loadData}
                   />
+                    </div>
+                  )}
 
+                  {activeAdWorkStep === "proof" && (
                   <AdminProofReviewPanel
                     config={config}
                     session={session}
                     adWork={selectedAdWork}
                     dayDrafts={dayDrafts}
                   />
+                  )}
 
+                  {activeAdWorkStep === "close" && (
                   <AdminFinalProofSummaryPanel
                     config={config}
                     session={session}
@@ -6678,7 +6722,10 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
                     dayDrafts={dayDrafts}
                     onUpdated={loadData}
                   />
+                  )}
 
+                  {activeAdWorkStep === "plan" && (
+                    <div className="ad-work-step-panel">
                   <section className="form-section" aria-labelledby="proof-plan-title">
                     <h3 id="proof-plan-title">Proof Needed</h3>
                     <div className="checkbox-grid">
@@ -6770,6 +6817,8 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
                       </label>
                     </div>
                   </section>
+                    </div>
+                  )}
 
                   <div className="admin-action-row sticky-action-row">
                     <button className="primary-button" type="submit" disabled={isSaving}>

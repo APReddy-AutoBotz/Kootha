@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 160" role="img" aria-labelledby="title desc">
+  <title id="title">Photo proof</title>
+  <desc id="desc">A simple phone photo proof is saved for review.</desc>
+  <rect width="240" height="160" rx="18" fill="#fff8ec"/>
+  <rect x="54" y="28" width="86" height="118" rx="14" fill="#24201c"/>
+  <rect x="63" y="42" width="68" height="88" rx="8" fill="#fffdf8"/>
+  <circle cx="97" cy="86" r="18" fill="#d94f18"/>
+  <path d="M158 78l14 14 32-38" fill="none" stroke="#2f7d46" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

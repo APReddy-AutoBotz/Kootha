@@ -1,6 +1,6 @@
 # M13 Pilot Readiness and Deployment Preparation
 
-M13 prepares Kootha / Prachar for a controlled pilot in Ongole and Addanki. It does not add new product capabilities. The milestone turns the M0 through M12 workflow into a practical pilot checklist for admin users, drivers, and support.
+M13 prepares Kootha for a controlled pilot in Ongole and Addanki. It does not add new product capabilities. The milestone turns the M0 through M12 workflow into a practical pilot checklist for admin users, drivers, and support.
 
 ## Pilot Goal
 

@@ -535,6 +535,20 @@ async function completeProofUpload(input: { mobileNumber: string; workCode: stri
   }
 }
 
+function KoothaBrand({ name }: { name: string }) {
+  return (
+    <View style={styles.brandRow}>
+      <View style={styles.logoMark}>
+        <Text style={styles.logoLetter}>K</Text>
+      </View>
+      <View>
+        <Text style={styles.brand}>{name}</Text>
+        <Text style={styles.brandTagline}>Driver work proof</Text>
+      </View>
+    </View>
+  );
+}
+
 function OptionButton<T extends string>({
   label,
   value,
@@ -1192,9 +1206,11 @@ export function App() {
   return (
     <SafeAreaView style={styles.screen}>
       <ScrollView contentContainerStyle={styles.shell} keyboardShouldPersistTaps="handled">
-        <Text style={styles.brand}>{productName}</Text>
-        <Text style={styles.title}>{driverLabels.assignedWork}</Text>
-        <Text style={styles.body}>Enter your mobile number and Work Code to open today&apos;s Ad Work.</Text>
+        <KoothaBrand name={productName} />
+        <View style={styles.heroCard}>
+          <Text style={styles.title}>{driverLabels.assignedWork}</Text>
+          <Text style={styles.body}>Enter mobile number and Work Code. Then open today&apos;s assigned work.</Text>
+        </View>
 
         {!configured && (
           <Text style={styles.notice}>Driver work access is not configured in this environment.</Text>
@@ -1360,7 +1376,7 @@ export function App() {
 
         <View style={styles.divider} />
 
-        <Text style={styles.title}>{driverLabels.registerAsDriver}</Text>
+        <Text style={styles.sectionTitle}>{driverLabels.registerAsDriver}</Text>
         <Text style={styles.body}>
           Share your driver and vehicle details. The {productName} team will contact you after review.
         </Text>
@@ -1495,7 +1511,7 @@ export function App() {
             onPress={() => updateField("consentToContact", !form.consentToContact)}
           >
             <View style={[styles.checkbox, form.consentToContact && styles.checkboxChecked]} />
-            <Text style={styles.consentText}>I agree that the Prachar team may contact me about driver work.</Text>
+            <Text style={styles.consentText}>I agree that the {productName} team may contact me about driver work.</Text>
           </Pressable>
 
           {errors.length > 0 && (
@@ -1521,16 +1537,47 @@ export function App() {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: "#fffaf1"
+    backgroundColor: "#fff8ec"
   },
   shell: {
     padding: 22,
-    gap: 14
+    gap: 16
+  },
+  brandRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12
+  },
+  logoMark: {
+    width: 54,
+    height: 54,
+    borderRadius: 8,
+    backgroundColor: "#d94f18",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  logoLetter: {
+    color: "#fff8ec",
+    fontSize: 28,
+    fontWeight: "900"
   },
   brand: {
-    color: "#c84f20",
-    fontSize: 18,
+    color: "#24201c",
+    fontSize: 26,
     fontWeight: "900"
+  },
+  brandTagline: {
+    color: "#65594f",
+    fontSize: 14,
+    fontWeight: "800"
+  },
+  heroCard: {
+    borderWidth: 2,
+    borderColor: "#d8c3a9",
+    borderRadius: 8,
+    backgroundColor: "#fffdf8",
+    padding: 16,
+    gap: 8
   },
   title: {
     color: "#27231f",
@@ -1563,10 +1610,10 @@ const styles = StyleSheet.create({
     gap: 12
   },
   workCard: {
-    borderWidth: 1,
     borderColor: "#eadfce",
     borderRadius: 8,
     backgroundColor: "#fffdf8",
+    borderWidth: 2,
     padding: 14,
     gap: 12
   },
@@ -1709,17 +1756,17 @@ const styles = StyleSheet.create({
     fontSize: 15
   },
   button: {
-    minHeight: 62,
+    minHeight: 68,
     borderRadius: 8,
-    backgroundColor: "#c84f20",
+    backgroundColor: "#d94f18",
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 18
   },
   secondaryButton: {
-    minHeight: 50,
-    borderWidth: 1,
-    borderColor: "#c84f20",
+    minHeight: 58,
+    borderWidth: 2,
+    borderColor: "#d94f18",
     borderRadius: 8,
     backgroundColor: "#fffdf8",
     alignItems: "center",
@@ -1738,8 +1785,8 @@ const styles = StyleSheet.create({
     fontWeight: "900"
   },
   secondaryButtonText: {
-    color: "#c84f20",
-    fontSize: 16,
+    color: "#d94f18",
+    fontSize: 17,
     fontWeight: "900"
   },
   divider: {

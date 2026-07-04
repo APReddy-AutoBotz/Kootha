@@ -4,7 +4,7 @@ Use this wording when explaining the pilot to a customer. Keep the message simpl
 
 ## Before Work
 
-Your Prachar mic advertisement work will be planned by date, area, and package. Our team will assign an approved driver and vehicle before release.
+Your Kootha mic advertisement work will be planned by date, area, and package. Our team will assign an approved driver and vehicle before release.
 
 ## During Work
 

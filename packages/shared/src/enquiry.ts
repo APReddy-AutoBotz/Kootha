@@ -40,7 +40,7 @@ export const publicWebsiteText = {
   heroCopy: "You pay for local mic advertisement. We give you proof that it was really done.",
   enquiryButton: "Send Enquiry",
   onlineNotConfigured: "Online enquiry is not configured in this environment.",
-  successMessage: "Enquiry received. The Prachar team will contact you soon."
+  successMessage: "Enquiry received. The Kootha team will contact you soon."
 } as const;
 
 const maxLengths = {

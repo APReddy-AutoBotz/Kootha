@@ -4,7 +4,7 @@ Use this wording for the controlled pilot. Keep the same meaning if translating 
 
 ## Short Notice
 
-Phone Location Proof is used only as work proof for your assigned Prachar Ad Work. It starts only when you open your assigned work, read this notice, allow location permission, and choose Start Location Proof.
+Phone Location Proof is used only as work proof for your assigned Kootha Ad Work. It starts only when you open your assigned work, read this notice, allow location permission, and choose Start Location Proof.
 
 ## What Is Collected
 
