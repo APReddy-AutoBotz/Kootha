@@ -1,14 +1,14 @@
-# M18 Supabase Env Preflight Check
+﻿# M18 Supabase Env Preflight Check
 
 This document records a safe local preflight for the real-device pilot setup. It does not add product features and does not include secrets, Supabase URLs, anon keys, service role keys, real customer data, real driver data, real phone numbers, real Work Codes, raw GPS coordinates, screenshots, or proof file paths.
 
 ## Date And Time
 
-- Preflight recorded: 2026-07-04 12:48:39 +05:30.
+- Preflight recorded: 2026-07-04 14:19:14 +05:30.
 
 ## Repository
 
-- Repo HEAD: `90b366dbe5ea881eee46afc161232c90b464cb4f`.
+- Repo HEAD: `971b4ca3186914c612012877fabd872791e50210`.
 - Branch for evidence: `milestone/m18-supabase-env-preflight-check`.
 
 ## Local Env Status
@@ -30,10 +30,8 @@ Note: the repo lint guard intentionally blocks `.env.*` files anywhere in the wo
 
 | Command | Result | Notes |
 | --- | --- | --- |
-| `git checkout main` | passed | Main was already available. |
-| `git pull origin main` | passed | Main was up to date. |
-| `git status --short` | passed with unrelated untracked folders | Existing `.playwright-cli/` and `output/` were present before this evidence branch. |
-| `pnpm install --frozen-lockfile` | passed | Known non-interactive modules prompt and pnpm update notice were non-blocking. |
+| `git status --short` | passed with unrelated untracked folders | Existing `.playwright-cli/` and `output/` remain uncommitted. |
+| `pnpm install --frozen-lockfile` | passed | Known non-interactive modules prompt was non-blocking. |
 | `pnpm check:pilot-env` | passed with warnings | Repo-root command does not auto-load app-local `.env.local` files; direct env-file status check confirmed configured. |
 | `pnpm check:pilot-readiness` | passed | Safe status output only. |
 | `pnpm lint` | passed | Run after temporarily moving ignored local env files outside the repo. |
@@ -47,16 +45,12 @@ Note: the repo lint guard intentionally blocks `.env.*` files anywhere in the wo
 | --- | --- |
 | Supabase CLI installed | passed |
 | Supabase CLI version | configured |
-| Project linked in local CLI metadata | missing |
-| `supabase db push` run | blocked |
+| Project linked in local CLI metadata | passed |
+| Linked migration status query | passed |
+| Remote migration count check | passed |
+| `enquiries` table visible | passed |
 
-The project is not linked locally, so migrations were not pushed from Codex. AP must run these commands locally after confirming the intended project:
-
-```bash
-supabase login
-supabase link --project-ref <PROJECT_REF>
-supabase db push
-```
+AP reported that the project was linked and migrations were pushed before this rerun. Codex verified the linked project with a status-only SQL query and anon-key REST checks. The verification returned safe labels only. The Supabase CLI update notice was non-blocking.
 
 Do not use or paste a service role key for frontend or driver app setup.
 
@@ -66,27 +60,30 @@ The anon-key REST test used fake data only and printed safe statuses only.
 
 | Operation | Result | Notes |
 | --- | --- | --- |
-| Anonymous enquiry insert | failed | REST returned `404` with `PGRST205`. This indicates the `enquiries` table was not available through the target PostgREST schema at test time. |
-| Anonymous select/read | blocked | Read access did not expose records during the blocked preflight. This does not fully validate policy until migrations are applied. |
-| Anonymous update | blocked | Update was blocked during the preflight. This does not fully validate policy until migrations are applied. |
-| Anonymous delete | blocked | Delete was blocked during the preflight. This does not fully validate policy until migrations are applied. |
+| Remote `enquiries` table visible | passed | Linked SQL status query confirmed the table exists. |
+| Anonymous enquiry insert | passed | One fake enquiry insert succeeded with anon access. |
+| Anonymous select/read | passed | Public read was blocked or returned no private records. |
+| Anonymous update | passed | Public update was blocked or returned no updated records. |
+| Anonymous delete | passed | Public delete was blocked or returned no deleted records. |
 
-Result: blocked until migrations are applied and the schema is visible in the target Supabase project.
+Result: passed for public insert-only enquiry behavior with fake data only.
 
 ## Proof Photos Bucket Result
 
 | Check | Result | Notes |
 | --- | --- | --- |
 | Anonymous list of `proof-photos` objects | blocked | Public listing was not available through anon access. |
-| Bucket exists | manual AP action |
-| Bucket private flag | manual AP action |
-| No public read/list policy | manual AP action |
+| Bucket exists | passed | Linked SQL status query confirmed the bucket exists. |
+| Bucket private flag | passed | Linked SQL status query confirmed the private flag is set. |
+| No public read/list policy | passed | Linked SQL status query did not find an unsafe public read/list policy. |
 
-Codex could not safely verify bucket existence or the private flag without linked Supabase/privileged dashboard access. AP must verify `proof-photos` bucket privacy in the Supabase dashboard after migrations are applied.
+Result: passed for target storage bucket existence, private flag, and no public proof listing.
 
 ## Admin User Result
 
-Admin Auth user verification was not performed from Codex. No service role key was requested or used.
+Admin Auth user verification was performed through a linked status-only SQL query. No admin email, password, or identity value was printed. No service role key was requested or used.
+
+Current result: blocked because no admin profile with `role = 'admin'` was found by the status-only query.
 
 Manual AP action:
 
@@ -96,17 +93,12 @@ Manual AP action:
 
 ## Remaining Manual Steps
 
-1. Run `supabase login`.
-2. Run `supabase link --project-ref <PROJECT_REF>`.
-3. Run `supabase db push`.
-4. Confirm the `enquiries` table is visible through the target REST API.
-5. Re-run the public enquiry insert/read/update/delete policy test.
-6. Verify `proof-photos` bucket exists and is private in the Supabase dashboard.
-7. Verify no public proof file read/list policy exists.
-8. Create or verify the admin Auth user and `user_profiles.role = 'admin'`.
-9. Run the web/admin app against the target project.
-10. Run the driver app on the Android phone.
-11. Use fake data only for real-device pilot evidence.
+1. Create or verify the admin Auth user.
+2. Set or verify `public.user_profiles.role = 'admin'` for the admin user.
+3. Confirm admin login works from the web/admin app.
+4. Run the web/admin app against the target project.
+5. Run the driver app on the Android phone.
+6. Use fake data only for real-device pilot evidence.
 
 ## Privacy And Security Confirmation
 
