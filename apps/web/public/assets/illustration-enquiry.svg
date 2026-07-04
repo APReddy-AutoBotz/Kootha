@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 160" role="img" aria-labelledby="title desc">
   <title id="title">Customer enquiry</title>
-  <desc id="desc">A shop owner sends an enquiry for local announcement work.</desc>
+  <desc id="desc">A shop owner sends an enquiry for advertisement work.</desc>
   <rect width="240" height="160" rx="18" fill="#fff8ec"/>
   <rect x="24" y="62" width="86" height="60" rx="8" fill="#fffdf8" stroke="#d8c3a9" stroke-width="4"/>
   <path d="M28 62h78l-8-24H36z" fill="#d94f18"/>

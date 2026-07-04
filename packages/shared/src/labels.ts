@@ -71,7 +71,7 @@ export const businessLabels = {
     home: "Home",
     updates: "Updates",
     proofReport: "Proof Report",
-    servicePromise: "You get proof that your announcement work was done.",
+    servicePromise: "You get proof that your advertisement work was done.",
     contactTeam: "Contact Team",
     reportReady: "Report Ready"
   },

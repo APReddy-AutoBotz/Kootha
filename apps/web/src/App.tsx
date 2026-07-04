@@ -32,7 +32,7 @@ const initialEnquiry: PublicEnquiryInput = {
 };
 
 const proofSteps = [
-  { title: "Send enquiry", text: "Tell us the shop, area, date, and announcement message.", image: "/assets/illustration-enquiry.svg" },
+  { title: "Send enquiry", text: "Tell us the business, area, date, and advertisement message.", image: "/assets/illustration-enquiry.svg" },
   { title: "Plan work", text: "Admin fixes the date, time, areas, driver, and vehicle.", image: "/assets/illustration-planning.svg" },
   { title: "Driver works", text: "Driver opens assigned work and updates the team.", image: "/assets/illustration-driver.svg" },
   { title: "Photo proof", text: "Proof photos and simple updates are reviewed by admin.", image: "/assets/illustration-proof.svg" },
@@ -42,7 +42,7 @@ const proofSteps = [
 const packageCards = [
   {
     name: "Basic",
-    text: "Simple updates and final proof summary for small local announcements."
+    text: "Simple updates and final proof summary for small advertisement work."
   },
   {
     name: "Standard",
@@ -203,8 +203,8 @@ function EnquiryForm() {
         <textarea value={form.areasToCover} maxLength={500} onChange={(event) => updateField("areasToCover", event.target.value)} placeholder="Example: main road, market, bus stand, nearby villages" required />
       </label>
       <label>
-        Announcement message
-        <textarea value={form.advertisementDetails} maxLength={1000} onChange={(event) => updateField("advertisementDetails", event.target.value)} placeholder="Write the announcement message or offer details" required />
+        Advertisement message
+        <textarea value={form.advertisementDetails} maxLength={1000} onChange={(event) => updateField("advertisementDetails", event.target.value)} placeholder="Write the advertisement message or offer details" required />
       </label>
       <label>
         Extra notes
@@ -246,7 +246,7 @@ function PublicWebsite() {
 
       <section className="hero-section kootha-hero" aria-labelledby="home-title">
         <div className="hero-copy">
-          <p className="eyebrow">Mic announcement proof</p>
+          <p className="eyebrow">Advertisement proof</p>
           <h1 id="home-title">{publicWebsiteText.heroHeadline}</h1>
           <p>{publicWebsiteText.heroCopy}</p>
           <div className="hero-action-row">
@@ -255,9 +255,9 @@ function PublicWebsite() {
           </div>
         </div>
         <div className="hero-visual" aria-label="Kootha proof flow preview">
-          <img src="/assets/illustration-driver.svg" alt="Driver doing local announcement work" />
+          <img src="/assets/illustration-driver.svg" alt="Driver doing advertisement work" />
           <div>
-            <strong>Clear proof for local work</strong>
+            <strong>Clear proof for field work</strong>
             <span>Plan, driver update, photo proof, final summary.</span>
           </div>
         </div>
@@ -296,13 +296,13 @@ function PublicWebsite() {
             </article>
           ))}
         </div>
-        <p className="quiet-note">Payment collection is not part of the current setup.</p>
+        <p className="quiet-note">These are proof levels, not fixed prices. The Kootha team will confirm scope and payment before work starts.</p>
       </section>
 
       <section className="section-band two-column" aria-labelledby="cities-title">
         <div>
-          <p className="eyebrow">Pilot area</p>
-          <h2 id="cities-title">Starting with Ongole and Addanki</h2>
+          <p className="eyebrow">Service areas</p>
+          <h2 id="cities-title">Available in and around Ongole and Addanki</h2>
         </div>
         <div className="city-list kootha-city-list">
           <span>Ongole</span>
@@ -317,8 +317,8 @@ function PublicWebsite() {
         <h2 id="faq-title">Common questions</h2>
         <div className="faq-list">
           <details>
-            <summary>Will the customer see live tracking?</summary>
-            <p>No. Customers get simple updates and a final proof summary by default.</p>
+            <summary>Can I see live location?</summary>
+            <p>No live location link is shared by default. You receive updates and a final proof summary.</p>
           </details>
           <details>
             <summary>Is driver location used after work?</summary>
@@ -334,7 +334,7 @@ function PublicWebsite() {
       <section className="section-band enquiry-section kootha-enquiry-section" id="enquiry" aria-labelledby="enquiry-title">
         <div>
           <p className="eyebrow">Contact and enquiry</p>
-          <h2 id="enquiry-title">Tell us about your announcement work</h2>
+          <h2 id="enquiry-title">Tell us about your advertisement work</h2>
           <p>Share the areas, date, and message. The {productName} team can call you and plan the next step.</p>
           <p className="contact-placeholder">Call placeholder: +91 00000 00000</p>
           <img className="enquiry-side-image" src="/assets/illustration-enquiry.svg" alt="Customer sending enquiry" />

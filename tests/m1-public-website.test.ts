@@ -17,10 +17,19 @@ describe("M1 public website", () => {
     expect(webAppSource).toContain("resolveProductName");
     expect(webAppSource).toContain("productName");
     expect(webAppSource).toContain("publicWebsiteText.heroHeadline");
-    expect(sharedEnquirySource).toContain("Local mic advertisement with proof");
+    expect(sharedEnquirySource).toContain("Advertisement work with clear proof");
     expect(sharedEnquirySource).toContain("Kootha team");
   });
 
+  it("keeps public copy customer-facing and broad", () => {
+    expect(webAppSource).toContain("Tell us about your advertisement work");
+    expect(webAppSource).toContain("Advertisement message");
+    expect(webAppSource).toContain("Service areas");
+    expect(webAppSource).toContain("not fixed prices");
+    expect(webAppSource).not.toContain("Pilot area");
+    expect(webAppSource).not.toContain("Payment collection is not part of the current setup");
+    expect(webAppSource).not.toContain("Mic announcement proof");
+  });
   it("ships original Kootha logo and explanation assets", () => {
     expect(existsSync(path.resolve("apps/web/public/assets/kootha-logo.svg"))).toBe(true);
     expect(existsSync(path.resolve("apps/web/public/assets/kootha-mark.svg"))).toBe(true);
