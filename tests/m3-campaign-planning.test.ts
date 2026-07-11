@@ -14,6 +14,7 @@ import {
 
 const webAppSource = readFileSync(path.resolve("apps/web/src/App.tsx"), "utf8");
 const webAdminSource = readFileSync(path.resolve("apps/web/src/admin.tsx"), "utf8");
+const adminCss = readFileSync(path.resolve("apps/web/src/admin-v2.css"), "utf8");
 const sharedSource = readFileSync(path.resolve("packages/shared/src/campaign.ts"), "utf8");
 const envExample = readFileSync(path.resolve(".env.example"), "utf8");
 const packageJson = readFileSync(path.resolve("package.json"), "utf8");
@@ -38,6 +39,13 @@ const sampleEnquiry = {
 };
 
 describe("M3 campaign planning and scheduling", () => {
+  it("keeps admin lists and details on one page axis", () => {
+    expect(adminCss).toContain(".admin-app-main .lead-list,");
+    expect(adminCss).toContain("max-height: none;");
+    expect(adminCss).toContain("overflow: visible;");
+    expect(adminCss).toContain("grid-template-columns: repeat(3, minmax(0, 1fr));");
+  });
+
   it("defines simple ad work planning status labels without duplicates", () => {
     expect(hasDuplicateValues(adWorkStatusOptions)).toBe(false);
     expect(Object.keys(adWorkStatusLabels).sort()).toEqual([...adWorkStatusOptions].sort());

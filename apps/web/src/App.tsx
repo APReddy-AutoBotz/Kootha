@@ -298,9 +298,6 @@ function PublicWebsite() {
       </header>
 
       <section className="kootha-hero" aria-labelledby="home-title">
-        <div className="hero-media" aria-hidden="true">
-          <img src="/assets/illustration-driver.svg" alt="" />
-        </div>
         <div className="hero-copy">
           <p className="eyebrow">Advertisement work, made clear</p>
           <h1 id="home-title">Work planned clearly. Proof shared simply.</h1>

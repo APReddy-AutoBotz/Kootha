@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 const webAppSource = readFileSync(path.resolve("apps/web/src/App.tsx"), "utf8");
+const publicCss = readFileSync(path.resolve("apps/web/src/public-v2.css"), "utf8");
 const sharedEnquirySource = readFileSync(path.resolve("packages/shared/src/enquiry.ts"), "utf8");
 const driverConfig = readFileSync(path.resolve("apps/driver/app.json"), "utf8");
 const envExample = readFileSync(path.resolve(".env.example"), "utf8");
@@ -38,6 +39,10 @@ describe("M1 public website", () => {
   it("ships original Kootha logo and explanation assets", () => {
     expect(existsSync(path.resolve("apps/web/public/assets/kootha-logo.svg"))).toBe(true);
     expect(existsSync(path.resolve("apps/web/public/assets/kootha-mark.svg"))).toBe(true);
+    expect(existsSync(path.resolve("apps/web/public/assets/kootha-field-advertising-hero.webp"))).toBe(true);
+    expect(publicCss).toContain("kootha-field-advertising-hero.webp");
+    expect(publicCss).not.toContain("padding: 72px 48%");
+    expect(publicCss).toContain("overflow-wrap: normal");
     expect(webAppSource).toContain("/assets/illustration-enquiry.svg");
     expect(webAppSource).toContain("/assets/illustration-summary.svg");
   });
