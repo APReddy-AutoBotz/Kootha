@@ -1,0 +1,7 @@
+# Netlify server environment placeholders. Configure these in Netlify, never in client env files.
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=replace-with-server-only-service-role-key
+TURNSTILE_SECRET_KEY=replace-with-turnstile-secret-key
+ENQUIRY_RATE_LIMIT_SALT=replace-with-random-server-only-salt
+ENQUIRY_INTAKE_ENABLED=false
+RETENTION_DELETION_ENABLED=false

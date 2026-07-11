@@ -1,5 +1,8 @@
 # M16 Real Device Pilot Execution Evidence
 
+> Current production-readiness update (12 July 2026): target Supabase migrations, admin access, and private proof storage are now configured and verified with safe status labels. The historical blocked result below remains accurate for the original M16 run. Physical Android permission, proof upload, offline buffer, Sync Now, and complete fake-data workflow evidence are still pending.
+
+
 M16 records real-device pilot execution evidence or the blocker that prevented execution. This document is evidence-only and does not add product features.
 
 ## Objective

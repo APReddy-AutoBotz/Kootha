@@ -1,10 +1,17 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-labelledby="title desc">
-  <title id="title">Kootha mark</title>
-  <desc id="desc">A simple orange promotion speaker mark.</desc>
-  <rect width="96" height="96" rx="20" fill="#fff8ec"/>
-  <circle cx="45" cy="46" r="31" fill="#d94f18"/>
-  <rect x="35" y="22" width="20" height="36" rx="10" fill="#fff8ec"/>
-  <path d="M27 44c0 15 8 25 18 25s18-10 18-25" fill="none" stroke="#24201c" stroke-width="6" stroke-linecap="round"/>
-  <path d="M45 69v12M33 81h24" fill="none" stroke="#24201c" stroke-width="6" stroke-linecap="round"/>
-  <path d="M69 32c8 5 13 12 16 23" fill="none" stroke="#d94f18" stroke-width="6" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 104 96" role="img" aria-labelledby="title desc">
+  <title id="title">Kootha bird mark</title>
+  <desc id="desc">A complete calling bird with visible legs and three sound waves.</desc>
+  <rect width="104" height="96" rx="18" fill="#fff8ec"/>
+  <g stroke="#24201c" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round">
+    <path fill="#e45113" d="M17 76 34 57c-2-7-1-16 2-25 4-12 18-18 29-13 7 3 12 9 13 17l-12 6 12 7-15 1c-3 10-11 17-21 20L35 76Z"/>
+    <path fill="#e45113" d="M35 57 14 79h24l12-12"/>
+    <path fill="#f47a2a" d="M36 51c8-5 17-3 22 5-5 7-12 11-21 12"/>
+    <circle cx="61" cy="29" r="2.4" fill="#24201c" stroke="none"/>
+    <path fill="none" d="M40 69 37 84M53 67l7 17M30 84h15M53 84h16"/>
+  </g>
+  <g fill="none" stroke="#e45113" stroke-width="4.8" stroke-linecap="round">
+    <path d="M78 32c4 4 4 10 0 14"/>
+    <path d="M86 25c7 8 7 20 0 28"/>
+    <path d="M94 18c10 12 10 29 0 42"/>
+  </g>
 </svg>

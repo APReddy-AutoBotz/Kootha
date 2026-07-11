@@ -1,29 +1,33 @@
 {
-  "expo": {
-    "name": "Kootha Driver",
-    "slug": "kootha-driver",
-    "version": "0.0.0",
-    "orientation": "portrait",
-    "platforms": [
-      "android"
-    ],
-    "scheme": "kootha-driver",
-    "icon": "./assets/kootha-icon.png",
-    "splash": {
-      "image": "./assets/kootha-splash.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#fff8ec"
-    },
-    "userInterfaceStyle": "light",
-    "android": {
-      "package": "com.kootha.driver",
-      "permissions": [
-        "android.permission.READ_MEDIA_IMAGES",
-        "android.permission.ACCESS_FINE_LOCATION"
-      ]
-    },
-    "extra": {
-      "productName": "Kootha"
-    }
-  }
+    "expo":  {
+                 "name":  "Kootha Driver",
+                 "slug":  "kootha-driver",
+                 "version":  "1.0.0",
+                 "orientation":  "portrait",
+                 "platforms":  [
+                                   "android"
+                               ],
+                 "scheme":  "kootha-driver",
+                 "icon":  "./assets/kootha-icon.png",
+                 "splash":  {
+                                "image":  "./assets/kootha-splash.png",
+                                "resizeMode":  "contain",
+                                "backgroundColor":  "#fff8ec"
+                            },
+                 "userInterfaceStyle":  "light",
+                 "android":  {
+                                 "package":  "com.kootha.driver",
+                                 "permissions":  [
+                                                     "android.permission.READ_MEDIA_IMAGES",
+                                                     "android.permission.ACCESS_FINE_LOCATION"
+                                                 ],
+                                 "versionCode":  1
+                             },
+                 "extra":  {
+                               "productName":  "Kootha"
+                           },
+                 "plugins":  [
+                                 "@sentry/react-native/expo"
+                             ]
+             }
 }

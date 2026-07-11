@@ -40,9 +40,6 @@
   align-items: center;
   overflow: hidden;
   background-color: var(--kootha-orange);
-  background-image: url("/assets/kootha-field-advertising-hero.webp");
-  background-position: center;
-  background-size: cover;
   color: #fffdf8;
 }
 
@@ -51,7 +48,11 @@
   position: absolute;
   inset: 0;
   z-index: -1;
-  background: rgba(120, 31, 7, 0.16);
+  background-image:
+    linear-gradient(rgba(120, 31, 7, 0.13), rgba(120, 31, 7, 0.13)),
+    url("/assets/kootha-town-road-static.webp");
+  background-position: center;
+  background-size: cover;
 }
 
 .kootha-hero::after {
@@ -417,7 +418,7 @@
 }
 
 .site-footer img {
-  width: 150px;
+  width: min(250px, 72vw);
 }
 
 .site-footer p {
@@ -430,6 +431,10 @@
   .kootha-hero {
     min-height: 640px;
     height: min(680px, calc(100svh - 68px));
+    background-position: initial;
+  }
+
+  .kootha-hero::before {
     background-position: 58% center;
   }
 
@@ -484,7 +489,11 @@
   .kootha-hero {
     min-height: 600px;
     height: min(620px, calc(100svh - 68px));
-    background-position: 42% center;
+    background-position: initial;
+  }
+
+  .kootha-hero::before {
+    background-position: 63% center;
   }
 
   .kootha-hero .hero-copy {

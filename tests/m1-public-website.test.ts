@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
-const webAppSource = readFileSync(path.resolve("apps/web/src/App.tsx"), "utf8");
+const webAppSource = readFileSync(path.resolve("apps/web/src/App.tsx"), "utf8") + readFileSync(path.resolve("apps/web/src/PublicWebsite.tsx"), "utf8");
 const publicCss = readFileSync(path.resolve("apps/web/src/public-v2.css"), "utf8");
 const sharedEnquirySource = readFileSync(path.resolve("packages/shared/src/enquiry.ts"), "utf8");
 const driverConfig = readFileSync(path.resolve("apps/driver/app.json"), "utf8");
@@ -12,6 +12,7 @@ const webPackageJson = readFileSync(path.resolve("apps/web/package.json"), "utf8
 const driverPackageJson = readFileSync(path.resolve("apps/driver/package.json"), "utf8");
 const m0Migration = readFileSync(path.resolve("supabase/migrations/20260630000000_m0_foundation.sql"), "utf8");
 const m1Migration = readFileSync(path.resolve("supabase/migrations/20260630010000_m1_public_enquiries.sql"), "utf8");
+const protectedIntakeMigration = readFileSync(path.resolve("supabase/migrations/20260712010000_protected_enquiry_intake.sql"), "utf8");
 
 describe("M1 public website", () => {
   it("uses the centralized product name on the public website", () => {
@@ -31,7 +32,7 @@ describe("M1 public website", () => {
     expect(webAppSource).not.toContain("Payment collection is not part of the current setup");
     expect(webAppSource).not.toContain("Mic announcement proof");
     expect(webAppSource).toContain("Step {step} of 2");
-    expect(webAppSource).toContain("continueToWorkDetails");
+    expect(webAppSource).toContain("function next");
     expect(webAppSource).not.toContain("Choose the proof level");
     expect(webAppSource).not.toContain("Phone Location Proof?");
   });
@@ -39,8 +40,13 @@ describe("M1 public website", () => {
   it("ships original Kootha logo and explanation assets", () => {
     expect(existsSync(path.resolve("apps/web/public/assets/kootha-logo.svg"))).toBe(true);
     expect(existsSync(path.resolve("apps/web/public/assets/kootha-mark.svg"))).toBe(true);
-    expect(existsSync(path.resolve("apps/web/public/assets/kootha-field-advertising-hero.webp"))).toBe(true);
-    expect(publicCss).toContain("kootha-field-advertising-hero.webp");
+    expect(existsSync(path.resolve("apps/web/public/assets/kootha-logo-tagline.svg"))).toBe(true);
+    expect(existsSync(path.resolve("apps/web/public/assets/kootha-logo-bird-approved.png"))).toBe(true);
+    expect(webAppSource).toContain("Your message. Everywhere.");
+    expect(existsSync(path.resolve("apps/web/public/assets/kootha-town-road-static.webp"))).toBe(true);
+    expect(publicCss).toContain("kootha-town-road-static.webp");
+    expect(publicCss).not.toContain("kootha-vehicle-drive");
+    expect(webAppSource).not.toContain("kootha-motion-vehicle");
     expect(publicCss).not.toContain("padding: 72px 48%");
     expect(publicCss).toContain("overflow-wrap: normal");
     expect(webAppSource).toContain("/assets/illustration-enquiry.svg");
@@ -53,14 +59,11 @@ describe("M1 public website", () => {
     expect(envExample).not.toMatch(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/);
   });
 
-  it("allows public enquiry insert only through the M1 policy", () => {
-    expect(m1Migration).toContain("for insert");
-    expect(m1Migration).toContain("to anon");
-    expect(m1Migration).toContain("grant insert");
-    expect(m1Migration.toLowerCase()).not.toMatch(/for\s+select\s+to\s+anon/);
-    expect(m1Migration.toLowerCase()).not.toMatch(/for\s+update\s+to\s+anon/);
-    expect(m1Migration.toLowerCase()).not.toMatch(/for\s+delete\s+to\s+anon/);
-    expect(m1Migration.toLowerCase()).not.toMatch(/grant\s+select|grant\s+update|grant\s+delete/);
+  it("moves public enquiry creation behind the protected gateway", () => {
+    expect(m1Migration).toContain("Public website can insert enquiries");
+    expect(protectedIntakeMigration).toContain("drop policy if exists \"Public website can insert enquiries\"");
+    expect(protectedIntakeMigration).toContain("revoke insert on public.enquiries from anon");
+    expect(webAppSource).toContain("/api/enquiries");
   });
 
   it("keeps customer live sharing disabled by default", () => {

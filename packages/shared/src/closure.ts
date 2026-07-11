@@ -31,6 +31,8 @@ export interface CampaignClosureReadinessInput {
   customerUpdatesReviewed: boolean;
   proofNotRequiredConfirmed: boolean;
   closureReason?: CampaignClosureReason | "" | null;
+  assignmentRequired?: boolean;
+  releaseRequired?: boolean;
 }
 
 export interface CampaignClosureReadiness {
@@ -95,13 +97,12 @@ export function buildCampaignClosureReadiness(input: CampaignClosureReadinessInp
   const hardStops: string[] = [];
   const warnings: string[] = [];
   const blockingWarnings: string[] = [];
-  const manualReasonProvided = hasClosureReason(input.closureReason);
 
-  if (input.assignmentStatus !== "ready_for_execution") {
+  if ((input.assignmentRequired ?? true) && input.assignmentStatus !== "ready_for_execution") {
     hardStops.push("Ad Work is not assigned.");
   }
 
-  if (input.releaseStatus !== "released_to_driver") {
+  if ((input.releaseRequired ?? true) && input.releaseStatus !== "released_to_driver") {
     hardStops.push("Ad Work was not released to driver.");
   }
 
@@ -153,7 +154,7 @@ export function buildCampaignClosureReadiness(input: CampaignClosureReadinessInp
     warnings.push("GPS proof is not available in this version.");
   }
 
-  const canClose = hardStops.length === 0 && (blockingWarnings.length === 0 || manualReasonProvided);
+  const canClose = hardStops.length === 0;
   let status: CampaignClosureStatus = "not_ready";
 
   if (canClose) {

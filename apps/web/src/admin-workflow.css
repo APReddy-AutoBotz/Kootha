@@ -1,0 +1,180 @@
+.workflow-phase-bar {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 18px 0 12px;
+}
+
+.workflow-phase-bar > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 11px 12px;
+  border: 1px solid #dfd4c2;
+  border-radius: 6px;
+  color: #6b6258;
+  background: #fffdf8;
+}
+
+.workflow-phase-bar span {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  place-items: center;
+  border-radius: 50%;
+  background: #eee7db;
+  font-weight: 800;
+}
+
+.workflow-phase-bar .is-current {
+  border-color: #df4614;
+  color: #17130f;
+  background: #fff5e8;
+}
+
+.workflow-phase-bar .is-current span { color: #fff; background: #df4614; }
+
+.next-action-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 22px;
+  padding: 20px;
+  border: 2px solid #df4614;
+  border-radius: 8px;
+  background: #fffaf1;
+}
+
+.next-action-card h3 { margin: 2px 0 4px; font-size: 1.45rem; }
+.next-action-card p { margin: 0; }
+.next-action-card .primary-button { flex: 0 0 auto; }
+
+.workflow-section-picker {
+  margin: 12px 0 18px;
+  padding: 0;
+  border: 0;
+}
+
+.workflow-section-picker summary { cursor: pointer; color: #8f3418; font-weight: 800; }
+.workflow-section-picker .admin-action-row { margin-top: 10px; }
+.workflow-section-picker .is-active { border-color: #df4614; color: #b3320d; }
+
+.delivery-method-fieldset,
+.requirement-options {
+  margin: 18px 0;
+  padding: 0;
+  border: 0;
+}
+
+.delivery-method-fieldset legend,
+.requirement-options legend { font-size: 1.05rem; font-weight: 900; }
+.delivery-method-fieldset > p { margin: 4px 0 12px; color: #6b6258; }
+
+.delivery-method-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.delivery-method-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid #d8ccba;
+  border-radius: 7px;
+  background: #fffdf8;
+  cursor: pointer;
+}
+
+.delivery-method-card:hover { border-color: #e37a52; }
+.delivery-method-card.is-selected { border: 2px solid #df4614; padding: 13px; background: #fff3df; }
+.delivery-method-card input { width: 19px; height: 19px; flex: 0 0 19px; accent-color: #df4614; }
+.delivery-method-card span { display: grid; gap: 3px; min-width: 0; }
+.delivery-method-card strong { font-size: 1rem; }
+.delivery-method-card small { color: #6b6258; font-weight: 500; line-height: 1.4; }
+
+.requirement-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  color: #4f493f;
+}
+
+.requirement-summary span {
+  padding: 6px 9px;
+  border: 1px solid #d8ccba;
+  border-radius: 6px;
+  background: #fffdf8;
+  font-size: .88rem;
+  font-weight: 750;
+}
+
+
+.ad-work-layout.show-list .ad-work-detail-panel,
+.ad-work-layout.show-detail .ad-work-list-panel { display: none; }
+
+.ad-work-layout.show-detail { display: block; }
+
+.back-to-list-button {
+  width: fit-content;
+  border: 0;
+  background: transparent;
+  color: #a73612;
+  padding: 4px 0;
+  font: inherit;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.back-to-list-button::before { content: "< "; }
+
+.managed-day-list { display: grid; gap: 12px; margin-top: 18px; }
+.managed-day-card { display: grid; gap: 10px; border: 1px solid #d8ccba; border-radius: 7px; background: #fffdf8; padding: 15px; }
+.managed-day-card > div:first-child { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.managed-day-card p { margin: 0; color: #6b6258; }
+.no-assignment-needed { border-left: 4px solid #2f7d46 !important; background: #f2f8f1 !important; }
+.assignment-primary-fields { margin-top: 18px; }
+
+.admin-app-main .ad-work-layout .admin-filter-grid.simplified-work-filters {
+  grid-template-columns: minmax(240px, 1fr) minmax(180px, .55fr);
+  align-items: end;
+}
+.simplified-work-filters .filter-date-options { grid-column: 1 / -1; }
+.filter-date-options summary { width: fit-content; cursor: pointer; color: #a73612; font-weight: 800; }
+.filter-date-options .form-grid { margin-top: 10px; max-width: 620px; }
+@media (max-width: 720px) {
+  .workflow-phase-bar { grid-template-columns: 1fr; }
+  .next-action-card { align-items: stretch; flex-direction: column; }
+  .next-action-card .primary-button { width: 100%; }
+  .delivery-method-grid { grid-template-columns: 1fr; }
+  .admin-app-main .ad-work-layout .admin-filter-grid.simplified-work-filters { grid-template-columns: 1fr; }
+}
+
+.admin-proof-capture {
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--kootha-border);
+  border-radius: 8px;
+  background: var(--kootha-ivory);
+}
+
+.admin-proof-capture summary {
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.admin-proof-capture[open] summary {
+  margin-bottom: 12px;
+}
+
+.admin-proof-capture input[type="file"] {
+  min-height: 48px;
+  padding: 10px;
+  background: var(--kootha-panel);
+}

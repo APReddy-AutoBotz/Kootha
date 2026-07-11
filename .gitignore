@@ -44,3 +44,7 @@ pnpm-debug.log*
 *.swo
 .DS_Store
 Thumbs.db
+
+# Local QA artifacts
+output/
+.playwright-cli/

@@ -5,7 +5,7 @@ Kootha is a field advertisement planning and proof platform. The repository curr
 ## Current Scope
 
 - React + Vite public website at /.
-- Public enquiry form with safe validation and Supabase insert-only submission.
+- Public enquiry form with server-side validation through a protected Netlify/Turnstile intake endpoint.
 - Admin login at /admin with role checks.
 - Admin Dashboard, Enquiries, Ad Works, Driver Applications, Drivers, and Vehicles navigation.
 - Admin driver and vehicle assignment to planned Ad Works with readiness checks.
@@ -34,6 +34,13 @@ Kootha is a field advertisement planning and proof platform. The repository curr
 - Real-device pilot execution evidence document with a blocked outcome because the required physical device and target environment were unavailable.
 - Real-device pilot blocker remediation docs, Android setup guide, driver app build guide, Supabase target remediation guide, web/admin preview guide, evidence template, and safe pilot readiness check.
 - M18 target Supabase/admin/storage preflight evidence and real-device retry checklist, with physical Android execution still pending.
+
+
+## Production Readiness Candidate
+
+The current branch adds the production controls required before open enquiry intake: a Netlify/Turnstile enquiry gateway, persistent hashed throttling, removal of direct anonymous enquiry inserts, admin session refresh, safe audit view, English/Telugu launch surfaces, legal pages, disabled-by-default retention automation, scrubbed Sentry integration, Netlify/EAS configuration, CI guardrails, and production operations documentation.
+
+Use [the deployment runbook](docs/production/deployment-runbook.md), [security and incident operations](docs/production/security-privacy-operations.md), and [the go-live checklist](docs/production/go-live-checklist.md). Do not apply the protected-enquiry migration to the target project until the Netlify function and its server-only environment are configured, because that migration intentionally disables the old anonymous insert path.
 
 ## What is intentionally not included in M18
 

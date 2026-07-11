@@ -51,7 +51,11 @@ const readyAdWork = {
   numberOfDays: 1,
   packageInterest: "standard" as const,
   liveTrackingRequested: "no" as const,
-  proofPlanSelected: true
+  proofPlanSelected: true,
+  driverRequired: true,
+  vehicleRequired: true,
+  speakerRequired: true,
+  areasRequired: true
 };
 
 describe("M5 driver and vehicle assignment", () => {
@@ -113,7 +117,7 @@ describe("M5 driver and vehicle assignment", () => {
     });
 
     expect(readiness.ready).toBe(false);
-    expect(readiness.checks.find((check) => check.label === "Mic System available")?.passed).toBe(false);
+    expect(readiness.checks.find((check) => check.label === "Speaker equipment available")?.passed).toBe(false);
   });
 
   it("warns when premium tracking request lacks Vehicle GPS Device readiness", () => {
@@ -155,8 +159,8 @@ describe("M5 driver and vehicle assignment", () => {
     expect(m5Migration).not.toContain("actual_end_time");
   });
 
-  it("shows one assignment for multi-day Ad Work", () => {
-    expect(webAdminSource).toContain("Same driver and vehicle will be used for all planned days.");
+  it("shows one resource assignment for multi-day Ad Work", () => {
+    expect(webAdminSource).toContain("Same person{adWork.vehicle_required ? \" and vehicle\" : \"\"} will be used for all planned days.");
   });
 
   it("does not use privileged Supabase keys in frontend or driver app", () => {
