@@ -90,13 +90,13 @@ describe("M15 real device pilot setup and deployment", () => {
     const checks = validatePilotReadinessEnvironment({
       mode: "production",
       webEnv: {
-        VITE_PRODUCT_NAME: "Prachar",
+        VITE_PRODUCT_NAME: "Kootha",
         VITE_SUPABASE_URL: "https://your-project.supabase.co",
         VITE_SUPABASE_ANON_KEY: "replace-with-public-anon-key",
         [unsafeWebKey]: "do-not-print-this-value"
       },
       driverEnv: {
-        EXPO_PUBLIC_PRODUCT_NAME: "Prachar",
+        EXPO_PUBLIC_PRODUCT_NAME: "Kootha",
         EXPO_PUBLIC_SUPABASE_URL: "https://pilot.supabase.co",
         EXPO_PUBLIC_SUPABASE_ANON_KEY: "public-anon-value"
       },
@@ -123,11 +123,11 @@ describe("M15 real device pilot setup and deployment", () => {
       env: {
         ...process.env,
         PILOT_ENV_MODE: "production",
-        VITE_PRODUCT_NAME: "Prachar",
+        VITE_PRODUCT_NAME: "Kootha",
         VITE_SUPABASE_URL: "https://pilot.supabase.co",
         VITE_SUPABASE_ANON_KEY: "public-anon-key",
         VITE_SUPABASE_SERVICE_ROLE_KEY: "do-not-print-this-value",
-        EXPO_PUBLIC_PRODUCT_NAME: "Prachar",
+        EXPO_PUBLIC_PRODUCT_NAME: "Kootha",
         EXPO_PUBLIC_SUPABASE_URL: "https://pilot.supabase.co",
         EXPO_PUBLIC_SUPABASE_ANON_KEY: "public-anon-key",
         CUSTOMER_LIVE_ENABLED_DEFAULT: "true"

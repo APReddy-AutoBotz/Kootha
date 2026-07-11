@@ -1,6 +1,6 @@
 # M15 Real Device Pilot Setup
 
-M15 prepares Kootha / Prachar for a controlled real-device pilot setup. It does not start a real customer pilot and does not add product features.
+M15 prepares Kootha for a controlled real-device pilot setup. It does not start a real customer pilot and does not add product features.
 
 ## Pilot Setup Objective
 
@@ -26,7 +26,7 @@ No real customer pilot should start until all M15 checks pass and AP approves th
 ## Required Accounts
 
 - Target Supabase project owner or admin access.
-- Supabase Auth admin user for Kootha / Prachar admin login.
+- Supabase Auth admin user for Kootha admin login.
 - GitHub access to this repository.
 - Hosting provider access for preview and production-like web/admin builds.
 - Expo or Android test setup access for installing the driver app on the real Android phone.

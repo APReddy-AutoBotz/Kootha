@@ -1,6 +1,6 @@
 # M14 Controlled Pilot Dry Run
 
-M14 documents a controlled dry run of the current Kootha / Prachar MVP using fake data only. It validates readiness for a real pilot without adding new product features or claiming that a real customer pilot has been completed.
+M14 documents a controlled dry run of the current Kootha MVP using fake data only. It validates readiness for a real pilot without adding new product features or claiming that a real customer pilot has been completed.
 
 ## Dry Run Objective
 

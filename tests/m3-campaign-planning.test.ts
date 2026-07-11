@@ -126,6 +126,20 @@ describe("M3 campaign planning and scheduling", () => {
     expect(lowerSql).not.toMatch(/for\s+delete\s+to\s+anon/);
   });
 
+  it("exposes Ad Work planning as a clear step workflow", () => {
+    expect(webAdminSource).toContain("adWorkWorkflowSteps");
+    expect(webAdminSource).toContain("Plan");
+    expect(webAdminSource).toContain("Assign");
+    expect(webAdminSource).toContain("Release");
+    expect(webAdminSource).toContain("Proof");
+    expect(webAdminSource).toContain("Close");
+    expect(webAdminSource).toContain("activeAdWorkStep === \"plan\"");
+    expect(webAdminSource).toContain("OperationsDashboard");
+    expect(webAdminSource).toContain("admin-nav-list");
+    expect(webAdminSource).toContain('useState<AdminView>("dashboard")');
+    expect(webAdminSource).toContain("step-number");
+  });
+
   it("does not use privileged Supabase keys in frontend code", () => {
     const forbiddenKeyName = ["service", "role"].join("_");
     const forbiddenEnvName = ["SUPABASE", "SERVICE", "ROLE"].join("_");

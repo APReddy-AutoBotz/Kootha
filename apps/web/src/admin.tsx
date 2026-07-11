@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
+import { ClipboardCheck, Globe2, Inbox, LayoutDashboard, LogOut, Megaphone, RefreshCw, Truck, UserRoundCheck, Users } from "lucide-react";
 import {
   adWorkAssignmentStatusOptions,
   adWorkExecutionDayStatusOptions,
@@ -242,6 +243,7 @@ type AreaRecord = {
 };
 
 type AdminView = "enquiries" | "adWorks" | "driverApplications" | "drivers" | "vehicles" | "dashboard";
+type AdWorkWorkflowStep = "plan" | "assign" | "release" | "proof" | "close";
 
 type AdminFilters = {
   status: string;
@@ -600,6 +602,14 @@ type VehicleCandidateFilters = {
 const adminSessionKey = "kootha-admin-session";
 const publicKeyHeader = ["api", "key"].join("");
 const adminRoles = new Set(["admin"]);
+const adWorkWorkflowSteps: { id: AdWorkWorkflowStep; label: string; helper: string }[] = [
+  { id: "plan", label: "Plan", helper: "Customer, date, time, areas" },
+  { id: "assign", label: "Assign", helper: "Driver and vehicle" },
+  { id: "release", label: "Release", helper: "Work Code and Location Proof" },
+  { id: "proof", label: "Proof", helper: "Photos and updates" },
+  { id: "close", label: "Close", helper: "Final summary" }
+];
+
 const emptyFilters: AdminFilters = {
   status: "all",
   city: "all",
@@ -2583,42 +2593,120 @@ function buildPhoneLocationProofPreview(
     teamReviewNote
   }).join("\n");
 }
-function DashboardCards({ adWorks }: { adWorks: AdWorkRecord[] }) {
-  const cards = [
+function OperationsDashboard({
+  enquiries,
+  adWorks,
+  onOpen
+}: {
+  enquiries: EnquiryRecord[];
+  adWorks: AdWorkRecord[];
+  onOpen: (view: AdminView, step?: AdWorkWorkflowStep) => void;
+}) {
+  const queueItems: {
+    label: string;
+    helper: string;
+    value: number;
+    icon: typeof Inbox;
+    view: AdminView;
+    step?: AdWorkWorkflowStep;
+  }[] = [
     {
-      label: "Planned ad works",
-      value: adWorks.filter((adWork) => adWork.planning_status === "planned").length
+      label: "New enquiries",
+      helper: "Call the customer and confirm the requirement",
+      value: enquiries.filter((enquiry) => enquiry.status === "new" || enquiry.status === "follow_up_needed").length,
+      icon: Inbox,
+      view: "enquiries"
     },
     {
-      label: "Ready for driver assignment",
-      value: adWorks.filter((adWork) => adWork.planning_status === "ready_for_driver_assignment").length
+      label: "Needs assignment",
+      helper: "Choose an approved driver and vehicle",
+      value: adWorks.filter((adWork) => adWork.planning_status === "ready_for_driver_assignment" && (adWork.assignment_status === "not_assigned" || adWork.assignment_status === "cancelled")).length,
+      icon: Users,
+      view: "adWorks",
+      step: "assign"
     },
     {
-      label: "Premium live tracking requests",
-      value: adWorks.filter((adWork) => adWork.package_interest === "premium" && adWork.live_tracking_requested === "yes").length
+      label: "Ready to release",
+      helper: "Confirm readiness and give the driver access",
+      value: adWorks.filter((adWork) => adWork.assignment_status === "ready_for_execution" && adWork.execution_release_status !== "released_to_driver").length,
+      icon: ClipboardCheck,
+      view: "adWorks",
+      step: "release"
     },
     {
-      label: "Multi-day ad works",
-      value: adWorks.filter((adWork) => adWork.number_of_days > 1).length
+      label: "Proof to review",
+      helper: "Review completed work, photos, and updates",
+      value: adWorks.filter((adWork) => adWork.execution_overall_status === "completed" && !adWork.final_summary_reviewed).length,
+      icon: Megaphone,
+      view: "adWorks",
+      step: "proof"
     },
     {
-      label: "On-hold ad works",
-      value: adWorks.filter((adWork) => adWork.planning_status === "on_hold").length
+      label: "Ready to close",
+      helper: "Check the final summary and close the work",
+      value: adWorks.filter((adWork) => adWork.final_summary_reviewed && adWork.closure_status !== "closed").length,
+      icon: ClipboardCheck,
+      view: "adWorks",
+      step: "close"
     }
   ];
 
+  const activeWork = adWorks
+    .filter((adWork) => adWork.execution_overall_status === "running" || adWork.execution_overall_status === "on_break")
+    .slice(0, 5);
+
   return (
-    <div className="admin-summary-grid" aria-label="Admin ad work summary">
-      {cards.map((card) => (
-        <div className="admin-summary-card" key={card.label}>
-          <span>{card.label}</span>
-          <strong>{card.value}</strong>
+    <div className="operations-dashboard">
+      <section className="operations-queue" aria-labelledby="attention-title">
+        <div className="operations-section-heading">
+          <div>
+            <p className="eyebrow">Next actions</p>
+            <h2 id="attention-title">Work needing attention</h2>
+          </div>
+          <p>Open a queue and complete the next required step.</p>
         </div>
-      ))}
+        <div className="operations-queue-list">
+          {queueItems.map((item) => {
+            const Icon = item.icon;
+            return (
+              <button key={item.label} type="button" onClick={() => onOpen(item.view, item.step)}>
+                <span className="queue-icon"><Icon size={22} aria-hidden="true" /></span>
+                <span className="queue-copy"><strong>{item.label}</strong><small>{item.helper}</small></span>
+                <span className="queue-count">{item.value}</span>
+                <span className="queue-open">Open</span>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="active-work-panel" aria-labelledby="active-work-title">
+        <div className="operations-section-heading compact">
+          <div>
+            <p className="eyebrow">In progress</p>
+            <h2 id="active-work-title">Active work today</h2>
+          </div>
+        </div>
+        {activeWork.length === 0 ? (
+          <div className="operations-empty"><CheckCircle2Icon /><p>No advertisement work is currently running.</p></div>
+        ) : (
+          <div className="active-work-list">
+            {activeWork.map((adWork) => (
+              <button key={adWork.id} type="button" onClick={() => onOpen("adWorks", "release")}>
+                <span><strong>{adWork.business_name || adWork.title}</strong><small>{adWork.city || "Town not set"}</small></span>
+                <span className="status-pill">{adWork.execution_overall_status.replace(/_/g, " ")}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
 
+function CheckCircle2Icon() {
+  return <span className="empty-check" aria-hidden="true">✓</span>;
+}
 function EnquirySummaryCards({ enquiries }: { enquiries: EnquiryRecord[] }) {
   const todayKey = new Date().toISOString().slice(0, 10);
   const cards = [
@@ -2862,7 +2950,7 @@ function DriverApplicationsView({ config, session }: { config: SupabaseConfig; s
               <span>{application.phone}</span>
               <span>{application.city}</span>
               <span>{vehicleTypeLabels[application.vehicle_type]}</span>
-              <span>{application.mic_system_available ? "Mic system" : "No mic system"}</span>
+              <span>{application.mic_system_available ? "Speaker equipment" : "No speaker equipment"}</span>
               <span>{yesNoNotSureLabels[application.gps_device_available]}</span>
               <span className="status-pill">{getDriverApplicationStatusLabel(application.status)}</span>
               <span>{formatDate(application.follow_up_date)}</span>
@@ -2905,7 +2993,7 @@ function DriverApplicationsView({ config, session }: { config: SupabaseConfig; s
                 <dd>{selectedApplication.vehicle_number || "Not provided"}</dd>
               </div>
               <div>
-                <dt>Mic System</dt>
+                <dt>Speaker equipment</dt>
                 <dd>{selectedApplication.mic_system_available ? "Yes" : "No"}</dd>
               </div>
               <div>
@@ -3351,7 +3439,7 @@ function VehiclesView({ config, session }: { config: SupabaseConfig; session: Au
               </span>
               <span>{vehicle.city || "City not set"}</span>
               <span>{vehicleTypeLabels[vehicle.vehicle_type]}</span>
-              <span>{vehicle.mic_system_available || vehicle.mic_available ? "Mic system" : "No mic system"}</span>
+              <span>{vehicle.mic_system_available || vehicle.mic_available ? "Speaker equipment" : "No speaker equipment"}</span>
               <span>{getVehicleGpsDeviceStatusLabel(vehicle.gps_device_status)}</span>
               <span className="status-pill">{getVehicleStatusLabel(vehicle.onboarding_status)}</span>
               <span>{formatDate(vehicle.created_at)}</span>
@@ -3468,7 +3556,7 @@ function VehiclesView({ config, session }: { config: SupabaseConfig; session: Au
                     micSystemAvailable: event.target.checked
                   })}
                 />
-                <span>Mic System available</span>
+                <span>Speaker equipment available</span>
               </label>
             </div>
 
@@ -3774,7 +3862,7 @@ function AdWorkAssignmentPanel({
 
       <div className="form-grid">
         <label>
-          Mic System
+          Speaker equipment
           <select
             value={vehicleFilters.micSystem}
             onChange={(event) => setVehicleFilters((current) => ({ ...current, micSystem: event.target.value }))}
@@ -5536,56 +5624,71 @@ function AdminShell({
   activeView?: AdminView;
   onViewChange?: (view: AdminView) => void;
 }) {
-  const navItems: { id: AdminView; label: string }[] = [
-    { id: "enquiries", label: businessLabels.admin.enquiries },
-    { id: "adWorks", label: businessLabels.admin.adWorks },
-    { id: "driverApplications", label: businessLabels.admin.driverApplications },
-    { id: "drivers", label: businessLabels.admin.drivers },
-    { id: "vehicles", label: businessLabels.admin.vehicles },
-    { id: "dashboard", label: businessLabels.admin.dashboard }
+  const navItems: { id: AdminView; label: string; icon: typeof LayoutDashboard }[] = [
+    { id: "dashboard", label: "Today", icon: LayoutDashboard },
+    { id: "enquiries", label: businessLabels.admin.enquiries, icon: Inbox },
+    { id: "adWorks", label: businessLabels.admin.adWorks, icon: Megaphone },
+    { id: "driverApplications", label: "Requests", icon: UserRoundCheck },
+    { id: "drivers", label: businessLabels.admin.drivers, icon: Users },
+    { id: "vehicles", label: businessLabels.admin.vehicles, icon: Truck }
   ];
 
   return (
-    <main className="page-shell admin-shell">
-      <header className="topbar">
-        <a className="brand" href="/" aria-label={productName + " home"}>
-          {productName}
+    <main className="admin-app-shell">
+      <aside className="admin-sidebar" aria-label="Admin navigation">
+        <a className="admin-brand" href="/" aria-label={productName + " home"}>
+          <img src="/assets/kootha-logo.svg" alt={productName} />
+          <span>Operations</span>
         </a>
-        <div className="admin-top-actions">
-          <a className="nav-link" href="/">
-            Public website
+
+        {profile && activeView && onViewChange && (
+          <nav className="admin-nav-list">
+            {navItems.map((item) => {
+              const Icon = item.icon;
+              return (
+                <button
+                  className={item.id === activeView ? "is-active" : ""}
+                  key={item.id}
+                  type="button"
+                  aria-current={item.id === activeView ? "page" : undefined}
+                  onClick={() => onViewChange(item.id)}
+                >
+                  <Icon size={20} aria-hidden="true" />
+                  <span>{item.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+        )}
+
+        <div className="admin-sidebar-footer">
+          <a href="/">
+            <Globe2 size={19} aria-hidden="true" />
+            <span>Public website</span>
           </a>
-          {profile && (
-            <span className="admin-user">
-              {profile.display_name || "Admin"}
-            </span>
-          )}
+          {profile && <span className="admin-profile-name">{profile.display_name || "Admin"}</span>}
           {onLogout && (
-            <button className="secondary-button" type="button" onClick={onLogout}>
-              Logout
+            <button type="button" onClick={onLogout}>
+              <LogOut size={19} aria-hidden="true" />
+              <span>Log out</span>
             </button>
           )}
         </div>
-      </header>
-      {profile && activeView && onViewChange && (
-        <nav className="admin-nav-tabs" aria-label="Admin navigation">
-          {navItems.map((item) => (
-            <button
-              className={item.id === activeView ? "is-active" : ""}
-              key={item.id}
-              type="button"
-              onClick={() => onViewChange(item.id)}
-            >
-              {item.label}
-            </button>
-          ))}
-        </nav>
-      )}
-      {children}
+      </aside>
+
+      <div className="admin-app-main">
+        <header className="admin-mobile-header">
+          <a href="/admin" aria-label="Kootha admin home">
+            <img src="/assets/kootha-mark.svg" alt="" />
+            <strong>Kootha Operations</strong>
+          </a>
+          {onLogout && <button type="button" onClick={onLogout} aria-label="Log out"><LogOut size={20} /></button>}
+        </header>
+        {children}
+      </div>
     </main>
   );
 }
-
 function AdminLogin({
   productName,
   config,
@@ -5659,7 +5762,7 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
   const config = useMemo(() => getAdminSupabaseConfig(), []);
   const [session, setSession] = useState<AuthSession | null>(() => readStoredSession());
   const [profile, setProfile] = useState<AdminProfile | null>(null);
-  const [activeView, setActiveView] = useState<AdminView>("enquiries");
+  const [activeView, setActiveView] = useState<AdminView>("dashboard");
   const [enquiries, setEnquiries] = useState<EnquiryRecord[]>([]);
   const [adWorks, setAdWorks] = useState<AdWorkRecord[]>([]);
   const [adWorkDays, setAdWorkDays] = useState<AdWorkDayRecord[]>([]);
@@ -5669,6 +5772,7 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
   const [adWorkFilters, setAdWorkFilters] = useState<AdWorkFilters>(emptyAdWorkFilters);
   const [selectedEnquiryId, setSelectedEnquiryId] = useState<string | null>(null);
   const [selectedAdWorkId, setSelectedAdWorkId] = useState<string | null>(null);
+  const [activeAdWorkStep, setActiveAdWorkStep] = useState<AdWorkWorkflowStep>("plan");
   const [draft, setDraft] = useState<AdminDraft | null>(null);
   const [adWorkDraft, setAdWorkDraft] = useState<AdWorkDraft | null>(null);
   const [dayDrafts, setDayDrafts] = useState<DayDraft[]>([]);
@@ -5710,6 +5814,7 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
 
     setAdWorkDraft(toAdWorkDraft(selectedAdWork));
     setDayDrafts(selectedAdWorkDays.map(toDayDraft));
+    setActiveAdWorkStep("plan");
   }, [selectedAdWork, selectedAdWorkDays]);
 
   async function loadData() {
@@ -5957,61 +6062,33 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
               {activeView === "vehicles" && businessLabels.admin.vehicles}
             </h1>
             <p>
-              {activeView === "dashboard" && "Review planned work and onboarding readiness before later operations."}
+              {activeView === "dashboard" && "See what needs attention and open the next action."}
               {activeView === "enquiries" && "View enquiries, follow up with customers, and create planned ad work."}
               {activeView === "adWorks" && "Plan advertisement work, schedules, areas, proof needed, and customer updates."}
               {activeView === "driverApplications" && "Review driver registrations, approve records, and handle duplicate submissions."}
               {activeView === "drivers" && "Manage approved drivers and onboarding status."}
-              {activeView === "vehicles" && "Manage vehicle approval, Mic System details, and Vehicle GPS Device readiness."}
+              {activeView === "vehicles" && "Manage vehicle approval, Speaker equipment details, and Vehicle GPS Device readiness."}
             </p>
           </div>
-          <button className="secondary-button" type="button" onClick={handleRefresh} disabled={isLoading}>
-            {isLoading ? "Loading..." : "Refresh"}
+          <button className="secondary-button refresh-button" type="button" onClick={handleRefresh} disabled={isLoading}>
+            <RefreshCw size={18} aria-hidden="true" />
+            <span>{isLoading ? "Loading..." : "Refresh"}</span>
           </button>
         </div>
 
-        {activeView === "dashboard" && <DashboardCards adWorks={adWorks} />}
-        {activeView === "dashboard" && <M4SummaryCards config={config} session={session} />}
-        {activeView === "dashboard" && <M5SummaryCards config={config} session={session} adWorks={adWorks} />}
-        {activeView === "dashboard" && <M6SummaryCards adWorks={adWorks} adWorkDays={adWorkDays} />}
-        {activeView === "dashboard" && <M7SummaryCards config={config} session={session} />}
-        {activeView === "dashboard" && <M8SummaryCards config={config} session={session} adWorks={adWorks} />}
-        {activeView === "dashboard" && <M9SummaryCards config={config} session={session} adWorks={adWorks} />}
-        {activeView === "dashboard" && <M11SummaryCards config={config} session={session} adWorks={adWorks} />}
-        {activeView === "enquiries" && <EnquirySummaryCards enquiries={enquiries} />}
+        {activeView === "dashboard" && (
+          <OperationsDashboard
+            enquiries={enquiries}
+            adWorks={adWorks}
+            onOpen={(view, step) => {
+              setActiveView(view);
+              if (step) setActiveAdWorkStep(step);
+            }}
+          />
+        )}        {activeView === "enquiries" && <EnquirySummaryCards enquiries={enquiries} />}
 
         {loadError && <p className="form-alert admin-message" role="alert">{loadError}</p>}
         {saveMessage && <p className="form-status admin-message" role="status">{saveMessage}</p>}
-
-        {activeView === "dashboard" && (
-          <section className="admin-dashboard-panel" aria-labelledby="dashboard-work-title">
-            <h2 id="dashboard-work-title">Planning snapshot</h2>
-            <div className="admin-dashboard-list">
-              {adWorks.slice(0, 6).map((adWork) => (
-                <button
-                  className="dashboard-work-row"
-                  type="button"
-                  key={adWork.id}
-                  onClick={() => {
-                    setSelectedAdWorkId(adWork.id);
-                    setActiveView("adWorks");
-                  }}
-                >
-                  <span>
-                    <strong>{getAdWorkReference(adWork.id)}</strong>
-                    <small>{adWork.business_name || adWork.customer_name}</small>
-                  </span>
-                  <span>{adWork.city || "City not set"}</span>
-                  <span>{formatDate(adWork.start_date)}</span>
-                  <span className="status-pill">{getAdWorkStatusLabel(adWork.planning_status)}</span>
-                </button>
-              ))}
-              {!isLoading && adWorks.length === 0 && (
-                <p className="quiet-note">No ad works are planned yet.</p>
-              )}
-            </div>
-          </section>
-        )}
 
         {activeView === "driverApplications" && <DriverApplicationsView config={config} session={session} />}
         {activeView === "drivers" && <DriversView config={config} session={session} />}
@@ -6344,19 +6421,16 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
                     key={adWork.id}
                     onClick={() => setSelectedAdWorkId(adWork.id)}
                   >
-                    <span>
-                      <strong>{getAdWorkReference(adWork.id)}</strong>
-                      <small>{adWork.business_name || adWork.customer_name}</small>
+                    <span className="ad-work-row-main">
+                      <strong>{adWork.business_name || adWork.title || "Advertisement work"}</strong>
+                      <small>{getAdWorkReference(adWork.id)} · {adWork.customer_name}</small>
                     </span>
-                    <span>{adWork.customer_name}</span>
-                    <span>{adWork.city || "Not set"}</span>
-                    <span>{packageInterestLabels[adWork.package_interest]}</span>
-                    <span>{formatDate(adWork.start_date)}</span>
-                    <span>{formatDate(adWork.end_date)}</span>
-                    <span>{adWork.number_of_days} day{adWork.number_of_days === 1 ? "" : "s"}</span>
-                    <span>{liveTrackingNeedLabels[adWork.live_tracking_requested]}</span>
+                    <span className="ad-work-row-meta">
+                      <small>{adWork.city || "Town not set"}</small>
+                      <small>{formatDate(adWork.start_date)} · {adWork.number_of_days} day{adWork.number_of_days === 1 ? "" : "s"}</small>
+                    </span>
                     <span className="status-pill">{getAdWorkStatusLabel(adWork.planning_status)}</span>
-                    <span>{formatDate(adWork.created_at)}</span>
+                    <span className="row-open">Open</span>
                   </button>
                 ))}
                 {!isLoading && filteredAdWorks.length === 0 && (
@@ -6381,6 +6455,22 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
                     <span className="status-pill">{getAdWorkStatusLabel(adWorkDraft.planningStatus)}</span>
                   </div>
 
+                  <div className="ad-work-stepper" aria-label="Ad Work steps">
+                    {adWorkWorkflowSteps.map((step, index) => (
+                      <button
+                        className={activeAdWorkStep === step.id ? "is-active" : ""}
+                        key={step.id}
+                        type="button"
+                        onClick={() => setActiveAdWorkStep(step.id)}
+                      >
+                        <span className="step-number">{index + 1}</span>
+                        <span className="step-copy"><strong>{step.label}</strong><small>{step.helper}</small></span>
+                      </button>
+                    ))}
+                  </div>
+
+                  {activeAdWorkStep === "plan" && (
+                    <div className="ad-work-step-panel">
                   <section className="form-section" aria-labelledby="customer-details-title">
                     <h3 id="customer-details-title">Customer details</h3>
                     <div className="form-grid">
@@ -6483,22 +6573,25 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
                         </select>
                       </label>
                     </div>
-                    <label>
-                      Special instructions
-                      <textarea
-                        value={adWorkDraft.specialInstructions}
-                        maxLength={1000}
-                        onChange={(event) => updateAdWorkDraft("specialInstructions", event.target.value)}
-                      />
-                    </label>
-                    <label>
-                      Internal planning note
-                      <textarea
-                        value={adWorkDraft.internalPlanningNote}
-                        maxLength={1200}
-                        onChange={(event) => updateAdWorkDraft("internalPlanningNote", event.target.value)}
-                      />
-                    </label>
+                    <details className="more-details-block">
+                      <summary>More planning details</summary>
+                      <label>
+                        Special instructions
+                        <textarea
+                          value={adWorkDraft.specialInstructions}
+                          maxLength={1000}
+                          onChange={(event) => updateAdWorkDraft("specialInstructions", event.target.value)}
+                        />
+                      </label>
+                      <label>
+                        Internal planning note
+                        <textarea
+                          value={adWorkDraft.internalPlanningNote}
+                          maxLength={1200}
+                          onChange={(event) => updateAdWorkDraft("internalPlanningNote", event.target.value)}
+                        />
+                      </label>
+                    </details>
                   </section>
 
                   <section className="form-section" aria-labelledby="schedule-title">
@@ -6588,7 +6681,9 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
                     </label>
                   </section>
 
-                  <section className="form-section" aria-labelledby="day-wise-title">
+                  <details className="more-details-block">
+                    <summary>Day-wise schedule</summary>
+                    <section className="form-section" aria-labelledby="day-wise-title">
                     <h3 id="day-wise-title">Day-wise schedule</h3>
                     <div className="day-schedule-list">
                       {dayDrafts.map((day, index) => (
@@ -6639,15 +6734,22 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
                         <p className="quiet-note">Save a start date and number of days to create day-wise rows.</p>
                       )}
                     </div>
-                  </section>
+                    </section>
+                  </details>
+                    </div>
+                  )}
 
+                  {activeAdWorkStep === "assign" && (
                   <AdWorkAssignmentPanel
                     config={config}
                     session={session}
                     adWork={selectedAdWork}
                     dayDrafts={dayDrafts}
                   />
+                  )}
 
+                  {activeAdWorkStep === "release" && (
+                    <div className="ad-work-step-panel">
                   <AdminExecutionPanel
                     config={config}
                     session={session}
@@ -6663,14 +6765,19 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
                     dayDrafts={dayDrafts}
                     onUpdated={loadData}
                   />
+                    </div>
+                  )}
 
+                  {activeAdWorkStep === "proof" && (
                   <AdminProofReviewPanel
                     config={config}
                     session={session}
                     adWork={selectedAdWork}
                     dayDrafts={dayDrafts}
                   />
+                  )}
 
+                  {activeAdWorkStep === "close" && (
                   <AdminFinalProofSummaryPanel
                     config={config}
                     session={session}
@@ -6678,7 +6785,12 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
                     dayDrafts={dayDrafts}
                     onUpdated={loadData}
                   />
+                  )}
 
+                  {activeAdWorkStep === "plan" && (
+                    <div className="ad-work-step-panel">
+                  <details className="more-details-block proof-update-details">
+                    <summary>Proof and customer update choices</summary>
                   <section className="form-section" aria-labelledby="proof-plan-title">
                     <h3 id="proof-plan-title">Proof Needed</h3>
                     <div className="checkbox-grid">
@@ -6770,6 +6882,9 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
                       </label>
                     </div>
                   </section>
+                  </details>
+                    </div>
+                  )}
 
                   <div className="admin-action-row sticky-action-row">
                     <button className="primary-button" type="submit" disabled={isSaving}>

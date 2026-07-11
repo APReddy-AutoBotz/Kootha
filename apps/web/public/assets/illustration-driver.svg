@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 160" role="img" aria-labelledby="title desc">
+  <title id="title">Driver work</title>
+  <desc id="desc">A driver vehicle starts advertisement work.</desc>
+  <rect width="240" height="160" rx="18" fill="#fff8ec"/>
+  <rect x="34" y="72" width="136" height="44" rx="12" fill="#d94f18"/>
+  <rect x="70" y="46" width="72" height="36" rx="10" fill="#fffdf8" stroke="#24201c" stroke-width="4"/>
+  <circle cx="66" cy="120" r="14" fill="#24201c"/>
+  <circle cx="144" cy="120" r="14" fill="#24201c"/>
+  <path d="M176 54c14 6 24 17 29 33M181 35c24 10 40 28 49 54" fill="none" stroke="#d94f18" stroke-width="7" stroke-linecap="round"/>
+</svg>

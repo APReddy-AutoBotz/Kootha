@@ -1,6 +1,6 @@
 import type { AdWorkAssignmentStatus, AdWorkExecutionDayStatus, CampaignClosureStatus, ExecutionReleaseStatus, TrackingStopReason } from "./statuses";
 
-export const mobileLocationProofConsentText = "Prachar will use your phone location only during this assigned advertisement work. Location proof starts when you start work and stops when you end work.";
+export const mobileLocationProofConsentText = "Kootha will use your phone location only during this assigned advertisement work. Location proof starts when you start work and stops when you end work.";
 
 export interface MobileLocationProofStartInput {
   mobileLocationProofRequired: boolean;

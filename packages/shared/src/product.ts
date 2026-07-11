@@ -1,5 +1,5 @@
-export const DEFAULT_PRODUCT_NAME = "Prachar";
-export const SUPPORTED_PRODUCT_NAMES = ["Prachar", "Kootha"] as const;
+export const DEFAULT_PRODUCT_NAME = "Kootha";
+export const SUPPORTED_PRODUCT_NAMES = ["Kootha", "Prachar"] as const;
 
 export type SupportedProductName = (typeof SUPPORTED_PRODUCT_NAMES)[number];
 
@@ -15,9 +15,9 @@ export function resolveProductName(config: ProductConfig = {}): SupportedProduct
   }
 
   const normalizedName = requestedName.toLowerCase();
-  if (normalizedName === "kootha") {
-    return "Kootha";
+  if (normalizedName === "prachar") {
+    return "Prachar";
   }
 
-  return "Prachar";
+  return "Kootha";
 }

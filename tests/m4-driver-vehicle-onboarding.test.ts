@@ -119,6 +119,14 @@ describe("M4 driver and vehicle onboarding", () => {
     expect(m4Migration).toContain("vehicles_vehicle_number_unique");
   });
 
+  it("brands the driver app as Kootha Driver", () => {
+    expect(driverConfig).toContain("Kootha Driver");
+    expect(driverConfig).toContain("kootha-driver");
+    expect(driverConfig).toContain("com.kootha.driver");
+    expect(driverAppSource).toContain("KoothaBrand");
+    expect(existsSync(path.resolve("apps/driver/assets/kootha-icon.png"))).toBe(true);
+  });
+
   it("does not use privileged Supabase keys in frontend or driver app", () => {
     const forbiddenKeyName = ["service", "role"].join("_");
     const forbiddenEnvName = ["SUPABASE", "SERVICE", "ROLE"].join("_");

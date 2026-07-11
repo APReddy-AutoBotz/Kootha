@@ -36,11 +36,11 @@ export const liveTrackingNeedLabels: Record<LiveTrackingNeed, string> = {
 };
 
 export const publicWebsiteText = {
-  heroHeadline: "Local mic advertisement with proof",
-  heroCopy: "You pay for local mic advertisement. We give you proof that it was really done.",
+  heroHeadline: "Advertisement work with clear proof",
+  heroCopy: "Plan shop promotions, offers, events, and field advertising. Kootha helps you see simple proof that the work was done.",
   enquiryButton: "Send Enquiry",
   onlineNotConfigured: "Online enquiry is not configured in this environment.",
-  successMessage: "Enquiry received. The Prachar team will contact you soon."
+  successMessage: "Enquiry received. The Kootha team will contact you soon."
 } as const;
 
 const maxLengths = {

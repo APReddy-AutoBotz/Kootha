@@ -1,9 +1,11 @@
+import { execFileSync } from "node:child_process";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
 const root = process.cwd();
 const ignoredDirs = new Set([
   ".git",
+  ".playwright-cli",
   ".expo",
   ".turbo",
   ".vite",
@@ -13,6 +15,7 @@ const ignoredDirs = new Set([
   "dist",
   "ios",
   "node_modules",
+  "output",
   "web-build"
 ]);
 const scannedExtensions = new Set([".ts", ".tsx", ".js", ".mjs", ".css", ".json", ".md", ".sql"]);
@@ -43,13 +46,22 @@ async function walk(dir) {
 
 const files = await walk(root);
 const failures = [];
+const trackedFiles = new Set(
+  execFileSync("git", ["ls-files", "-z"], { cwd: root, encoding: "utf8" })
+    .split("\0")
+    .filter(Boolean)
+);
 
 for (const file of files) {
   const normalized = file.split(path.sep).join("/");
   if (ignoredFiles.has(normalized)) {
     continue;
   }
-  if (blockedFiles.some((pattern) => pattern.test(normalized)) && normalized !== ".env.example") {
+  if (
+    trackedFiles.has(normalized)
+    && blockedFiles.some((pattern) => pattern.test(normalized))
+    && normalized !== ".env.example"
+  ) {
     failures.push(`Environment file must not be committed: ${normalized}`);
   }
 

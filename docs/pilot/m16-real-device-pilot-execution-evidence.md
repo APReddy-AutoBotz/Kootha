@@ -4,7 +4,7 @@ M16 records real-device pilot execution evidence or the blocker that prevented e
 
 ## Objective
 
-Record whether Kootha / Prachar could complete the real-device pilot execution checks from M15 using a physical Android phone and a target Supabase project. Do not fake evidence and do not include private data.
+Record whether Kootha could complete the real-device pilot execution checks from M15 using a physical Android phone and a target Supabase project. Do not fake evidence and do not include private data.
 
 ## Date And Time Of Evidence Run
 

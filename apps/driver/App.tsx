@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import type { ComponentProps } from "react";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as ImagePicker from "expo-image-picker";
 import * as Location from "expo-location";
@@ -44,6 +46,7 @@ import type {
 } from "@kootha/shared";
 import {
   Image,
+  Linking,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -61,6 +64,10 @@ const driverLabels = businessLabels.driver;
 const publicKeyHeader = ["api", "key"].join("");
 const locationBufferStorageKey = "kootha-driver-location-buffer-v1";
 const maxLocationSyncRetries = 5;
+
+type DriverScreen = "work" | "register";
+type WorkPanel = "work" | "proof" | "help";
+type DriverIconName = ComponentProps<typeof MaterialCommunityIcons>["name"];
 
 type ProofUploadSlot = {
   proof_upload_id: string;
@@ -535,6 +542,17 @@ async function completeProofUpload(input: { mobileNumber: string; workCode: stri
   }
 }
 
+function KoothaBrand({ name }: { name: string }) {
+  return (
+    <View style={styles.brandRow}>
+      <Image source={require("./assets/kootha-icon.png")} style={styles.brandLogo} />
+      <View>
+        <Text style={styles.brand}>{name}</Text>
+        <Text style={styles.brandTagline}>Driver work</Text>
+      </View>
+    </View>
+  );
+}
 function OptionButton<T extends string>({
   label,
   value,
@@ -563,10 +581,12 @@ function OptionButton<T extends string>({
 
 function PrimaryButton({
   label,
+  icon,
   disabled,
   onPress
 }: {
   label: string;
+  icon?: DriverIconName;
   disabled?: boolean;
   onPress?: () => void;
 }) {
@@ -581,12 +601,25 @@ function PrimaryButton({
       ]}
       onPress={onPress}
     >
-      <Text style={styles.buttonText}>{label}</Text>
+      <View style={styles.buttonContent}>
+        {icon ? <MaterialCommunityIcons name={icon} size={24} color="#fffaf1" /> : null}
+        <Text style={styles.buttonText}>{label}</Text>
+      </View>
     </Pressable>
   );
 }
 
-function SecondaryButton({ label, disabled, onPress }: { label: string; disabled?: boolean; onPress?: () => void }) {
+function SecondaryButton({
+  label,
+  icon,
+  disabled,
+  onPress
+}: {
+  label: string;
+  icon?: DriverIconName;
+  disabled?: boolean;
+  onPress?: () => void;
+}) {
   return (
     <Pressable
       accessibilityRole="button"
@@ -598,11 +631,13 @@ function SecondaryButton({ label, disabled, onPress }: { label: string; disabled
       ]}
       onPress={onPress}
     >
-      <Text style={styles.secondaryButtonText}>{label}</Text>
+      <View style={styles.buttonContent}>
+        {icon ? <MaterialCommunityIcons name={icon} size={21} color="#b83f12" /> : null}
+        <Text style={styles.secondaryButtonText}>{label}</Text>
+      </View>
     </Pressable>
   );
 }
-
 function formatDate(value: string | null | undefined) {
   return value || "Not set";
 }
@@ -718,6 +753,8 @@ async function pruneBufferedLocationPointsForWork(work: DriverWorkRow, trackingS
 }
 
 export function App() {
+  const [screen, setScreen] = useState<DriverScreen>("work");
+  const [workPanel, setWorkPanel] = useState<WorkPanel>("work");
   const [form, setForm] = useState<DriverApplicationInput>(initialDriverApplication);
   const [errors, setErrors] = useState<string[]>([]);
   const [statusMessage, setStatusMessage] = useState("");
@@ -1189,348 +1226,374 @@ export function App() {
     }
   }
 
+  async function handleCallAdmin() {
+    const adminPhone = process.env.EXPO_PUBLIC_ADMIN_PHONE?.trim() ?? "";
+    if (!adminPhone || adminPhone.includes("replace-with")) {
+      const message = "Admin phone number is not configured. Ask the Kootha team for help.";
+      if (screen === "work") setWorkMessage(message);
+      else setStatusMessage(message);
+      return;
+    }
+
+    try {
+      await Linking.openURL(`tel:${adminPhone}`);
+    } catch {
+      const message = "Could not open the phone app. Please call the Kootha admin directly.";
+      if (screen === "work") setWorkMessage(message);
+      else setStatusMessage(message);
+    }
+  }
+
+  function handleChangeWorkCode() {
+    setWorkRows([]);
+    setWorkPanel("work");
+    setWorkMessage("");
+  }
   return (
     <SafeAreaView style={styles.screen}>
       <ScrollView contentContainerStyle={styles.shell} keyboardShouldPersistTaps="handled">
-        <Text style={styles.brand}>{productName}</Text>
-        <Text style={styles.title}>{driverLabels.assignedWork}</Text>
-        <Text style={styles.body}>Enter your mobile number and Work Code to open today&apos;s Ad Work.</Text>
+        <KoothaBrand name={productName} />
 
-        {!configured && (
-          <Text style={styles.notice}>Driver work access is not configured in this environment.</Text>
-        )}
-
-        <View style={styles.form}>
-          <Text style={styles.label}>Mobile number</Text>
-          <TextInput
-            style={styles.input}
-            value={mobileNumber}
-            maxLength={20}
-            keyboardType="phone-pad"
-            onChangeText={setMobileNumber}
-            placeholder="Enter mobile number"
-          />
-
-          <Text style={styles.label}>{driverLabels.workCode}</Text>
-          <TextInput
-            style={styles.input}
-            value={workCode}
-            maxLength={20}
-            autoCapitalize="characters"
-            onChangeText={setWorkCode}
-            placeholder="Enter Work Code"
-          />
-
-          <PrimaryButton label={isWorkLoading ? "Loading..." : "Open Assigned Work"} disabled={isWorkLoading} onPress={handleOpenWork} />
-          {workMessage ? <Text style={styles.notice}>{workMessage}</Text> : null}
+        <View style={styles.modeSwitch} accessibilityRole="tablist">
+          <Pressable
+            accessibilityRole="tab"
+            accessibilityState={{ selected: screen === "work" }}
+            style={[styles.modeButton, screen === "work" && styles.modeButtonActive]}
+            onPress={() => setScreen("work")}
+          >
+            <MaterialCommunityIcons name="briefcase-outline" size={22} color={screen === "work" ? "#fffaf1" : "#65594f"} />
+            <Text style={[styles.modeButtonText, screen === "work" && styles.modeButtonTextActive]}>Open Work</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="tab"
+            accessibilityState={{ selected: screen === "register" }}
+            style={[styles.modeButton, screen === "register" && styles.modeButtonActive]}
+            onPress={() => setScreen("register")}
+          >
+            <MaterialCommunityIcons name="account-plus-outline" size={22} color={screen === "register" ? "#fffaf1" : "#65594f"} />
+            <Text style={[styles.modeButtonText, screen === "register" && styles.modeButtonTextActive]}>Register</Text>
+          </Pressable>
         </View>
 
-        {currentWork && (
-          <View style={styles.workCard}>
-            <Text style={styles.sectionTitle}>{currentWork.business_name || "Ad Work"}</Text>
-            <Text style={styles.body}>{currentWork.city || "City not set"}</Text>
-            <Text style={styles.label}>Areas to cover</Text>
-            <Text style={styles.body}>{currentWork.areas_to_cover || "Not set"}</Text>
-            <Text style={styles.label}>Advertisement message</Text>
-            <Text style={styles.body}>{currentWork.advertisement_details || "Not set"}</Text>
-            <Text style={styles.label}>Planned date</Text>
-            <Text style={styles.body}>{formatDate(currentWork.planned_date)} {currentWork.planned_start_time || ""} {currentWork.planned_end_time || ""}</Text>
-            <Text style={styles.label}>Vehicle number</Text>
-            <Text style={styles.body}>{currentWork.vehicle_number || "Not set"}</Text>
-            <Text style={styles.label}>Instructions</Text>
-            <Text style={styles.body}>{currentWork.special_instructions || "Follow admin instructions."}</Text>
-            <Text style={styles.statusText}>{adWorkExecutionDayStatusLabels[currentStatus]}</Text>
-
-            <View style={styles.actionGrid}>
-              <SecondaryButton label={driverLabels.startWork} disabled={!canStartWork(currentStatus) || isWorkLoading} onPress={() => void handleWorkAction("start")} />
-              <SecondaryButton label={driverLabels.takeBreak} disabled={!canTakeBreak(currentStatus) || isWorkLoading} onPress={() => void handleWorkAction("take_break")} />
-              <SecondaryButton label={driverLabels.resumeWork} disabled={!canResumeWork(currentStatus) || isWorkLoading} onPress={() => void handleWorkAction("resume")} />
-            </View>
-            {mobileLocationProofRequired && (
-              <View style={styles.locationProofBox}>
-                <Text style={styles.sectionTitle}>{driverLabels.allowLocationProof}</Text>
-                <Text style={styles.body}>{mobileLocationProofConsentText}</Text>
-                {currentWork.mobile_location_proof_note ? <Text style={styles.notice}>{currentWork.mobile_location_proof_note}</Text> : null}
-                <Pressable
-                  accessibilityRole="checkbox"
-                  accessibilityState={{ checked: locationUnderstanding }}
-                  style={styles.consentRow}
-                  onPress={() => setLocationUnderstanding((current) => !current)}
-                >
-                  <View style={[styles.checkbox, locationUnderstanding && styles.checkboxChecked]} />
-                  <Text style={styles.consentText}>I understand Phone Location Proof starts after Start Work and stops after End Work or Break.</Text>
-                </Pressable>
-                <Pressable
-                  accessibilityRole="checkbox"
-                  accessibilityState={{ checked: locationAgreement }}
-                  style={styles.consentRow}
-                  onPress={() => setLocationAgreement((current) => !current)}
-                >
-                  <View style={[styles.checkbox, locationAgreement && styles.checkboxChecked]} />
-                  <Text style={styles.consentText}>I allow Location Proof for this assigned work.</Text>
-                </Pressable>
-                <Text style={styles.statusText}>{getTrackingSessionStatusLabel(locationStatus)} | {getTrackingHealthStatusLabel(locationHealthStatus)} | {locationPointCount} updates</Text>
-                <Text style={styles.body}>Last Saved Location Time: {lastSavedLocationTime || lastLocationUpdate || "Not yet"}</Text>
-                <Text style={styles.body}>{driverLabels.unsyncedPoints}: {pendingOfflineCount}</Text>
-                <Text style={styles.body}>Last Sync Time: {lastSyncTime || "Not yet"}</Text>
-                {locationStatus === "permission_missing" ? <Text style={styles.notice}>{driverLabels.locationPermissionNeeded}.</Text> : null}
-                {pendingOfflineCount > 0 ? <Text style={styles.notice}>{driverLabels.locationSavedOffline}. {driverLabels.trySyncAgain}.</Text> : null}
-                <View style={styles.actionGrid}>
-                  <SecondaryButton label={driverLabels.startLocationProof} disabled={!canStartLocationProof || isLocationBusy} onPress={() => void handleStartLocationProof()} />
-                  <SecondaryButton label="Save Location Update" disabled={!canSaveLocationUpdate || isLocationBusy} onPress={() => locationSessionId && void recordCurrentLocationPoint(locationSessionId)} />
-                  <SecondaryButton label={isLocationSyncing ? driverLabels.syncingLocationProof : "Sync Now"} disabled={!locationSessionId || isLocationSyncing} onPress={() => void handleSyncNow()} />
-                  <SecondaryButton label={driverLabels.stopLocationProof} disabled={!locationSessionId || isLocationBusy || locationStatus === "stopped"} onPress={() => void handleStopLocationProof("other")} />
+        {screen === "work" ? (
+          <>
+            {!currentWork ? (
+              <>
+                <View style={styles.introBlock}>
+                  <View style={styles.introIcon}><MaterialCommunityIcons name="briefcase-search-outline" size={32} color="#fffaf1" /></View>
+                  <View style={styles.introCopy}>
+                    <Text style={styles.title}>Open today&apos;s work</Text>
+                    <Text style={styles.body}>Enter your mobile number and Work Code given by the Kootha admin.</Text>
+                  </View>
                 </View>
-                {locationMessage ? <Text style={styles.notice}>{locationMessage}</Text> : null}
+
+                {!configured ? <Text style={styles.notice}>Driver work access is not configured in this environment.</Text> : null}
+
+                <View style={styles.accessForm}>
+                  <Text style={styles.label}>Mobile number</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={mobileNumber}
+                    maxLength={20}
+                    keyboardType="phone-pad"
+                    autoComplete="tel"
+                    onChangeText={setMobileNumber}
+                    placeholder="Enter mobile number"
+                  />
+
+                  <Text style={styles.label}>{driverLabels.workCode}</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={workCode}
+                    maxLength={20}
+                    autoCapitalize="characters"
+                    onChangeText={setWorkCode}
+                    placeholder="Enter Work Code"
+                  />
+
+                  <PrimaryButton
+                    label={isWorkLoading ? "Opening..." : "Open Assigned Work"}
+                    icon="briefcase-search-outline"
+                    disabled={isWorkLoading}
+                    onPress={handleOpenWork}
+                  />
+                  {workMessage ? <Text style={styles.notice}>{workMessage}</Text> : null}
+                </View>
+
+                <Pressable style={styles.helpLink} onPress={() => void handleCallAdmin()}>
+                  <MaterialCommunityIcons name="phone-outline" size={21} color="#b83f12" />
+                  <Text style={styles.helpLinkText}>Need help? Call Kootha admin</Text>
+                </Pressable>
+              </>
+            ) : (
+              <View style={styles.workSurface}>
+                <View style={styles.workHeader}>
+                  <View style={styles.workHeaderCopy}>
+                    <Text style={styles.kicker}>TODAY&apos;S ASSIGNED WORK</Text>
+                    <Text style={styles.title}>{currentWork.business_name || "Advertisement work"}</Text>
+                    <Text style={styles.body}>{currentWork.city || "Town not set"}</Text>
+                  </View>
+                  <Text style={styles.statusText}>{adWorkExecutionDayStatusLabels[currentStatus]}</Text>
+                </View>
+
+                <Pressable style={styles.changeCodeButton} onPress={handleChangeWorkCode}>
+                  <MaterialCommunityIcons name="arrow-left" size={19} color="#65594f" />
+                  <Text style={styles.changeCodeText}>Use a different Work Code</Text>
+                </Pressable>
+
+                <View style={styles.workSummary}>
+                  <View style={styles.summaryItem}>
+                    <MaterialCommunityIcons name="calendar-outline" size={22} color="#b83f12" />
+                    <View><Text style={styles.summaryLabel}>Date and time</Text><Text style={styles.summaryValue}>{formatDate(currentWork.planned_date)} {currentWork.planned_start_time || ""} {currentWork.planned_end_time || ""}</Text></View>
+                  </View>
+                  <View style={styles.summaryItem}>
+                    <MaterialCommunityIcons name="map-marker-outline" size={22} color="#b83f12" />
+                    <View><Text style={styles.summaryLabel}>Areas to cover</Text><Text style={styles.summaryValue}>{currentWork.areas_to_cover || "Ask admin"}</Text></View>
+                  </View>
+                  <View style={styles.summaryItem}>
+                    <MaterialCommunityIcons name="truck-outline" size={22} color="#b83f12" />
+                    <View><Text style={styles.summaryLabel}>Vehicle</Text><Text style={styles.summaryValue}>{currentWork.vehicle_number || "Ask admin"}</Text></View>
+                  </View>
+                </View>
+
+                <View style={styles.messageBlock}>
+                  <Text style={styles.label}>Advertisement message</Text>
+                  <Text style={styles.messageText}>{currentWork.advertisement_details || "No message provided."}</Text>
+                  {currentWork.special_instructions ? <Text style={styles.instructionText}>{currentWork.special_instructions}</Text> : null}
+                </View>
+
+                <View style={styles.workTabs} accessibilityRole="tablist">
+                  {([
+                    { id: "work", label: "Work", icon: "play-circle-outline" },
+                    { id: "proof", label: "Proof", icon: "camera-outline" },
+                    { id: "help", label: "Help", icon: "lifebuoy" }
+                  ] as { id: WorkPanel; label: string; icon: DriverIconName }[]).map((item) => (
+                    <Pressable
+                      key={item.id}
+                      accessibilityRole="tab"
+                      accessibilityState={{ selected: workPanel === item.id }}
+                      style={[styles.workTab, workPanel === item.id && styles.workTabActive]}
+                      onPress={() => setWorkPanel(item.id)}
+                    >
+                      <MaterialCommunityIcons name={item.icon} size={22} color={workPanel === item.id ? "#fffaf1" : "#65594f"} />
+                      <Text style={[styles.workTabText, workPanel === item.id && styles.workTabTextActive]}>{item.label}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+
+                {workPanel === "work" ? (
+                  <View style={styles.panelBody}>
+                    <Text style={styles.panelTitle}>Next work action</Text>
+                    {canStartWork(currentStatus) ? (
+                      <PrimaryButton label={driverLabels.startWork} icon="play-circle-outline" disabled={isWorkLoading} onPress={() => void handleWorkAction("start")} />
+                    ) : null}
+                    {canResumeWork(currentStatus) ? (
+                      <PrimaryButton label={driverLabels.resumeWork} icon="play-circle-outline" disabled={isWorkLoading} onPress={() => void handleWorkAction("resume")} />
+                    ) : null}
+                    {canTakeBreak(currentStatus) ? (
+                      <SecondaryButton label={driverLabels.takeBreak} icon="pause-circle-outline" disabled={isWorkLoading} onPress={() => void handleWorkAction("take_break")} />
+                    ) : null}
+                    {currentStatus === "completed" ? (
+                      <View style={styles.completeBox}>
+                        <MaterialCommunityIcons name="check-circle" size={34} color="#247243" />
+                        <Text style={styles.completeTitle}>Work completed</Text>
+                        <Text style={styles.body}>The Kootha admin can now review your updates and proof.</Text>
+                      </View>
+                    ) : null}
+
+                    {mobileLocationProofRequired ? (
+                      <View style={styles.locationProofBox}>
+                        <View style={styles.sectionHeadingIcon}>
+                          <MaterialCommunityIcons name="crosshairs-gps" size={26} color="#b83f12" />
+                          <Text style={styles.sectionTitle}>{driverLabels.allowLocationProof}</Text>
+                        </View>
+                        <Text style={styles.body}>{mobileLocationProofConsentText}</Text>
+                        {currentWork.mobile_location_proof_note ? <Text style={styles.notice}>{currentWork.mobile_location_proof_note}</Text> : null}
+                        <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: locationUnderstanding }} style={styles.consentRow} onPress={() => setLocationUnderstanding((current) => !current)}>
+                          <View style={[styles.checkbox, locationUnderstanding && styles.checkboxChecked]} />
+                          <Text style={styles.consentText}>I understand Location Proof is used only during this assigned work.</Text>
+                        </Pressable>
+                        <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: locationAgreement }} style={styles.consentRow} onPress={() => setLocationAgreement((current) => !current)}>
+                          <View style={[styles.checkbox, locationAgreement && styles.checkboxChecked]} />
+                          <Text style={styles.consentText}>I allow Location Proof for this work.</Text>
+                        </Pressable>
+                        <View style={styles.locationStatusRow}>
+                          <Text style={styles.locationStatusText}>{getTrackingSessionStatusLabel(locationStatus)}</Text>
+                          <Text style={styles.locationStatusText}>{pendingOfflineCount > 0 ? `${pendingOfflineCount} waiting to sync` : "Synced"}</Text>
+                        </View>
+                        <PrimaryButton label={driverLabels.startLocationProof} icon="crosshairs-gps" disabled={!canStartLocationProof || isLocationBusy} onPress={() => void handleStartLocationProof()} />
+                        {pendingOfflineCount > 0 ? <SecondaryButton label={isLocationSyncing ? driverLabels.syncingLocationProof : "Sync Now"} icon="sync" disabled={!locationSessionId || isLocationSyncing} onPress={() => void handleSyncNow()} /> : null}
+                        {locationSessionId && locationStatus !== "stopped" ? <SecondaryButton label={driverLabels.stopLocationProof} icon="stop-circle-outline" disabled={isLocationBusy} onPress={() => void handleStopLocationProof("other")} /> : null}
+                        {locationMessage ? <Text style={styles.notice}>{locationMessage}</Text> : null}
+                      </View>
+                    ) : null}
+
+                    {canEndWork(currentStatus) ? (
+                      <View style={styles.finishBlock}>
+                        <Text style={styles.label}>Completion note</Text>
+                        <TextInput style={[styles.input, styles.textArea]} value={completionNote} maxLength={600} multiline onChangeText={setCompletionNote} placeholder="What was completed?" />
+                        <PrimaryButton label={driverLabels.endWork} icon="check-circle-outline" disabled={isWorkLoading} onPress={() => void handleWorkAction("end")} />
+                      </View>
+                    ) : null}
+                  </View>
+                ) : null}
+
+                {workPanel === "proof" ? (
+                  <View style={styles.panelBody}>
+                    <Text style={styles.panelTitle}>Add work proof</Text>
+                    <Text style={styles.body}>Add a short note or one clear photo while work is running or on break.</Text>
+                    <Text style={styles.label}>Proof type</Text>
+                    <View style={styles.optionGrid}>
+                      {executionProofNoteTypeOptions.map((option) => (
+                        <OptionButton key={option} value={option} label={executionProofNoteTypeLabels[option]} selected={proofType === option} onSelect={(value: ExecutionProofNoteType) => setProofType(value)} />
+                      ))}
+                    </View>
+                    <Text style={styles.label}>{driverLabels.areaOrPlaceName}</Text>
+                    <TextInput style={styles.input} value={proofArea} maxLength={120} onChangeText={setProofArea} placeholder="Area or place" />
+                    <Text style={styles.label}>{driverLabels.addProofNote}</Text>
+                    <TextInput style={[styles.input, styles.textArea]} value={proofNote} maxLength={600} multiline onChangeText={setProofNote} placeholder="Write a simple proof note" />
+                    <SecondaryButton label={driverLabels.addProofNote} icon="text-box-plus-outline" disabled={isWorkLoading} onPress={() => void handleWorkAction("add_proof_note")} />
+
+                    <View style={styles.proofUploadBox}>
+                      <View style={styles.sectionHeadingIcon}>
+                        <MaterialCommunityIcons name="camera-outline" size={27} color="#b83f12" />
+                        <Text style={styles.sectionTitle}>{driverLabels.uploadPhotoProof}</Text>
+                      </View>
+                      <SecondaryButton label={proofPhoto ? "Change Photo" : "Choose Photo"} icon="camera-outline" disabled={isProofSubmitting} onPress={() => void handleChooseProofPhoto()} />
+                      {proofPhoto ? <View style={styles.photoPreviewBox}><Image source={{ uri: proofPhoto.uri }} style={styles.photoPreview} /><Text style={styles.body}>{proofPhoto.fileName || "Selected photo"}</Text></View> : null}
+                      <PrimaryButton label={isProofSubmitting ? "Sending..." : driverLabels.submitProof} icon="cloud-upload-outline" disabled={!canUploadPhotoProof(currentStatus) || isProofSubmitting || !proofPhoto} onPress={() => void handleSubmitPhotoProof()} />
+                    </View>
+                    {workMessage ? <Text style={styles.notice}>{workMessage}</Text> : null}
+                  </View>
+                ) : null}
+
+                {workPanel === "help" ? (
+                  <View style={styles.panelBody}>
+                    <Text style={styles.panelTitle}>Help with this work</Text>
+                    <Text style={styles.label}>{driverLabels.issueReported}</Text>
+                    <TextInput style={[styles.input, styles.textArea]} value={issueNote} maxLength={600} multiline onChangeText={setIssueNote} placeholder="Describe the problem in simple words" />
+                    <SecondaryButton label="Send issue to admin" icon="alert-circle-outline" disabled={isWorkLoading} onPress={() => void handleWorkAction("issue")} />
+                    <PrimaryButton label={driverLabels.callAdmin} icon="phone" onPress={() => void handleCallAdmin()} />
+                    {workMessage ? <Text style={styles.notice}>{workMessage}</Text> : null}
+                  </View>
+                ) : null}
               </View>
             )}
-            <Text style={styles.label}>Completion note</Text>
-            <TextInput
-              style={[styles.input, styles.textArea]}
-              value={completionNote}
-              maxLength={600}
-              multiline
-              onChangeText={setCompletionNote}
-              placeholder="Short completion note"
-            />
-            <PrimaryButton label={driverLabels.endWork} disabled={!canEndWork(currentStatus) || isWorkLoading} onPress={() => void handleWorkAction("end")} />
-
-            <Text style={styles.label}>Proof type</Text>
-            <View style={styles.optionGrid}>
-              {executionProofNoteTypeOptions.map((option) => (
-                <OptionButton
-                  key={option}
-                  value={option}
-                  label={executionProofNoteTypeLabels[option]}
-                  selected={proofType === option}
-                  onSelect={(value: ExecutionProofNoteType) => setProofType(value)}
-                />
-              ))}
-            </View>
-            <Text style={styles.label}>{driverLabels.areaOrPlaceName}</Text>
-            <TextInput
-              style={styles.input}
-              value={proofArea}
-              maxLength={120}
-              onChangeText={setProofArea}
-              placeholder="Area or place"
-            />
-            <Text style={styles.label}>{driverLabels.addProofNote}</Text>
-            <TextInput
-              style={[styles.input, styles.textArea]}
-              value={proofNote}
-              maxLength={600}
-              multiline
-              onChangeText={setProofNote}
-              placeholder="Write a simple proof note"
-            />
-            <SecondaryButton label={driverLabels.addProofNote} disabled={isWorkLoading} onPress={() => void handleWorkAction("add_proof_note")} />
-
-            <View style={styles.proofUploadBox}>
-              <Text style={styles.sectionTitle}>{driverLabels.uploadPhotoProof}</Text>
-              <Text style={styles.body}>Choose one photo after work is Running or On Break.</Text>
-              <SecondaryButton label={proofPhoto ? "Change Photo" : "Choose Photo"} disabled={isProofSubmitting} onPress={() => void handleChooseProofPhoto()} />
-              {proofPhoto ? (
-                <View style={styles.photoPreviewBox}>
-                  <Image source={{ uri: proofPhoto.uri }} style={styles.photoPreview} />
-                  <Text style={styles.body}>{proofPhoto.fileName || "Selected photo"}</Text>
-                </View>
-              ) : null}
-              <PrimaryButton
-                label={isProofSubmitting ? "Submitting..." : driverLabels.submitProof}
-                disabled={!canUploadPhotoProof(currentStatus) || isProofSubmitting || !proofPhoto}
-                onPress={() => void handleSubmitPhotoProof()}
-              />
+          </>
+        ) : (
+          <>
+            <View style={styles.introBlock}>
+              <View style={styles.introIcon}><MaterialCommunityIcons name="account-plus-outline" size={32} color="#fffaf1" /></View>
+              <View style={styles.introCopy}>
+                <Text style={styles.title}>{driverLabels.registerAsDriver}</Text>
+                <Text style={styles.body}>Share your details once. The Kootha team will call you after review.</Text>
+              </View>
             </View>
 
-            <Text style={styles.label}>{driverLabels.issueReported}</Text>
-            <TextInput
-              style={[styles.input, styles.textArea]}
-              value={issueNote}
-              maxLength={600}
-              multiline
-              onChangeText={setIssueNote}
-              placeholder="Describe the issue"
-            />
-            <SecondaryButton label={driverLabels.issueReported} disabled={isWorkLoading} onPress={() => void handleWorkAction("issue")} />
+            <View style={styles.hiddenField}>
+              <TextInput value={form.companyWebsite} onChangeText={(value) => updateField("companyWebsite", value)} importantForAutofill="no" />
+            </View>
 
-            <PrimaryButton label={driverLabels.callAdmin} />
-          </View>
+            <View style={styles.registrationForm}>
+              <Text style={styles.formSectionTitle}>Your details</Text>
+              <Text style={styles.label}>Driver full name</Text>
+              <TextInput style={styles.input} value={form.driverName} maxLength={100} onChangeText={(value) => updateField("driverName", value)} placeholder="Enter driver name" />
+              <Text style={styles.label}>Mobile number</Text>
+              <TextInput style={styles.input} value={form.mobileNumber} maxLength={20} keyboardType="phone-pad" onChangeText={(value) => updateField("mobileNumber", value)} placeholder="Enter mobile number" />
+              <Text style={styles.label}>City or town</Text>
+              <TextInput style={styles.input} value={form.cityTown} maxLength={80} onChangeText={(value) => updateField("cityTown", value)} placeholder="Enter city or town" />
+              <Text style={styles.label}>Areas you can work in</Text>
+              <TextInput style={[styles.input, styles.textArea]} value={form.serviceAreas} maxLength={600} multiline onChangeText={(value) => updateField("serviceAreas", value)} placeholder="Towns, villages, or areas" />
+
+              <View style={styles.formDivider} />
+              <Text style={styles.formSectionTitle}>Vehicle details</Text>
+              <Text style={styles.label}>Vehicle ownership</Text>
+              <View style={styles.optionGrid}>
+                {vehicleOwnershipOptions.map((option) => <OptionButton key={option} value={option} label={vehicleOwnershipLabels[option]} selected={form.vehicleOwnership === option} onSelect={(value: VehicleOwnership) => updateField("vehicleOwnership", value)} />)}
+              </View>
+              <Text style={styles.label}>Vehicle type</Text>
+              <View style={styles.optionGrid}>
+                {vehicleTypeOptions.map((option) => <OptionButton key={option} value={option} label={vehicleTypeLabels[option]} selected={form.vehicleType === option} onSelect={(value: VehicleType) => updateField("vehicleType", value)} />)}
+              </View>
+              <Text style={styles.label}>Vehicle number</Text>
+              <TextInput style={styles.input} value={form.vehicleNumber} maxLength={40} autoCapitalize="characters" onChangeText={(value) => updateField("vehicleNumber", value)} placeholder="Vehicle number" />
+              <View style={styles.switchRow}><Text style={styles.labelInline}>Speaker system available</Text><Switch value={form.micSystemAvailable} onValueChange={(value) => updateField("micSystemAvailable", value)} /></View>
+
+              <Text style={styles.label}>Vehicle GPS device</Text>
+              <View style={styles.optionGrid}>
+                {yesNoNotSureOptions.map((option) => <OptionButton key={option} value={option} label={yesNoNotSureLabels[option]} selected={form.gpsDeviceAvailable === option} onSelect={(value: YesNoNotSure) => updateField("gpsDeviceAvailable", value)} />)}
+              </View>
+              <Text style={styles.label}>Preferred working cities or towns</Text>
+              <TextInput style={styles.input} value={form.preferredWorkingCities} maxLength={400} onChangeText={(value) => updateField("preferredWorkingCities", value)} placeholder="Cities or towns" />
+              <Text style={styles.label}>Additional note</Text>
+              <TextInput style={[styles.input, styles.textArea]} value={form.notes} maxLength={800} multiline onChangeText={(value) => updateField("notes", value)} placeholder="Any useful details for admin" />
+
+              <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: form.consentToContact }} style={styles.consentRow} onPress={() => updateField("consentToContact", !form.consentToContact)}>
+                <View style={[styles.checkbox, form.consentToContact && styles.checkboxChecked]} />
+                <Text style={styles.consentText}>I agree that the Kootha team may contact me about driver work.</Text>
+              </Pressable>
+
+              {errors.length > 0 ? <View style={styles.errorBox}>{errors.map((error) => <Text style={styles.errorText} key={error}>{error}</Text>)}</View> : null}
+              {statusMessage ? <Text style={styles.notice}>{statusMessage}</Text> : null}
+
+              <PrimaryButton label={isSubmitting ? "Sending..." : driverLabels.submitDetails} icon="account-check-outline" disabled={isSubmitting} onPress={handleSubmit} />
+              <SecondaryButton label={driverLabels.callAdmin} icon="phone-outline" onPress={() => void handleCallAdmin()} />
+            </View>
+          </>
         )}
-
-        <View style={styles.divider} />
-
-        <Text style={styles.title}>{driverLabels.registerAsDriver}</Text>
-        <Text style={styles.body}>
-          Share your driver and vehicle details. The {productName} team will contact you after review.
-        </Text>
-
-        <View style={styles.hiddenField}>
-          <TextInput
-            value={form.companyWebsite}
-            onChangeText={(value) => updateField("companyWebsite", value)}
-            importantForAutofill="no"
-          />
-        </View>
-
-        <View style={styles.form}>
-          <Text style={styles.label}>Driver full name</Text>
-          <TextInput
-            style={styles.input}
-            value={form.driverName}
-            maxLength={100}
-            onChangeText={(value) => updateField("driverName", value)}
-            placeholder="Enter driver name"
-          />
-
-          <Text style={styles.label}>Mobile number</Text>
-          <TextInput
-            style={styles.input}
-            value={form.mobileNumber}
-            maxLength={20}
-            keyboardType="phone-pad"
-            onChangeText={(value) => updateField("mobileNumber", value)}
-            placeholder="Enter mobile number"
-          />
-
-          <Text style={styles.label}>City/town</Text>
-          <TextInput
-            style={styles.input}
-            value={form.cityTown}
-            maxLength={80}
-            onChangeText={(value) => updateField("cityTown", value)}
-            placeholder="Enter city or town"
-          />
-
-          <Text style={styles.label}>Service areas</Text>
-          <TextInput
-            style={[styles.input, styles.textArea]}
-            value={form.serviceAreas}
-            maxLength={600}
-            multiline
-            onChangeText={(value) => updateField("serviceAreas", value)}
-            placeholder="Areas you can serve"
-          />
-
-          <Text style={styles.label}>Vehicle ownership</Text>
-          <View style={styles.optionGrid}>
-            {vehicleOwnershipOptions.map((option) => (
-              <OptionButton
-                key={option}
-                value={option}
-                label={vehicleOwnershipLabels[option]}
-                selected={form.vehicleOwnership === option}
-                onSelect={(value: VehicleOwnership) => updateField("vehicleOwnership", value)}
-              />
-            ))}
-          </View>
-
-          <Text style={styles.label}>Vehicle type</Text>
-          <View style={styles.optionGrid}>
-            {vehicleTypeOptions.map((option) => (
-              <OptionButton
-                key={option}
-                value={option}
-                label={vehicleTypeLabels[option]}
-                selected={form.vehicleType === option}
-                onSelect={(value: VehicleType) => updateField("vehicleType", value)}
-              />
-            ))}
-          </View>
-
-          <Text style={styles.label}>Vehicle number</Text>
-          <TextInput
-            style={styles.input}
-            value={form.vehicleNumber}
-            maxLength={40}
-            autoCapitalize="characters"
-            onChangeText={(value) => updateField("vehicleNumber", value)}
-            placeholder="Vehicle number"
-          />
-
-          <View style={styles.switchRow}>
-            <Text style={styles.labelInline}>Mic/speaker system available</Text>
-            <Switch
-              value={form.micSystemAvailable}
-              onValueChange={(value) => updateField("micSystemAvailable", value)}
-            />
-          </View>
-
-          <Text style={styles.label}>Vehicle GPS Device</Text>
-          <View style={styles.optionGrid}>
-            {yesNoNotSureOptions.map((option) => (
-              <OptionButton
-                key={option}
-                value={option}
-                label={yesNoNotSureLabels[option]}
-                selected={form.gpsDeviceAvailable === option}
-                onSelect={(value: YesNoNotSure) => updateField("gpsDeviceAvailable", value)}
-              />
-            ))}
-          </View>
-
-          <Text style={styles.label}>Preferred working cities/towns</Text>
-          <TextInput
-            style={styles.input}
-            value={form.preferredWorkingCities}
-            maxLength={400}
-            onChangeText={(value) => updateField("preferredWorkingCities", value)}
-            placeholder="Cities or towns"
-          />
-
-          <Text style={styles.label}>Notes</Text>
-          <TextInput
-            style={[styles.input, styles.textArea]}
-            value={form.notes}
-            maxLength={800}
-            multiline
-            onChangeText={(value) => updateField("notes", value)}
-            placeholder="Any details for admin"
-          />
-
-          <Pressable
-            accessibilityRole="checkbox"
-            accessibilityState={{ checked: form.consentToContact }}
-            style={styles.consentRow}
-            onPress={() => updateField("consentToContact", !form.consentToContact)}
-          >
-            <View style={[styles.checkbox, form.consentToContact && styles.checkboxChecked]} />
-            <Text style={styles.consentText}>I agree that the Prachar team may contact me about driver work.</Text>
-          </Pressable>
-
-          {errors.length > 0 && (
-            <View style={styles.errorBox}>
-              {errors.map((error) => <Text style={styles.errorText} key={error}>{error}</Text>)}
-            </View>
-          )}
-
-          {statusMessage ? <Text style={styles.notice}>{statusMessage}</Text> : null}
-
-          <PrimaryButton
-            label={isSubmitting ? "Submitting..." : driverLabels.submitDetails}
-            disabled={isSubmitting}
-            onPress={handleSubmit}
-          />
-          <PrimaryButton label={driverLabels.callAdmin} />
-        </View>
       </ScrollView>
     </SafeAreaView>
   );
 }
-
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: "#fffaf1"
+    backgroundColor: "#fff8ec"
   },
   shell: {
     padding: 22,
-    gap: 14
+    gap: 16
+  },
+  brandRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12
+  },
+  brandLogo: {
+    width: 56,
+    height: 56,
+    borderRadius: 8
+  },
+  logoMark: {
+    width: 54,
+    height: 54,
+    borderRadius: 8,
+    backgroundColor: "#d94f18",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  logoLetter: {
+    color: "#fff8ec",
+    fontSize: 28,
+    fontWeight: "900"
   },
   brand: {
-    color: "#c84f20",
-    fontSize: 18,
+    color: "#24201c",
+    fontSize: 26,
     fontWeight: "900"
+  },
+  brandTagline: {
+    color: "#65594f",
+    fontSize: 14,
+    fontWeight: "800"
+  },
+  heroCard: {
+    borderWidth: 2,
+    borderColor: "#d8c3a9",
+    borderRadius: 8,
+    backgroundColor: "#fffdf8",
+    padding: 16,
+    gap: 8
   },
   title: {
     color: "#27231f",
@@ -1563,10 +1626,10 @@ const styles = StyleSheet.create({
     gap: 12
   },
   workCard: {
-    borderWidth: 1,
     borderColor: "#eadfce",
     borderRadius: 8,
     backgroundColor: "#fffdf8",
+    borderWidth: 2,
     padding: 14,
     gap: 12
   },
@@ -1709,17 +1772,17 @@ const styles = StyleSheet.create({
     fontSize: 15
   },
   button: {
-    minHeight: 62,
+    minHeight: 68,
     borderRadius: 8,
-    backgroundColor: "#c84f20",
+    backgroundColor: "#d94f18",
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 18
   },
   secondaryButton: {
-    minHeight: 50,
-    borderWidth: 1,
-    borderColor: "#c84f20",
+    minHeight: 58,
+    borderWidth: 2,
+    borderColor: "#d94f18",
     borderRadius: 8,
     backgroundColor: "#fffdf8",
     alignItems: "center",
@@ -1738,8 +1801,8 @@ const styles = StyleSheet.create({
     fontWeight: "900"
   },
   secondaryButtonText: {
-    color: "#c84f20",
-    fontSize: 16,
+    color: "#d94f18",
+    fontSize: 17,
     fontWeight: "900"
   },
   divider: {
@@ -1747,7 +1810,249 @@ const styles = StyleSheet.create({
     backgroundColor: "#eadfce",
     marginVertical: 12
   },
-  hiddenField: {
+  modeSwitch: {
+    flexDirection: "row",
+    borderWidth: 1,
+    borderColor: "#d8c3a9",
+    borderRadius: 8,
+    backgroundColor: "#fffdf8",
+    padding: 4,
+    gap: 4
+  },
+  modeButton: {
+    minHeight: 54,
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    borderRadius: 6
+  },
+  modeButtonActive: {
+    backgroundColor: "#24201c"
+  },
+  modeButtonText: {
+    color: "#65594f",
+    fontSize: 16,
+    fontWeight: "900"
+  },
+  modeButtonTextActive: {
+    color: "#fffaf1"
+  },
+  introBlock: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 14,
+    paddingVertical: 12
+  },
+  introIcon: {
+    width: 58,
+    height: 58,
+    flexShrink: 0,
+    borderRadius: 8,
+    backgroundColor: "#d94f18",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  introCopy: {
+    flex: 1,
+    gap: 5
+  },
+  accessForm: {
+    gap: 13,
+    borderWidth: 1,
+    borderColor: "#d8c3a9",
+    borderRadius: 8,
+    backgroundColor: "#fffdf8",
+    padding: 18
+  },
+  helpLink: {
+    minHeight: 52,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 9
+  },
+  helpLinkText: {
+    color: "#b83f12",
+    fontSize: 16,
+    fontWeight: "900"
+  },
+  workSurface: {
+    gap: 16
+  },
+  workHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 12,
+    paddingTop: 8
+  },
+  workHeaderCopy: {
+    flex: 1,
+    gap: 4
+  },
+  kicker: {
+    color: "#b83f12",
+    fontSize: 12,
+    fontWeight: "900"
+  },
+  changeCodeButton: {
+    minHeight: 44,
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7
+  },
+  changeCodeText: {
+    color: "#65594f",
+    fontSize: 14,
+    fontWeight: "800"
+  },
+  workSummary: {
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: "#d8c3a9"
+  },
+  summaryItem: {
+    minHeight: 66,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#eadfce",
+    paddingVertical: 13
+  },
+  summaryLabel: {
+    color: "#65594f",
+    fontSize: 13,
+    fontWeight: "800"
+  },
+  summaryValue: {
+    color: "#24201c",
+    fontSize: 16,
+    lineHeight: 23,
+    fontWeight: "800"
+  },
+  messageBlock: {
+    borderLeftWidth: 5,
+    borderLeftColor: "#d94f18",
+    backgroundColor: "#fff0dc",
+    padding: 15,
+    gap: 7
+  },
+  messageText: {
+    color: "#24201c",
+    fontSize: 18,
+    lineHeight: 27,
+    fontWeight: "800"
+  },
+  instructionText: {
+    color: "#65594f",
+    fontSize: 15,
+    lineHeight: 22
+  },
+  workTabs: {
+    flexDirection: "row",
+    borderWidth: 1,
+    borderColor: "#d8c3a9",
+    borderRadius: 8,
+    backgroundColor: "#fffdf8",
+    padding: 4,
+    gap: 4
+  },
+  workTab: {
+    minHeight: 58,
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 3,
+    borderRadius: 6
+  },
+  workTabActive: {
+    backgroundColor: "#d94f18"
+  },
+  workTabText: {
+    color: "#65594f",
+    fontSize: 13,
+    fontWeight: "900"
+  },
+  workTabTextActive: {
+    color: "#fffaf1"
+  },
+  panelBody: {
+    gap: 14,
+    borderWidth: 1,
+    borderColor: "#d8c3a9",
+    borderRadius: 8,
+    backgroundColor: "#fffdf8",
+    padding: 16
+  },
+  panelTitle: {
+    color: "#24201c",
+    fontSize: 23,
+    fontWeight: "900"
+  },
+  completeBox: {
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#edf8ef",
+    padding: 18
+  },
+  completeTitle: {
+    color: "#247243",
+    fontSize: 21,
+    fontWeight: "900"
+  },
+  sectionHeadingIcon: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9
+  },
+  locationStatusRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8
+  },
+  locationStatusText: {
+    borderRadius: 6,
+    backgroundColor: "#fff0dc",
+    color: "#8e330f",
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    fontSize: 13,
+    fontWeight: "900"
+  },
+  finishBlock: {
+    gap: 12,
+    borderTopWidth: 1,
+    borderTopColor: "#d8c3a9",
+    paddingTop: 16
+  },
+  registrationForm: {
+    gap: 13,
+    borderWidth: 1,
+    borderColor: "#d8c3a9",
+    borderRadius: 8,
+    backgroundColor: "#fffdf8",
+    padding: 18
+  },
+  formSectionTitle: {
+    color: "#24201c",
+    fontSize: 22,
+    fontWeight: "900"
+  },
+  formDivider: {
+    height: 1,
+    backgroundColor: "#d8c3a9",
+    marginVertical: 8
+  },
+  buttonContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 9
+  },  hiddenField: {
     position: "absolute",
     left: -10000,
     width: 1,
