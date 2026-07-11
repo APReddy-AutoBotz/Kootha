@@ -106,4 +106,6 @@ Status values:
 
 ## Milestone M18 - Real Device Pilot Evidence Retry
 
-- [ ] Not started.
+- [~] In progress.
+  - Target Supabase migrations, public enquiry policy, proof bucket privacy, admin role, and admin login are verified with safe labels only.
+  - Physical Android driver app execution, proof upload, Phone Location Proof, offline sync, and final summary retry remain pending with fake data only.
