@@ -113,7 +113,7 @@
 
 .admin-app-main .admin-heading h1 {
   margin-bottom: 7px;
-  font-size: clamp(32px, 4vw, 46px);
+  font-size: 44px;
   line-height: 1.05;
 }
 
@@ -469,8 +469,7 @@
   }
 
   .admin-app-main .ad-work-stepper {
-    grid-template-columns: repeat(5, minmax(130px, 1fr));
-    overflow-x: auto;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 }
 
@@ -496,20 +495,21 @@
   }
 
   .admin-nav-list {
-    display: flex;
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
     gap: 2px;
-    overflow-x: auto;
     padding: 7px;
   }
 
   .admin-nav-list button {
-    min-width: 92px;
+    min-width: 0;
     min-height: 62px;
     flex-direction: column;
     justify-content: center;
     gap: 4px;
     padding: 5px 8px;
-    font-size: 11px;
+    font-size: 10px;
+    line-height: 1.1;
     text-align: center;
   }
 
@@ -612,7 +612,26 @@
   }
 
   .admin-app-main .ad-work-stepper {
-    grid-template-columns: repeat(5, 110px);
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .admin-app-main .ad-work-stepper button {
+    min-width: 0;
+    min-height: 68px;
+    flex-direction: column;
+    justify-content: center;
+    gap: 5px;
+    padding: 7px 3px;
+    text-align: center;
+  }
+
+  .admin-app-main .ad-work-stepper .step-number {
+    width: 26px;
+    height: 26px;
+  }
+
+  .admin-app-main .ad-work-stepper .step-copy strong {
+    font-size: 11px;
   }
 
   .step-copy small {

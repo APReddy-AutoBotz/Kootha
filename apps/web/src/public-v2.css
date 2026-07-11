@@ -66,14 +66,14 @@
 .kootha-hero h1 {
   max-width: 720px;
   color: #fffdf8;
-  font-size: clamp(44px, 6.4vw, 76px);
+  font-size: 72px;
   line-height: 1.01;
 }
 
 .kootha-hero .hero-copy > p:not(.eyebrow) {
   max-width: 620px;
   color: #fff2e7;
-  font-size: clamp(18px, 2vw, 22px);
+  font-size: 21px;
 }
 
 .hero-media {
@@ -437,6 +437,10 @@
     padding: 56px 0 330px;
   }
 
+  .kootha-hero h1 {
+    font-size: 56px;
+  }
+
   .hero-media {
     right: 8%;
     width: 58%;
@@ -487,11 +491,16 @@
   }
 
   .kootha-hero .hero-copy {
-    padding: 46px 0 285px;
+    padding: 40px 0 210px;
   }
 
   .kootha-hero h1 {
-    font-size: clamp(40px, 13vw, 58px);
+    font-size: 42px;
+    line-height: 1.04;
+  }
+
+  .kootha-hero .hero-copy > p:not(.eyebrow) {
+    font-size: 18px;
   }
 
   .hero-media {

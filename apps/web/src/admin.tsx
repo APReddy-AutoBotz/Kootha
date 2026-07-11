@@ -5628,7 +5628,7 @@ function AdminShell({
     { id: "dashboard", label: "Today", icon: LayoutDashboard },
     { id: "enquiries", label: businessLabels.admin.enquiries, icon: Inbox },
     { id: "adWorks", label: businessLabels.admin.adWorks, icon: Megaphone },
-    { id: "driverApplications", label: businessLabels.admin.driverApplications, icon: UserRoundCheck },
+    { id: "driverApplications", label: "Requests", icon: UserRoundCheck },
     { id: "drivers", label: businessLabels.admin.drivers, icon: Users },
     { id: "vehicles", label: businessLabels.admin.vehicles, icon: Truck }
   ];
