@@ -1,15 +1,21 @@
 import { FormEvent, useMemo, useState } from "react";
+import {
+  ArrowRight,
+  CalendarDays,
+  Camera,
+  CheckCircle2,
+  MapPin,
+  Megaphone,
+  Phone,
+  ShieldCheck
+} from "lucide-react";
 import { AdminLeadManagement } from "./admin";
 import {
   PublicEnquiryInput,
-  liveTrackingNeedLabels,
-  packageInterestLabels,
-  packageInterestOptions,
   publicWebsiteText,
   resolveProductName,
   validatePublicEnquiry
 } from "@kootha/shared";
-import type { LiveTrackingNeed, PackageInterest } from "@kootha/shared";
 
 const productName = resolveProductName({
   productName: import.meta.env.VITE_PRODUCT_NAME
@@ -31,28 +37,40 @@ const initialEnquiry: PublicEnquiryInput = {
   companyWebsite: ""
 };
 
-const proofSteps = [
-  { title: "Send enquiry", text: "Tell us the business, area, date, and advertisement message.", image: "/assets/illustration-enquiry.svg" },
-  { title: "Plan work", text: "Admin fixes the date, time, areas, driver, and vehicle.", image: "/assets/illustration-planning.svg" },
-  { title: "Driver works", text: "Driver opens assigned work and updates the team.", image: "/assets/illustration-driver.svg" },
-  { title: "Photo proof", text: "Proof photos and simple updates are reviewed by admin.", image: "/assets/illustration-proof.svg" },
-  { title: "Final proof", text: "Customer gets a simple final proof summary.", image: "/assets/illustration-summary.svg" }
-];
-
-const packageCards = [
+const serviceSteps = [
   {
-    name: "Basic",
-    text: "Simple updates and final proof summary for small advertisement work."
+    number: "01",
+    title: "Tell us the work",
+    text: "Share your business, town, preferred date, and advertisement message.",
+    icon: Megaphone
   },
   {
-    name: "Standard",
-    text: "Updates, proof photos, and final proof summary for stronger confidence."
+    number: "02",
+    title: "We plan it clearly",
+    text: "The team confirms the areas, timing, driver, vehicle, and proof needed.",
+    icon: CalendarDays
   },
   {
-    name: "Premium",
-    text: "Phone Location Proof can be added only when admin enables it and the driver agrees."
+    number: "03",
+    title: "The driver completes it",
+    text: "The driver follows the plan and sends work updates and photo proof.",
+    icon: Camera
+  },
+  {
+    number: "04",
+    title: "You receive proof",
+    text: "Admin reviews the work and prepares one simple final proof summary.",
+    icon: CheckCircle2
   }
 ];
+
+function getPublicContact() {
+  const phone = import.meta.env.VITE_CONTACT_PHONE?.trim() ?? "";
+  const display = import.meta.env.VITE_CONTACT_PHONE_DISPLAY?.trim() ?? "";
+  const configured = phone && !phone.includes("replace-with");
+
+  return configured ? { phone, display: display && !display.includes("replace-with") ? display : phone } : null;
+}
 
 function isSupabaseConfigured() {
   const url = import.meta.env.VITE_SUPABASE_URL?.trim() ?? "";
@@ -103,6 +121,7 @@ async function submitEnquiry(input: PublicEnquiryInput) {
 
 function EnquiryForm() {
   const [form, setForm] = useState<PublicEnquiryInput>(initialEnquiry);
+  const [step, setStep] = useState<1 | 2>(1);
   const [errors, setErrors] = useState<string[]>([]);
   const [statusMessage, setStatusMessage] = useState("");
   const [isSending, setIsSending] = useState(false);
@@ -110,6 +129,20 @@ function EnquiryForm() {
 
   function updateField<K extends keyof PublicEnquiryInput>(field: K, value: PublicEnquiryInput[K]) {
     setForm((current) => ({ ...current, [field]: value }));
+  }
+
+  function continueToWorkDetails() {
+    const firstStepErrors = [
+      !form.customerName.trim() ? "Customer name is required." : "",
+      !form.businessName.trim() ? "Business or shop name is required." : "",
+      !/^\+?[0-9][0-9\s-]{7,18}$/.test(form.mobileNumber.trim()) ? "Enter a valid mobile number." : "",
+      !form.cityTown.trim() ? "City or town is required." : ""
+    ].filter(Boolean);
+
+    setErrors(firstStepErrors);
+    if (firstStepErrors.length === 0) {
+      setStep(2);
+    }
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -133,6 +166,7 @@ function EnquiryForm() {
       setIsSending(true);
       await submitEnquiry(form);
       setForm(initialEnquiry);
+      setStep(1);
       setStatusMessage(publicWebsiteText.successMessage.replace("Kootha", productName));
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "Could not send enquiry right now.");
@@ -143,78 +177,99 @@ function EnquiryForm() {
 
   return (
     <form className="enquiry-form kootha-enquiry-form" onSubmit={handleSubmit} aria-label="Customer enquiry form">
-      <div className="honeypot" aria-hidden="true">
-        <label htmlFor="companyWebsite">Company website</label>
-        <input
-          id="companyWebsite"
-          name="companyWebsite"
-          tabIndex={-1}
-          autoComplete="off"
-          value={form.companyWebsite}
-          onChange={(event) => updateField("companyWebsite", event.target.value)}
-        />
+      <input
+        className="honeypot"
+        hidden
+        aria-hidden="true"
+        name="companyWebsite"
+        tabIndex={-1}
+        autoComplete="off"
+        value={form.companyWebsite}
+        onChange={(event) => updateField("companyWebsite", event.target.value)}
+      />
+
+      <div className="form-progress" aria-label={`Enquiry step ${step} of 2`}>
+        <span className="form-progress-copy">Step {step} of 2</span>
+        <span className="form-progress-track"><span style={{ width: step === 1 ? "50%" : "100%" }} /></span>
       </div>
 
-      <div className="form-grid">
-        <label>
-          Customer name
-          <input value={form.customerName} maxLength={80} onChange={(event) => updateField("customerName", event.target.value)} required />
-        </label>
-        <label>
-          Business/shop name
-          <input value={form.businessName} maxLength={120} onChange={(event) => updateField("businessName", event.target.value)} required />
-        </label>
-        <label>
-          Mobile number
-          <input value={form.mobileNumber} maxLength={20} inputMode="tel" onChange={(event) => updateField("mobileNumber", event.target.value)} required />
-        </label>
-        <label>
-          City/town
-          <input value={form.cityTown} maxLength={80} onChange={(event) => updateField("cityTown", event.target.value)} required />
-        </label>
-        <label>
-          Work date
-          <input type="date" value={form.preferredDate} onChange={(event) => updateField("preferredDate", event.target.value)} required />
-        </label>
-        <label>
-          Number of days
-          <input type="number" min="1" max="30" value={form.numberOfDays} onChange={(event) => updateField("numberOfDays", Number(event.target.value))} required />
-        </label>
-        <label>
-          Package
-          <select value={form.packageInterest} onChange={(event) => updateField("packageInterest", event.target.value as PackageInterest)}>
-            {packageInterestOptions.map((option) => (
-              <option key={option} value={option}>{packageInterestLabels[option]}</option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Phone Location Proof?
-          <select value={form.liveTrackingNeeded} onChange={(event) => updateField("liveTrackingNeeded", event.target.value as LiveTrackingNeed)}>
-            {Object.entries(liveTrackingNeedLabels).map(([value, label]) => (
-              <option key={value} value={value}>{label}</option>
-            ))}
-          </select>
-        </label>
-      </div>
-
-      <label>
-        Areas to cover
-        <textarea value={form.areasToCover} maxLength={500} onChange={(event) => updateField("areasToCover", event.target.value)} placeholder="Example: main road, market, bus stand, nearby villages" required />
-      </label>
-      <label>
-        Advertisement message
-        <textarea value={form.advertisementDetails} maxLength={1000} onChange={(event) => updateField("advertisementDetails", event.target.value)} placeholder="Write the advertisement message or offer details" required />
-      </label>
-      <label>
-        Extra notes
-        <textarea value={form.notes} maxLength={600} onChange={(event) => updateField("notes", event.target.value)} placeholder="Optional" />
-      </label>
-
-      <label className="consent-row">
-        <input type="checkbox" checked={form.consentToContact} onChange={(event) => updateField("consentToContact", event.target.checked)} />
-        <span>I agree that the {productName} team may contact me about this enquiry.</span>
-      </label>
+      {step === 1 ? (
+        <div className="form-step">
+          <div className="form-step-heading">
+            <span className="form-step-number">1</span>
+            <div>
+              <h3>Your contact details</h3>
+              <p>We use these details only to discuss this enquiry.</p>
+            </div>
+          </div>
+          <div className="form-grid">
+            <label>
+              Your name
+              <input value={form.customerName} maxLength={80} autoComplete="name" onChange={(event) => updateField("customerName", event.target.value)} required />
+            </label>
+            <label>
+              Business or shop name
+              <input value={form.businessName} maxLength={120} autoComplete="organization" onChange={(event) => updateField("businessName", event.target.value)} required />
+            </label>
+            <label>
+              Mobile number
+              <input value={form.mobileNumber} maxLength={20} inputMode="tel" autoComplete="tel" placeholder="Your 10-digit mobile number" onChange={(event) => updateField("mobileNumber", event.target.value)} required />
+            </label>
+            <label>
+              City or town
+              <input value={form.cityTown} maxLength={80} autoComplete="address-level2" placeholder="Example: Ongole" onChange={(event) => updateField("cityTown", event.target.value)} required />
+            </label>
+          </div>
+          <button className="primary-button form-next-button" type="button" onClick={continueToWorkDetails}>
+            Continue <ArrowRight size={20} aria-hidden="true" />
+          </button>
+        </div>
+      ) : (
+        <div className="form-step">
+          <div className="form-step-heading">
+            <span className="form-step-number">2</span>
+            <div>
+              <h3>Advertisement work</h3>
+              <p>Approximate details are enough. Our team will confirm the plan with you.</p>
+            </div>
+          </div>
+          <label>
+            Advertisement message
+            <textarea value={form.advertisementDetails} maxLength={1000} onChange={(event) => updateField("advertisementDetails", event.target.value)} placeholder="What should people know about your shop, offer, event, or service?" required />
+          </label>
+          <div className="form-grid">
+            <label>
+              Preferred work date
+              <input type="date" value={form.preferredDate} onChange={(event) => updateField("preferredDate", event.target.value)} required />
+            </label>
+            <label>
+              Number of days
+              <input type="number" min="1" max="30" value={form.numberOfDays} onChange={(event) => updateField("numberOfDays", Number(event.target.value))} required />
+            </label>
+          </div>
+          <label>
+            Areas to cover
+            <textarea value={form.areasToCover} maxLength={500} onChange={(event) => updateField("areasToCover", event.target.value)} placeholder="Example: main road, market, bus stand, nearby villages" required />
+          </label>
+          <details className="optional-details">
+            <summary>Add a note (optional)</summary>
+            <label>
+              Anything else the team should know?
+              <textarea value={form.notes} maxLength={600} onChange={(event) => updateField("notes", event.target.value)} placeholder="Timing, language, or other useful details" />
+            </label>
+          </details>
+          <label className="consent-row">
+            <input type="checkbox" checked={form.consentToContact} onChange={(event) => updateField("consentToContact", event.target.checked)} />
+            <span>I agree that the {productName} team may contact me about this enquiry.</span>
+          </label>
+          <div className="form-action-row">
+            <button className="text-button" type="button" onClick={() => { setErrors([]); setStep(1); }}>Back</button>
+            <button className="primary-button" type="submit" disabled={isSending}>
+              {isSending ? "Sending..." : "Send enquiry"}
+            </button>
+          </div>
+        </div>
+      )}
 
       {errors.length > 0 && (
         <div className="form-alert" role="alert">
@@ -222,15 +277,13 @@ function EnquiryForm() {
         </div>
       )}
       {statusMessage && <p className="form-status" role="status">{statusMessage}</p>}
-
-      <button className="primary-button" type="submit" disabled={isSending}>
-        {isSending ? "Sending..." : publicWebsiteText.enquiryButton}
-      </button>
     </form>
   );
 }
 
 function PublicWebsite() {
+  const contact = getPublicContact();
+
   return (
     <main className="page-shell kootha-public-page">
       <header className="topbar kootha-topbar">
@@ -239,94 +292,112 @@ function PublicWebsite() {
         </a>
         <nav className="nav-actions" aria-label="Main navigation">
           <a href="#how-it-works">How it works</a>
-          <a href="#packages">Packages</a>
+          <a href="#proof">What you receive</a>
           <a className="nav-link" href="#enquiry">Send enquiry</a>
         </nav>
       </header>
 
-      <section className="hero-section kootha-hero" aria-labelledby="home-title">
+      <section className="kootha-hero" aria-labelledby="home-title">
+        <div className="hero-media" aria-hidden="true">
+          <img src="/assets/illustration-driver.svg" alt="" />
+        </div>
         <div className="hero-copy">
-          <p className="eyebrow">Advertisement proof</p>
-          <h1 id="home-title">{publicWebsiteText.heroHeadline}</h1>
-          <p>{publicWebsiteText.heroCopy}</p>
+          <p className="eyebrow">Advertisement work, made clear</p>
+          <h1 id="home-title">Work planned clearly. Proof shared simply.</h1>
+          <p>Kootha helps businesses arrange field advertisement work and receive useful proof after the work is done.</p>
           <div className="hero-action-row">
-            <a className="primary-button hero-button" href="#enquiry">Send enquiry</a>
-            <a className="secondary-button" href="#how-it-works">See steps</a>
+            <a className="primary-button hero-button" href="#enquiry">Send enquiry <ArrowRight size={20} aria-hidden="true" /></a>
+            {contact && (
+              <a className="secondary-button hero-call-button" href={`tel:${contact.phone}`}>
+                <Phone size={19} aria-hidden="true" /> Call {contact.display}
+              </a>
+            )}
           </div>
         </div>
-        <div className="hero-visual" aria-label="Kootha proof flow preview">
-          <img src="/assets/illustration-driver.svg" alt="Driver doing advertisement work" />
+      </section>
+
+      <section className="trust-strip" aria-label="Kootha service highlights">
+        <span><ShieldCheck size={22} aria-hidden="true" /> Admin-reviewed proof</span>
+        <span><MapPin size={22} aria-hidden="true" /> Work planned area by area</span>
+        <span><Camera size={22} aria-hidden="true" /> Photo and work updates</span>
+      </section>
+
+      <section className="section-band process-section" id="how-it-works" aria-labelledby="work-title">
+        <div className="section-heading-row">
           <div>
-            <strong>Clear proof for field work</strong>
-            <span>Plan, driver update, photo proof, final summary.</span>
+            <p className="eyebrow">How Kootha works</p>
+            <h2 id="work-title">Four clear steps</h2>
           </div>
+          <p>You do not need to understand technical tracking or reporting. The Kootha team manages the process.</p>
         </div>
+        <ol className="service-timeline">
+          {serviceSteps.map((step) => {
+            const Icon = step.icon;
+            return (
+              <li key={step.number}>
+                <span className="timeline-number">{step.number}</span>
+                <Icon size={26} aria-hidden="true" />
+                <h3>{step.title}</h3>
+                <p>{step.text}</p>
+              </li>
+            );
+          })}
+        </ol>
       </section>
 
-      <section className="section-band" id="how-it-works" aria-labelledby="work-title">
-        <p className="eyebrow">How it works</p>
-        <h2 id="work-title">Five simple steps</h2>
-        <div className="proof-step-grid">
-          {proofSteps.map((step) => (
-            <article className="proof-step-card" key={step.title}>
-              <img src={step.image} alt="" />
-              <h3>{step.title}</h3>
-              <p>{step.text}</p>
-            </article>
-          ))}
+      <section className="proof-band" id="proof" aria-labelledby="proof-title">
+        <div className="proof-band-copy">
+          <p className="eyebrow">What you receive</p>
+          <h2 id="proof-title">One simple record of the work</h2>
+          <p>Proof is reviewed by the Kootha team before it is included in the final summary.</p>
         </div>
-      </section>
-
-      <section className="section-band two-column" aria-labelledby="solution-title">
-        <div>
-          <p className="eyebrow">Why Kootha</p>
-          <h2 id="solution-title">Simple proof for shop owners.</h2>
+        <div className="proof-list">
+          <span><CheckCircle2 aria-hidden="true" /> Planned dates and areas</span>
+          <span><CheckCircle2 aria-hidden="true" /> Reviewed photo proof and updates</span>
+          <span><CheckCircle2 aria-hidden="true" /> Customer-safe final proof summary</span>
         </div>
-        <p>{productName} helps your team plan the work, collect proof photos, send simple updates, and prepare a final proof summary customers can understand.</p>
-      </section>
-
-      <section className="section-band" id="packages" aria-labelledby="packages-title">
-        <p className="eyebrow">Packages</p>
-        <h2 id="packages-title">Choose the proof level</h2>
-        <div className="card-grid three-columns package-grid">
-          {packageCards.map((card) => (
-            <article className="info-card" key={card.name}>
-              <h3>{card.name}</h3>
-              <p>{card.text}</p>
-            </article>
-          ))}
-        </div>
-      </section>
-
-      <section className="section-band" aria-labelledby="faq-title">
-        <p className="eyebrow">FAQ</p>
-        <h2 id="faq-title">Common questions</h2>
-        <div className="faq-list">
-          <details>
-            <summary>Can I see live location?</summary>
-            <p>No live location link is shared by default. You receive updates and a final proof summary.</p>
-          </details>
-          <details>
-            <summary>Is driver location used after work?</summary>
-            <p>No. Phone Location Proof is for active assigned work only.</p>
-          </details>
-          <details>
-            <summary>Can this work for multiple days?</summary>
-            <p>Yes. Admin can plan one-day or multi-day work.</p>
-          </details>
-        </div>
+        <img src="/assets/illustration-summary.svg" alt="Simple final proof summary" />
       </section>
 
       <section className="section-band enquiry-section kootha-enquiry-section" id="enquiry" aria-labelledby="enquiry-title">
-        <div>
-          <p className="eyebrow">Contact and enquiry</p>
+        <div className="enquiry-intro">
+          <p className="eyebrow">Start here</p>
           <h2 id="enquiry-title">Tell us about your advertisement work</h2>
-          <p>Share the areas, date, and message. The {productName} team can call you and plan the next step.</p>
-          <p className="contact-placeholder">Call placeholder: +91 00000 00000</p>
-          <img className="enquiry-side-image" src="/assets/illustration-enquiry.svg" alt="Customer sending enquiry" />
+          <p>Share the basic details. The Kootha team will call you to confirm the areas, timing, and proof plan.</p>
+          <div className="enquiry-promise">
+            <ShieldCheck size={24} aria-hidden="true" />
+            <span>Your enquiry is private and is reviewed only by the Kootha team.</span>
+          </div>
+          <img className="enquiry-side-image" src="/assets/illustration-enquiry.svg" alt="Customer sending an enquiry" />
         </div>
         <EnquiryForm />
       </section>
+
+      <section className="section-band faq-section" aria-labelledby="faq-title">
+        <div>
+          <p className="eyebrow">Common questions</p>
+          <h2 id="faq-title">Before you send an enquiry</h2>
+        </div>
+        <div className="faq-list">
+          <details>
+            <summary>What kinds of advertisement work can I request?</summary>
+            <p>Shop promotions, offers, events, openings, public announcements, and other local field advertising can be planned.</p>
+          </details>
+          <details>
+            <summary>Can the work continue for several days?</summary>
+            <p>Yes. Tell us the approximate dates and areas. The team will confirm the daily plan with you.</p>
+          </details>
+          <details>
+            <summary>Will customers see a live driver location?</summary>
+            <p>No live location link is shared by default. Customers receive reviewed updates and a final proof summary.</p>
+          </details>
+        </div>
+      </section>
+
+      <footer className="site-footer">
+        <img src="/assets/kootha-logo.svg" alt={productName} />
+        <p>Clear advertisement work. Useful proof.</p>
+      </footer>
     </main>
   );
 }

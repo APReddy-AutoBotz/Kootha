@@ -134,6 +134,10 @@ describe("M3 campaign planning and scheduling", () => {
     expect(webAdminSource).toContain("Proof");
     expect(webAdminSource).toContain("Close");
     expect(webAdminSource).toContain("activeAdWorkStep === \"plan\"");
+    expect(webAdminSource).toContain("OperationsDashboard");
+    expect(webAdminSource).toContain("admin-nav-list");
+    expect(webAdminSource).toContain('useState<AdminView>("dashboard")');
+    expect(webAdminSource).toContain("step-number");
   });
 
   it("does not use privileged Supabase keys in frontend code", () => {

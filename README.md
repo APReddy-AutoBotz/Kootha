@@ -1,6 +1,6 @@
 # Kootha
 
-Kootha is a low-cost local mic advertisement proof platform. The repository currently includes M0 foundation, M1 public website and enquiries, M2 admin lead management, M3 campaign planning and scheduling, M4 driver and vehicle onboarding, M5 driver and vehicle assignment to ad work, M6 ad work execution without GPS, M7 proof upload and customer update sharing, M8 final proof summary and campaign closure, M9 mobile GPS tracking foundation, M10 mobile GPS reliability and offline buffer, M11 admin tracking review without maps, M12 location proof in final summary, M13 pilot readiness and deployment preparation, M14 controlled pilot dry run preparation, M15 real device pilot setup and deployment preparation, M16 real device pilot execution evidence, M17 real device pilot blocker remediation, and M18 real-device pilot evidence retry preflight.
+Kootha is a field advertisement planning and proof platform. The repository currently includes M0 foundation, M1 public website and enquiries, M2 admin lead management, M3 campaign planning and scheduling, M4 driver and vehicle onboarding, M5 driver and vehicle assignment to ad work, M6 ad work execution without GPS, M7 proof upload and customer update sharing, M8 final proof summary and campaign closure, M9 mobile GPS tracking foundation, M10 mobile GPS reliability and offline buffer, M11 admin tracking review without maps, M12 location proof in final summary, M13 pilot readiness and deployment preparation, M14 controlled pilot dry run preparation, M15 real device pilot setup and deployment preparation, M16 real device pilot execution evidence, M17 real device pilot blocker remediation, and M18 real-device pilot evidence retry preflight.
 
 ## Current Scope
 
@@ -144,7 +144,7 @@ Apply the M4 migration after M0 through M3. It adds driver_applications and admi
 Driver registration works from the Android driver app:
 
 1. Run the driver app with EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY configured.
-2. The driver enters name, mobile number, city/town, service areas, vehicle details, Mic System availability, Vehicle GPS Device readiness, notes, and consent.
+2. The driver enters name, mobile number, city/town, service areas, vehicle details, speaker equipment availability, Vehicle GPS Device readiness, notes, and consent.
 3. The public driver app can only insert a new driver application.
 4. If the Expo public values are missing or placeholder-only, the app still opens and shows Driver registration is not configured in this environment.
 
@@ -155,7 +155,7 @@ Admin review works from /admin:
 3. Approving an application creates or links a driver record.
 4. If vehicle details are present, approving creates or links a vehicle record.
 5. Duplicate mobile numbers or vehicle numbers link to existing records instead of creating duplicate approved records.
-6. Open Drivers or Vehicles to manually update onboarding status, availability, Mic System, Vehicle GPS Device readiness, and admin notes.
+6. Open Drivers or Vehicles to manually update onboarding status, availability, speaker equipment, Vehicle GPS Device readiness, and admin notes.
 
 M4 does not assign drivers or vehicles to ad works. M4 does not implement tracking, GPS permissions, background location, maps, device location collection, or live customer links.
 
@@ -169,11 +169,11 @@ Admin assignment works from /admin:
 2. Select a planned Ad Work.
 3. Use Assign Driver to choose an approved, non-blocked driver.
 4. Use Assign Vehicle to choose an approved, non-blocked vehicle.
-5. Review the driver city/town, Service Area, Availability, vehicle approval, Mic System, and Vehicle GPS Device readiness.
+5. Review the driver city/town, Service Area, Availability, vehicle approval, speaker equipment, and Vehicle GPS Device readiness.
 6. Set assignment status to Assigned, Needs Review, Ready for Execution, Cancelled, or Not Assigned.
 7. Save the assignment note and status.
 
-Ready for Execution means the assignment has passed the simple admin readiness checklist: planned dates, Areas to Cover, approved driver, approved vehicle, Mic System, package selection, and proof plan. It does not start the Ad Work.
+Ready for Execution means the assignment has passed the simple admin readiness checklist: planned dates, Areas to Cover, approved driver, approved vehicle, speaker equipment, package selection, and proof plan. It does not start the Ad Work.
 
 For multi-day Ad Work, M5 uses one driver and one vehicle for all planned days. M5 does not implement different drivers per day.
 
@@ -241,7 +241,7 @@ Admin closure works from /admin:
 7. Copy Final Summary, open the print-friendly summary view, or use browser print/save as PDF manually.
 8. Mark Final Summary as Shared using Manual WhatsApp, Manual SMS, Phone Call, Printed Copy, In Person, or Other.
 
-The Final Proof Summary shows customer details, Ad Work details, assigned driver and vehicle, Mic System status, day-wise execution, approved proof notes/photos, Customer Update sharing status, closure status, Closure Note, closed time, and Customer Accepted status. Rejected or waiting proof is not shown as customer-approved proof; it remains an internal warning.
+The Final Proof Summary shows customer details, Ad Work details, assigned driver and vehicle, speaker equipment status, day-wise execution, approved proof notes/photos, Customer Update sharing status, closure status, Closure Note, closed time, and Customer Accepted status. Rejected or waiting proof is not shown as customer-approved proof; it remains an internal warning.
 
 M8 does not use GPS, maps, route tracking, background location, customer live tracking links, paid PDF generation, automatic email, WhatsApp/SMS provider sending, payments, customer app, iOS app, or PWA. Proof photos remain private in the proof-photos bucket. Admin previews use short-lived signed URLs only.
 

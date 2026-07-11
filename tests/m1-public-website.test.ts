@@ -16,7 +16,7 @@ describe("M1 public website", () => {
   it("uses the centralized product name on the public website", () => {
     expect(webAppSource).toContain("resolveProductName");
     expect(webAppSource).toContain("productName");
-    expect(webAppSource).toContain("publicWebsiteText.heroHeadline");
+    expect(webAppSource).toContain("Work planned clearly. Proof shared simply.");
     expect(sharedEnquirySource).toContain("Advertisement work with clear proof");
     expect(sharedEnquirySource).toContain("Kootha team");
   });
@@ -29,6 +29,10 @@ describe("M1 public website", () => {
     expect(webAppSource).not.toContain("Pilot area");
     expect(webAppSource).not.toContain("Payment collection is not part of the current setup");
     expect(webAppSource).not.toContain("Mic announcement proof");
+    expect(webAppSource).toContain("Step {step} of 2");
+    expect(webAppSource).toContain("continueToWorkDetails");
+    expect(webAppSource).not.toContain("Choose the proof level");
+    expect(webAppSource).not.toContain("Phone Location Proof?");
   });
 
   it("ships original Kootha logo and explanation assets", () => {

@@ -98,8 +98,9 @@ describe("M10 mobile GPS reliability and offline buffer", () => {
       "Try Sync Again",
       "Unsynced Points"
     ]));
-    expect(driverAppSource).toContain("Last Saved Location Time");
-    expect(driverAppSource).toContain("Last Sync Time");
+    expect(driverAppSource).toContain("pendingOfflineCount");
+    expect(driverAppSource).toContain("waiting to sync");
+    expect(driverAppSource).toContain("Sync Now");
     expect(webAdminSource).toContain("Offline points are pending sync");
     expect(webAdminSource).toContain("No recent location update");
     expect(webAdminSource).toContain("Location sync failed");

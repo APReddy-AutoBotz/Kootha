@@ -132,7 +132,6 @@ describe("M6 ad work execution without GPS", () => {
     expect(source).not.toContain("leaflet");
     expect(source).not.toContain("expo-camera");
     expect(source).not.toContain("expo-av");
-    expect(source).not.toContain("camera");
     expect(source).not.toContain("microphone");
     expect(source).not.toContain("stripe");
     expect(source).not.toContain("razorpay");
@@ -166,6 +165,10 @@ describe("M6 ad work execution without GPS", () => {
     expect(webAdminSource).toContain("Execution timeline");
     expect(webAdminSource).toContain("Customer update records");
     expect(driverAppSource).toContain("Open Assigned Work");
+    expect(driverAppSource).toContain('type DriverScreen = "work" | "register"');
+    expect(driverAppSource).toContain('type WorkPanel = "work" | "proof" | "help"');
+    expect(driverAppSource).toContain("handleCallAdmin");
+    expect(driverAppSource).toContain("EXPO_PUBLIC_ADMIN_PHONE");
     expect(Object.values(businessLabels.driver)).toContain("Start Work");
     expect(Object.values(businessLabels.driver)).toContain("Take Break");
     expect(Object.values(businessLabels.driver)).toContain("Resume Work");
