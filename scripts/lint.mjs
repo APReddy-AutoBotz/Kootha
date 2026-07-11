@@ -22,10 +22,10 @@ const scannedExtensions = new Set([".ts", ".tsx", ".js", ".mjs", ".css", ".json"
 const ignoredFiles = new Set(["kootha-prachar-complete-specification.md"]);
 const blockedFiles = [/\.env$/, /\.env\.(?!example$)/];
 const forbiddenCustomerDriverWords = ["geofence", "telemetry", "coordinates", "ingestion"];
-const customerDriverLabelFiles = [
+const customerDriverLabelFiles = new Set([
   path.join("packages", "shared", "src", "labels.ts"),
   path.join("apps", "driver", "App.tsx")
-];
+].map((file) => file.split(path.sep).join("/")));
 
 async function walk(dir) {
   const entries = await readdir(dir, { withFileTypes: true });
@@ -77,7 +77,7 @@ for (const file of files) {
     failures.push(`Trailing whitespace found: ${normalized}`);
   }
 
-  const isCustomerDriverLabelFile = customerDriverLabelFiles.some((labelPath) => normalized === labelPath);
+  const isCustomerDriverLabelFile = customerDriverLabelFiles.has(normalized);
   if (isCustomerDriverLabelFile) {
     const lowerContents = contents.toLowerCase();
     for (const word of forbiddenCustomerDriverWords) {
