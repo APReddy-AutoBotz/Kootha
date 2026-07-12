@@ -48,3 +48,6 @@ Thumbs.db
 # Local QA artifacts
 output/
 .playwright-cli/
+
+# Local Netlify folder
+.netlify
