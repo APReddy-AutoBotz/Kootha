@@ -47,7 +47,7 @@
   content: "";
   position: absolute;
   inset: 0;
-  z-index: -1;
+  z-index: 0;
   background-image:
     linear-gradient(rgba(120, 31, 7, 0.13), rgba(120, 31, 7, 0.13)),
     url("/assets/kootha-town-road-static.webp");
@@ -61,7 +61,7 @@
   inset: auto 0 0;
   height: 12px;
   background: var(--kootha-orange-dark);
-  z-index: -1;
+  z-index: 1;
 }
 
 .kootha-hero .hero-copy {
