@@ -5,6 +5,7 @@ import path from "node:path";
 const root = process.cwd();
 const ignoredDirs = new Set([
   ".git",
+  ".netlify",
   ".playwright-cli",
   ".expo",
   ".turbo",
