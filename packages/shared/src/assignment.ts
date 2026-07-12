@@ -40,6 +40,10 @@ export interface AssignmentAdWorkReadinessInput {
   packageInterest: PackageInterest;
   liveTrackingRequested: LiveTrackingNeed;
   proofPlanSelected: boolean;
+  driverRequired?: boolean;
+  vehicleRequired?: boolean;
+  speakerRequired?: boolean;
+  areasRequired?: boolean;
 }
 
 export interface AssignmentReadinessCheck {
@@ -122,42 +126,38 @@ export function buildAssignmentReadiness(input: {
     {
       label: "Areas to cover",
       passed: Boolean(normalizeText(input.adWork.areasToCover)),
-      required: true
+      required: input.adWork.areasRequired ?? true
     },
     {
       label: "Approved driver assigned",
       passed: driverCanBeAssigned(input.driver),
-      required: true
+      required: input.adWork.driverRequired ?? true
     },
     {
       label: "Approved vehicle assigned",
       passed: vehicleCanBeAssigned(input.vehicle),
-      required: true
+      required: input.adWork.vehicleRequired ?? true
     },
     {
-      label: "Mic System available",
+      label: "Speaker equipment available",
       passed: vehicleHasMicSystem(input.vehicle),
-      required: true
+      required: input.adWork.speakerRequired ?? true
     },
     {
       label: "Package selected",
       passed: input.adWork.packageInterest !== "not_sure",
-      required: true
+      required: false
     },
     {
       label: "Proof plan selected",
       passed: input.adWork.proofPlanSelected,
-      required: true
+      required: false
     }
   ];
 
   const warnings: string[] = [];
 
-  if (!vehicleHasGpsReadiness(input.vehicle)) {
-    warnings.push("Vehicle GPS Device is not available or planned.");
-  }
-
-  if (!input.driver || input.driver.availabilityStatus === "unknown") {
+  if (input.adWork.driverRequired && (!input.driver || input.driver.availabilityStatus === "unknown")) {
     warnings.push("Driver availability is unknown.");
   }
 
@@ -173,7 +173,7 @@ export function buildAssignmentReadiness(input: {
     warnings.push("Premium live tracking request needs Vehicle GPS Device readiness.");
   }
 
-  const ready = checks.every((check) => check.passed);
+  const ready = checks.every((check) => !check.required || check.passed);
 
   return {
     status: input.requestedStatus ?? (ready ? "ready_for_execution" : "needs_review"),

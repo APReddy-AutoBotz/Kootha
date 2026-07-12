@@ -19,20 +19,37 @@
 }
 
 .admin-brand {
-  display: grid;
-  gap: 8px;
-  padding: 22px 20px 20px;
+  min-height: 86px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 18px;
   border-bottom: 1px solid #4d443d;
+  color: #fffdf8;
 }
 
 .admin-brand img {
-  width: 150px;
-  filter: brightness(0) invert(1);
+  width: 54px;
+  height: 54px;
+  flex: 0 0 54px;
+  border-radius: 8px;
 }
 
-.admin-brand span {
+.admin-brand-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.admin-brand-copy strong {
+  color: #fffdf8;
+  font-size: 23px;
+  line-height: 1;
+}
+
+.admin-brand-copy small {
   color: #cfc3b8;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 850;
   text-transform: uppercase;
 }
@@ -301,6 +318,24 @@
   box-shadow: none;
 }
 
+.admin-app-main .lead-list,
+.admin-app-main .ad-work-detail-panel,
+.admin-app-main .lead-detail-panel {
+  max-height: none;
+  min-width: 0;
+  overflow: visible;
+}
+
+.admin-app-main .lead-row {
+  min-width: 0;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.admin-app-main .lead-row > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .admin-app-main .ad-work-layout {
   gap: 24px;
 }
@@ -471,6 +506,10 @@
   .admin-app-main .ad-work-stepper {
     grid-template-columns: repeat(5, minmax(0, 1fr));
   }
+
+  .admin-app-main .lead-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 900px) {
@@ -538,8 +577,8 @@
   }
 
   .admin-mobile-header img {
-    width: 40px;
-    height: 40px;
+    width: 46px;
+    height: 46px;
   }
 
   .admin-mobile-header button {
@@ -589,6 +628,10 @@
   }
 
   .admin-app-main .ad-work-layout .admin-filter-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-app-main .lead-row {
     grid-template-columns: 1fr;
   }
 

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
+import "./admin-workflow.css";
 import type { FormEvent, ReactNode } from "react";
-import { ClipboardCheck, Globe2, Inbox, LayoutDashboard, LogOut, Megaphone, RefreshCw, Truck, UserRoundCheck, Users } from "lucide-react";
+import { CheckCircle2, ClipboardCheck, FileClock, Globe2, Inbox, LayoutDashboard, LogOut, Megaphone, RefreshCw, Truck, UserRoundCheck, Users } from "lucide-react";
 import {
   adWorkAssignmentStatusOptions,
   adWorkExecutionDayStatusOptions,
@@ -13,6 +14,9 @@ import {
   campaignClosureReasonOptions,
   customerAcceptanceStatusOptions,
   customerUpdateSharingMethodOptions,
+  deliveryMethods,
+  deliveryMethodTemplates,
+  deriveAdWorkNextAction,
   driverCanBeAssigned,
   driverApplicationStatusOptions,
   driverAvailabilityStatusOptions,
@@ -41,6 +45,7 @@ import {
   getLocationProofReviewStatusLabel,
   getLocationProofWarningLabel,
   getPlannedEndDate,
+  getDeliveryMethodRequirements,
   getProofReviewStatusLabel,
   getProofUploadStatusLabel,
   getTrackingHealthStatusLabel,
@@ -55,6 +60,8 @@ import {
   finalSummaryShareMethodOptions,
   locationProofReviewStatusOptions,
   proofReviewStatusOptions,
+  proofPhotoBucketName,
+  validateProofPhotoFile,
   executionProofNoteTypeOptions,
   vehicleCanBeAssigned,
   vehicleGpsDeviceStatusOptions,
@@ -75,6 +82,7 @@ import type {
   CustomerAcceptanceStatus,
   CustomerUpdateSharingMethod,
   CustomerUpdateSharingStatus,
+  DeliveryMethod,
   DriverApplicationStatus,
   DriverAvailabilityStatus,
   DriverStatus,
@@ -109,10 +117,22 @@ type SupabaseConfig = {
 type AuthSession = {
   accessToken: string;
   refreshToken?: string;
+  expiresAt?: number;
   user: {
     id: string;
     email?: string;
   };
+};
+
+
+type AuditLogRecord = {
+  id: string;
+  actor_type: string;
+  action: string;
+  entity_type: string;
+  entity_id: string | null;
+  created_at: string;
+  safe_details: Record<string, unknown>;
 };
 
 type AdminProfile = {
@@ -157,6 +177,13 @@ type AdWorkRecord = {
   customer_name: string;
   business_name: string | null;
   customer_phone: string | null;
+  delivery_method: DeliveryMethod;
+  execution_mode: "driver_app" | "admin_managed";
+  driver_required: boolean;
+  vehicle_required: boolean;
+  speaker_required: boolean;
+  areas_required: boolean;
+  customer_updates_required: boolean;
   city: string | null;
   areas_to_cover: string | null;
   advertisement_details: string | null;
@@ -242,7 +269,7 @@ type AreaRecord = {
   active: boolean;
 };
 
-type AdminView = "enquiries" | "adWorks" | "driverApplications" | "drivers" | "vehicles" | "dashboard";
+type AdminView = "enquiries" | "adWorks" | "driverApplications" | "drivers" | "vehicles" | "audit" | "dashboard";
 type AdWorkWorkflowStep = "plan" | "assign" | "release" | "proof" | "close";
 
 type AdminFilters = {
@@ -270,6 +297,13 @@ type AdWorkDraft = {
   customerName: string;
   businessName: string;
   mobileNumber: string;
+  deliveryMethod: DeliveryMethod;
+  executionMode: "driver_app" | "admin_managed";
+  driverRequired: boolean;
+  vehicleRequired: boolean;
+  speakerRequired: boolean;
+  areasRequired: boolean;
+  customerUpdatesRequired: boolean;
   cityTown: string;
   title: string;
   advertisementDetails: string;
@@ -319,7 +353,7 @@ type AdWorkAssignmentRecord = {
   id: string;
   ad_work_id: string;
   driver_id: string;
-  vehicle_id: string;
+  vehicle_id: string | null;
   status: AdWorkAssignmentStatus;
   assignment_note: string | null;
   readiness_warnings: string[] | null;
@@ -407,6 +441,12 @@ type ProofUploadRecord = {
   reviewed_at: string | null;
   created_at: string;
   updated_at: string | null;
+};
+
+type ProofUploadSlot = {
+  proof_upload_id: string;
+  file_bucket: string;
+  file_path: string;
 };
 
 type ExecutionProofNoteRecord = {
@@ -603,12 +643,47 @@ const adminSessionKey = "kootha-admin-session";
 const publicKeyHeader = ["api", "key"].join("");
 const adminRoles = new Set(["admin"]);
 const adWorkWorkflowSteps: { id: AdWorkWorkflowStep; label: string; helper: string }[] = [
-  { id: "plan", label: "Plan", helper: "Customer, date, time, areas" },
-  { id: "assign", label: "Assign", helper: "Driver and vehicle" },
-  { id: "release", label: "Release", helper: "Work Code and Location Proof" },
+  { id: "plan", label: "Setup", helper: "Customer, dates, and delivery" },
+  { id: "assign", label: "People", helper: "People and equipment" },
+  { id: "release", label: "Work", helper: "Start or monitor work" },
   { id: "proof", label: "Proof", helper: "Photos and updates" },
-  { id: "close", label: "Close", helper: "Final summary" }
+  { id: "close", label: "Finish", helper: "Final summary" }
 ];
+
+function getAdWorkRequirements(adWork: AdWorkRecord) {
+  return {
+    executionMode: adWork.execution_mode,
+    driverRequired: adWork.driver_required,
+    vehicleRequired: adWork.vehicle_required,
+    speakerRequired: adWork.speaker_required,
+    areasRequired: adWork.areas_required,
+    photoProofRequired: adWork.photo_proof_needed,
+    customerUpdatesRequired: adWork.customer_updates_required
+  };
+}
+
+function getAdWorkNextAction(adWork: AdWorkRecord, days: readonly AdWorkDayRecord[]) {
+  return deriveAdWorkNextAction({
+    title: adWork.title,
+    startDate: adWork.start_date,
+    areasToCover: adWork.areas_to_cover,
+    deliveryMethod: adWork.delivery_method,
+    requirements: getAdWorkRequirements(adWork),
+    assignmentReady: !adWork.driver_required || adWork.assignment_status === "ready_for_execution",
+    releaseStatus: adWork.execution_release_status,
+    dayStatuses: days.map((day) => day.execution_status),
+    pendingProofCount: adWork.execution_overall_status === "completed" && !adWork.final_summary_reviewed ? 1 : 0,
+    closureStatus: adWork.closure_status
+  });
+}
+
+function getStepForAction(action: ReturnType<typeof getAdWorkNextAction>["action"]): AdWorkWorkflowStep {
+  if (action === "complete_setup") return "plan";
+  if (action === "choose_resources") return "assign";
+  if (["send_to_driver", "start_work", "monitor_work"].includes(action)) return "release";
+  if (action === "review_proof") return "proof";
+  return "close";
+}
 
 const emptyFilters: AdminFilters = {
   status: "all",
@@ -692,6 +767,13 @@ const adWorkSelectColumns = [
   "customer_name",
   "business_name",
   "customer_phone",
+  "delivery_method",
+  "execution_mode",
+  "driver_required",
+  "vehicle_required",
+  "speaker_required",
+  "areas_required",
+  "customer_updates_required",
   "city",
   "areas_to_cover",
   "advertisement_details",
@@ -1034,6 +1116,44 @@ function clearStoredSession() {
   window.localStorage.removeItem(adminSessionKey);
 }
 
+
+async function refreshAdminSession(config: SupabaseConfig, session: AuthSession): Promise<AuthSession> {
+  if (!session.refreshToken) {
+    throw new Error("Admin session expired.");
+  }
+
+  const response = await fetch(config.url + "/auth/v1/token?grant_type=refresh_token", {
+    method: "POST",
+    headers: createHeaders(config, undefined, true),
+    body: JSON.stringify({ refresh_token: session.refreshToken })
+  });
+
+  if (!response.ok) {
+    throw new Error("Admin session expired.");
+  }
+
+  const payload = await response.json() as {
+    access_token?: string;
+    refresh_token?: string;
+    expires_in?: number;
+    user?: { id?: string; email?: string };
+  };
+
+  if (!payload.access_token) {
+    throw new Error("Admin session expired.");
+  }
+
+  return {
+    accessToken: payload.access_token,
+    refreshToken: payload.refresh_token ?? session.refreshToken,
+    expiresAt: Date.now() + (payload.expires_in ?? 3600) * 1000,
+    user: {
+      id: payload.user?.id ?? session.user.id,
+      email: payload.user?.email ?? session.user.email
+    }
+  };
+}
+
 async function loginAdmin(config: SupabaseConfig, email: string, password: string): Promise<AuthSession> {
   const response = await fetch(config.url + "/auth/v1/token?grant_type=password", {
     method: "POST",
@@ -1048,6 +1168,7 @@ async function loginAdmin(config: SupabaseConfig, email: string, password: strin
   const payload = await response.json() as {
     access_token?: string;
     refresh_token?: string;
+    expires_in?: number;
     user?: {
       id?: string;
       email?: string;
@@ -1061,6 +1182,7 @@ async function loginAdmin(config: SupabaseConfig, email: string, password: strin
   return {
     accessToken: payload.access_token,
     refreshToken: payload.refresh_token,
+    expiresAt: Date.now() + (payload.expires_in ?? 3600) * 1000,
     user: {
       id: payload.user.id,
       email: payload.user.email
@@ -1068,8 +1190,33 @@ async function loginAdmin(config: SupabaseConfig, email: string, password: strin
   };
 }
 
+
+async function adminFetch(config: SupabaseConfig, session: AuthSession, url: string, init: RequestInit = {}) {
+  const request = async (activeSession: AuthSession) => {
+    const headers = new Headers(init.headers);
+    headers.set("Authorization", "Bearer " + activeSession.accessToken);
+    return fetch(url, { ...init, headers });
+  };
+
+  const stored = readStoredSession();
+  const activeSession = stored?.user.id === session.user.id ? stored : session;
+  let response = await request(activeSession);
+  if (response.status !== 401 || !activeSession.refreshToken) return response;
+
+  try {
+    const refreshed = await refreshAdminSession(config, activeSession);
+    writeStoredSession(refreshed);
+    window.dispatchEvent(new CustomEvent<AuthSession>("kootha:admin-session", { detail: refreshed }));
+    response = await request(refreshed);
+  } catch {
+    clearStoredSession();
+    window.dispatchEvent(new Event("kootha:admin-session-expired"));
+  }
+  return response;
+}
+
 async function logoutAdmin(config: SupabaseConfig, session: AuthSession) {
-  await fetch(config.url + "/auth/v1/logout", {
+  await adminFetch(config, session, config.url + "/auth/v1/logout", {
     method: "POST",
     headers: createHeaders(config, session.accessToken)
   });
@@ -1098,7 +1245,7 @@ async function fetchAdminProfile(config: SupabaseConfig, session: AuthSession): 
 }
 
 async function fetchAdminEnquiries(config: SupabaseConfig, session: AuthSession): Promise<EnquiryRecord[]> {
-  const response = await fetch(config.url + "/rest/v1/enquiries?select=" + enquirySelectColumns + "&order=created_at.desc", {
+  const response = await adminFetch(config, session, config.url + "/rest/v1/enquiries?select=" + enquirySelectColumns + "&order=created_at.desc", {
     headers: createHeaders(config, session.accessToken)
   });
 
@@ -1110,7 +1257,7 @@ async function fetchAdminEnquiries(config: SupabaseConfig, session: AuthSession)
 }
 
 async function fetchAdminAdWorks(config: SupabaseConfig, session: AuthSession): Promise<AdWorkRecord[]> {
-  const response = await fetch(config.url + "/rest/v1/ad_works?select=" + adWorkSelectColumns + "&order=created_at.desc", {
+  const response = await adminFetch(config, session, config.url + "/rest/v1/ad_works?select=" + adWorkSelectColumns + "&order=created_at.desc", {
     headers: createHeaders(config, session.accessToken)
   });
 
@@ -1122,7 +1269,7 @@ async function fetchAdminAdWorks(config: SupabaseConfig, session: AuthSession): 
 }
 
 async function fetchAdminAdWorkDays(config: SupabaseConfig, session: AuthSession): Promise<AdWorkDayRecord[]> {
-  const response = await fetch(config.url + "/rest/v1/ad_work_days?select=" + adWorkDaySelectColumns + "&order=work_date.asc", {
+  const response = await adminFetch(config, session, config.url + "/rest/v1/ad_work_days?select=" + adWorkDaySelectColumns + "&order=work_date.asc", {
     headers: createHeaders(config, session.accessToken)
   });
 
@@ -1135,7 +1282,7 @@ async function fetchAdminAdWorkDays(config: SupabaseConfig, session: AuthSession
 
 async function fetchAdWorkAssignments(config: SupabaseConfig, session: AuthSession, adWorkId?: string): Promise<AdWorkAssignmentRecord[]> {
   const filter = adWorkId ? "&ad_work_id=eq." + encodeURIComponent(adWorkId) : "";
-  const response = await fetch(config.url + "/rest/v1/ad_work_assignments?select=" + adWorkAssignmentSelectColumns + filter + "&order=created_at.desc", {
+  const response = await adminFetch(config, session, config.url + "/rest/v1/ad_work_assignments?select=" + adWorkAssignmentSelectColumns + filter + "&order=created_at.desc", {
     headers: createHeaders(config, session.accessToken)
   });
 
@@ -1148,7 +1295,7 @@ async function fetchAdWorkAssignments(config: SupabaseConfig, session: AuthSessi
 
 async function fetchTrackingSessions(config: SupabaseConfig, session: AuthSession, adWorkId?: string): Promise<TrackingSessionRecord[]> {
   const filter = adWorkId ? "&ad_work_id=eq." + encodeURIComponent(adWorkId) : "";
-  const response = await fetch(config.url + "/rest/v1/tracking_sessions?select=" + trackingSessionSelectColumns + filter + "&order=updated_at.desc", {
+  const response = await adminFetch(config, session, config.url + "/rest/v1/tracking_sessions?select=" + trackingSessionSelectColumns + filter + "&order=updated_at.desc", {
     headers: createHeaders(config, session.accessToken)
   });
 
@@ -1162,7 +1309,7 @@ async function fetchTrackingSessions(config: SupabaseConfig, session: AuthSessio
 async function fetchLocationPoints(config: SupabaseConfig, session: AuthSession, adWorkId?: string, limit = 20): Promise<LocationPointRecord[]> {
   const filter = adWorkId ? "&ad_work_id=eq." + encodeURIComponent(adWorkId) : "";
   const safeLimit = Math.max(1, Math.min(limit, 1000));
-  const response = await fetch(config.url + "/rest/v1/location_points?select=" + locationPointSelectColumns + filter + "&order=received_at.desc&limit=" + safeLimit, {
+  const response = await adminFetch(config, session, config.url + "/rest/v1/location_points?select=" + locationPointSelectColumns + filter + "&order=received_at.desc&limit=" + safeLimit, {
     headers: createHeaders(config, session.accessToken)
   });
 
@@ -1175,7 +1322,7 @@ async function fetchLocationPoints(config: SupabaseConfig, session: AuthSession,
 
 async function fetchLocationProofReviews(config: SupabaseConfig, session: AuthSession, adWorkId?: string): Promise<LocationProofReviewRecord[]> {
   const filter = adWorkId ? "&ad_work_id=eq." + encodeURIComponent(adWorkId) : "";
-  const response = await fetch(config.url + "/rest/v1/location_proof_reviews?select=" + locationProofReviewSelectColumns + filter + "&order=updated_at.desc", {
+  const response = await adminFetch(config, session, config.url + "/rest/v1/location_proof_reviews?select=" + locationProofReviewSelectColumns + filter + "&order=updated_at.desc", {
     headers: createHeaders(config, session.accessToken)
   });
 
@@ -1187,7 +1334,7 @@ async function fetchLocationProofReviews(config: SupabaseConfig, session: AuthSe
 }
 async function fetchAdminProofUploads(config: SupabaseConfig, session: AuthSession, adWorkId?: string): Promise<ProofUploadRecord[]> {
   const filter = adWorkId ? "&ad_work_id=eq." + encodeURIComponent(adWorkId) : "";
-  const response = await fetch(config.url + "/rest/v1/proof_uploads?select=" + proofUploadSelectColumns + filter + "&order=created_at.desc", {
+  const response = await adminFetch(config, session, config.url + "/rest/v1/proof_uploads?select=" + proofUploadSelectColumns + filter + "&order=created_at.desc", {
     headers: createHeaders(config, session.accessToken)
   });
 
@@ -1199,7 +1346,7 @@ async function fetchAdminProofUploads(config: SupabaseConfig, session: AuthSessi
 }
 
 async function fetchExecutionProofNotes(config: SupabaseConfig, session: AuthSession, adWorkId: string): Promise<ExecutionProofNoteRecord[]> {
-  const response = await fetch(config.url + "/rest/v1/execution_proof_notes?select=" + executionProofNoteSelectColumns + "&ad_work_id=eq." + encodeURIComponent(adWorkId) + "&order=created_at.desc", {
+  const response = await adminFetch(config, session, config.url + "/rest/v1/execution_proof_notes?select=" + executionProofNoteSelectColumns + "&ad_work_id=eq." + encodeURIComponent(adWorkId) + "&order=created_at.desc", {
     headers: createHeaders(config, session.accessToken)
   });
 
@@ -1212,7 +1359,7 @@ async function fetchExecutionProofNotes(config: SupabaseConfig, session: AuthSes
 
 async function fetchCustomerUpdates(config: SupabaseConfig, session: AuthSession, adWorkId?: string): Promise<CustomerUpdateRecord[]> {
   const filter = adWorkId ? "&ad_work_id=eq." + encodeURIComponent(adWorkId) : "";
-  const response = await fetch(config.url + "/rest/v1/customer_updates?select=" + customerUpdateSelectColumns + filter + "&order=created_at.desc", {
+  const response = await adminFetch(config, session, config.url + "/rest/v1/customer_updates?select=" + customerUpdateSelectColumns + filter + "&order=created_at.desc", {
     headers: createHeaders(config, session.accessToken)
   });
 
@@ -1225,7 +1372,7 @@ async function fetchCustomerUpdates(config: SupabaseConfig, session: AuthSession
 
 async function fetchFinalProofSummaries(config: SupabaseConfig, session: AuthSession, adWorkId?: string): Promise<FinalProofSummaryRecord[]> {
   const filter = adWorkId ? "&ad_work_id=eq." + encodeURIComponent(adWorkId) : "";
-  const response = await fetch(config.url + "/rest/v1/final_proof_summaries?select=" + finalProofSummarySelectColumns + filter + "&order=updated_at.desc", {
+  const response = await adminFetch(config, session, config.url + "/rest/v1/final_proof_summaries?select=" + finalProofSummarySelectColumns + filter + "&order=updated_at.desc", {
     headers: createHeaders(config, session.accessToken)
   });
 
@@ -1238,7 +1385,7 @@ async function fetchFinalProofSummaries(config: SupabaseConfig, session: AuthSes
 
 
 async function fetchProofPhotoSignedUrl(config: SupabaseConfig, session: AuthSession, bucket: string, path: string): Promise<string> {
-  const response = await fetch(config.url + "/storage/v1/object/sign/" + bucket + "/" + encodeStoragePath(path), {
+  const response = await adminFetch(config, session, config.url + "/storage/v1/object/sign/" + bucket + "/" + encodeStoragePath(path), {
     method: "POST",
     headers: createHeaders(config, session.accessToken, true),
     body: JSON.stringify({ expiresIn: 300 })
@@ -1258,6 +1405,65 @@ async function fetchProofPhotoSignedUrl(config: SupabaseConfig, session: AuthSes
   return signedPath.startsWith("http") ? signedPath : config.url + "/storage/v1" + signedPath;
 }
 
+async function addAdminProofPhoto(
+  config: SupabaseConfig,
+  session: AuthSession,
+  input: {
+    dayId: string;
+    proofType: ExecutionProofNoteType;
+    areaPlaceName: string;
+    note: string;
+    file: File;
+  }
+) {
+  const prepareResponse = await adminFetch(config, session, config.url + "/rest/v1/rpc/request_admin_proof_upload", {
+    method: "POST",
+    headers: createHeaders(config, session.accessToken, true),
+    body: JSON.stringify({
+      p_ad_work_day_id: input.dayId,
+      p_proof_type: input.proofType,
+      p_area_place_name: input.areaPlaceName.trim() || null,
+      p_note_text: input.note.trim(),
+      p_file_mime_type: input.file.type,
+      p_file_size_bytes: input.file.size
+    })
+  });
+
+  if (!prepareResponse.ok) {
+    throw new Error("Could not prepare the proof photo.");
+  }
+
+  const slots = await prepareResponse.json() as ProofUploadSlot[];
+  const slot = slots[0];
+  if (!slot?.proof_upload_id || slot.file_bucket !== proofPhotoBucketName) {
+    throw new Error("Could not prepare the proof photo.");
+  }
+
+  const uploadResponse = await adminFetch(config, session, config.url + "/storage/v1/object/" + slot.file_bucket + "/" + encodeStoragePath(slot.file_path), {
+    method: "POST",
+    headers: {
+      ...createHeaders(config, session.accessToken),
+      "Content-Type": input.file.type,
+      "x-upsert": "false"
+    },
+    body: input.file
+  });
+
+  if (!uploadResponse.ok) {
+    throw new Error("Could not upload the proof photo.");
+  }
+
+  const completeResponse = await adminFetch(config, session, config.url + "/rest/v1/rpc/complete_admin_proof_upload", {
+    method: "POST",
+    headers: createHeaders(config, session.accessToken, true),
+    body: JSON.stringify({ p_proof_upload_id: slot.proof_upload_id })
+  });
+
+  if (!completeResponse.ok) {
+    throw new Error("The photo uploaded, but could not be added to proof review.");
+  }
+}
+
 async function reviewProofUpload(
   config: SupabaseConfig,
   session: AuthSession,
@@ -1265,7 +1471,7 @@ async function reviewProofUpload(
   reviewStatus: ProofReviewStatus,
   reviewNote: string
 ) {
-  const response = await fetch(config.url + "/rest/v1/rpc/review_proof_upload", {
+  const response = await adminFetch(config, session, config.url + "/rest/v1/rpc/review_proof_upload", {
     method: "POST",
     headers: createHeaders(config, session.accessToken, true),
     body: JSON.stringify({
@@ -1287,7 +1493,7 @@ async function markCustomerUpdateShared(
   sharingMethod: CustomerUpdateSharingMethod,
   sharingNote: string
 ) {
-  const response = await fetch(config.url + "/rest/v1/rpc/mark_customer_update_shared", {
+  const response = await adminFetch(config, session, config.url + "/rest/v1/rpc/mark_customer_update_shared", {
     method: "POST",
     headers: createHeaders(config, session.accessToken, true),
     body: JSON.stringify({
@@ -1314,7 +1520,7 @@ async function prepareFinalProofSummary(
   phoneLocationProofCustomerNote: string,
   phoneLocationProofCustomerSafeConfirmed: boolean
 ) {
-  const response = await fetch(config.url + "/rest/v1/rpc/prepare_final_proof_summary", {
+  const response = await adminFetch(config, session, config.url + "/rest/v1/rpc/prepare_flexible_final_proof_summary", {
     method: "POST",
     headers: createHeaders(config, session.accessToken, true),
     body: JSON.stringify({
@@ -1357,7 +1563,7 @@ async function closeAdWorkWithFinalSummary(
   phoneLocationProofCustomerNote: string,
   phoneLocationProofCustomerSafeConfirmed: boolean
 ) {
-  const response = await fetch(config.url + "/rest/v1/rpc/close_ad_work_with_final_summary", {
+  const response = await adminFetch(config, session, config.url + "/rest/v1/rpc/close_flexible_ad_work_with_final_summary", {
     method: "POST",
     headers: createHeaders(config, session.accessToken, true),
     body: JSON.stringify({
@@ -1394,7 +1600,7 @@ async function markFinalSummaryShared(
   shareMethod: FinalSummaryShareMethod,
   shareNote: string
 ) {
-  const response = await fetch(config.url + "/rest/v1/rpc/mark_final_summary_shared", {
+  const response = await adminFetch(config, session, config.url + "/rest/v1/rpc/mark_final_summary_shared", {
     method: "POST",
     headers: createHeaders(config, session.accessToken, true),
     body: JSON.stringify({
@@ -1422,7 +1628,7 @@ async function releaseAdWorkToDriver(
   adWorkId: string,
   revoke: boolean
 ) {
-  const response = await fetch(config.url + "/rest/v1/rpc/release_ad_work_to_driver", {
+  const response = await adminFetch(config, session, config.url + "/rest/v1/rpc/release_flexible_ad_work_to_driver", {
     method: "POST",
     headers: createHeaders(config, session.accessToken, true),
     body: JSON.stringify({
@@ -1446,7 +1652,7 @@ async function releaseAdWorkToDriver(
 }
 
 async function fetchDriverApplications(config: SupabaseConfig, session: AuthSession): Promise<DriverApplicationRecord[]> {
-  const response = await fetch(config.url + "/rest/v1/driver_applications?select=" + driverApplicationSelectColumns + "&order=created_at.desc", {
+  const response = await adminFetch(config, session, config.url + "/rest/v1/driver_applications?select=" + driverApplicationSelectColumns + "&order=created_at.desc", {
     headers: createHeaders(config, session.accessToken)
   });
 
@@ -1458,7 +1664,7 @@ async function fetchDriverApplications(config: SupabaseConfig, session: AuthSess
 }
 
 async function fetchDrivers(config: SupabaseConfig, session: AuthSession): Promise<DriverRecord[]> {
-  const response = await fetch(config.url + "/rest/v1/drivers?select=" + driverSelectColumns + "&order=created_at.desc", {
+  const response = await adminFetch(config, session, config.url + "/rest/v1/drivers?select=" + driverSelectColumns + "&order=created_at.desc", {
     headers: createHeaders(config, session.accessToken)
   });
 
@@ -1470,7 +1676,7 @@ async function fetchDrivers(config: SupabaseConfig, session: AuthSession): Promi
 }
 
 async function fetchVehicles(config: SupabaseConfig, session: AuthSession): Promise<VehicleRecord[]> {
-  const response = await fetch(config.url + "/rest/v1/vehicles?select=" + vehicleSelectColumns + "&order=created_at.desc", {
+  const response = await adminFetch(config, session, config.url + "/rest/v1/vehicles?select=" + vehicleSelectColumns + "&order=created_at.desc", {
     headers: createHeaders(config, session.accessToken)
   });
 
@@ -1482,7 +1688,7 @@ async function fetchVehicles(config: SupabaseConfig, session: AuthSession): Prom
 }
 
 async function fetchCities(config: SupabaseConfig, session: AuthSession): Promise<CityRecord[]> {
-  const response = await fetch(config.url + "/rest/v1/cities?select=id,name,active&active=eq.true&order=name.asc", {
+  const response = await adminFetch(config, session, config.url + "/rest/v1/cities?select=id,name,active&active=eq.true&order=name.asc", {
     headers: createHeaders(config, session.accessToken)
   });
 
@@ -1494,7 +1700,7 @@ async function fetchCities(config: SupabaseConfig, session: AuthSession): Promis
 }
 
 async function fetchAreas(config: SupabaseConfig, session: AuthSession): Promise<AreaRecord[]> {
-  const response = await fetch(config.url + "/rest/v1/areas?select=id,city_id,name,active&active=eq.true&order=name.asc", {
+  const response = await adminFetch(config, session, config.url + "/rest/v1/areas?select=id,city_id,name,active&active=eq.true&order=name.asc", {
     headers: createHeaders(config, session.accessToken)
   });
 
@@ -1511,7 +1717,7 @@ async function updateAdminEnquiry(
   enquiryId: string,
   draft: AdminDraft
 ) {
-  const response = await fetch(config.url + "/rest/v1/enquiries?id=eq." + encodeURIComponent(enquiryId), {
+  const response = await adminFetch(config, session, config.url + "/rest/v1/enquiries?id=eq." + encodeURIComponent(enquiryId), {
     method: "PATCH",
     headers: {
       ...createHeaders(config, session.accessToken, true),
@@ -1539,7 +1745,7 @@ async function setMobileLocationProof(
   required: boolean,
   note: string
 ) {
-  const response = await fetch(config.url + "/rest/v1/rpc/set_mobile_location_proof", {
+  const response = await adminFetch(config, session, config.url + "/rest/v1/rpc/set_mobile_location_proof", {
     method: "POST",
     headers: createHeaders(config, session.accessToken, true),
     body: JSON.stringify({
@@ -1566,7 +1772,7 @@ async function adminStopMobileTracking(
   session: AuthSession,
   trackingSessionId: string
 ) {
-  const response = await fetch(config.url + "/rest/v1/rpc/admin_stop_mobile_tracking", {
+  const response = await adminFetch(config, session, config.url + "/rest/v1/rpc/admin_stop_mobile_tracking", {
     method: "POST",
     headers: createHeaders(config, session.accessToken, true),
     body: JSON.stringify({ p_tracking_session_id: trackingSessionId })
@@ -1590,7 +1796,7 @@ async function updateLocationProofReview(
   reviewStatus: LocationProofReviewStatus,
   reviewNote: string
 ) {
-  const response = await fetch(config.url + "/rest/v1/rpc/update_location_proof_review", {
+  const response = await adminFetch(config, session, config.url + "/rest/v1/rpc/update_location_proof_review", {
     method: "POST",
     headers: createHeaders(config, session.accessToken, true),
     body: JSON.stringify({
@@ -1619,7 +1825,7 @@ async function createAdWorkFromEnquiry(
   session: AuthSession,
   enquiryId: string
 ): Promise<{ adWorkId: string; wasCreated: boolean }> {
-  const response = await fetch(config.url + "/rest/v1/rpc/create_ad_work_from_enquiry", {
+  const response = await adminFetch(config, session, config.url + "/rest/v1/rpc/create_ad_work_from_enquiry", {
     method: "POST",
     headers: createHeaders(config, session.accessToken, true),
     body: JSON.stringify({ p_enquiry_id: enquiryId })
@@ -1648,7 +1854,7 @@ async function updateAdminAdWork(
   adWorkId: string,
   draft: AdWorkDraft
 ) {
-  const response = await fetch(config.url + "/rest/v1/ad_works?id=eq." + encodeURIComponent(adWorkId), {
+  const response = await adminFetch(config, session, config.url + "/rest/v1/ad_works?id=eq." + encodeURIComponent(adWorkId), {
     method: "PATCH",
     headers: {
       ...createHeaders(config, session.accessToken, true),
@@ -1658,6 +1864,13 @@ async function updateAdminAdWork(
       customer_name: draft.customerName.trim(),
       business_name: draft.businessName.trim() || null,
       customer_phone: draft.mobileNumber.trim() || null,
+      delivery_method: draft.deliveryMethod,
+      execution_mode: draft.executionMode,
+      driver_required: draft.driverRequired,
+      vehicle_required: draft.vehicleRequired,
+      speaker_required: draft.speakerRequired,
+      areas_required: draft.areasRequired,
+      customer_updates_required: draft.customerUpdatesRequired,
       city: draft.cityTown.trim() || null,
       title: draft.title.trim() || "Ad Work",
       advertisement_details: draft.advertisementDetails.trim() || null,
@@ -1665,7 +1878,7 @@ async function updateAdminAdWork(
       live_tracking_requested: draft.liveTrackingRequested,
       live_tracking_enabled: false,
       customer_live_enabled: false,
-      planning_status: draft.planningStatus,
+      planning_status: draft.startDate && (!draft.areasRequired || draft.areasToCover.trim()) ? "ready_for_driver_assignment" : "draft",
       start_date: draft.startDate || null,
       end_date: draft.endDate || null,
       number_of_days: Math.max(1, draft.numberOfDays),
@@ -1699,7 +1912,7 @@ async function syncAdWorkDays(
   adWorkId: string,
   draft: AdWorkDraft
 ) {
-  const response = await fetch(config.url + "/rest/v1/rpc/sync_ad_work_days", {
+  const response = await adminFetch(config, session, config.url + "/rest/v1/rpc/sync_ad_work_days", {
     method: "POST",
     headers: createHeaders(config, session.accessToken, true),
     body: JSON.stringify({
@@ -1724,17 +1937,16 @@ async function saveAdWorkAssignment(
   draft: AdWorkAssignmentDraft,
   warnings: string[]
 ) {
-  const response = await fetch(config.url + "/rest/v1/rpc/assign_driver_vehicle_to_ad_work", {
+  const response = await adminFetch(config, session, config.url + "/rest/v1/rpc/save_ad_work_assignment", {
     method: "POST",
     headers: createHeaders(config, session.accessToken, true),
     body: JSON.stringify({
       p_ad_work_id: adWorkId,
       p_driver_id: draft.driverId,
-      p_vehicle_id: draft.vehicleId,
-      p_status: draft.status,
+      p_vehicle_id: draft.vehicleId || null,
       p_assignment_note: draft.note.trim() || null,
       p_readiness_warnings: warnings,
-      p_warning_confirmation: draft.confirmAssignmentChange
+      p_change_confirmed: draft.confirmAssignmentChange
     })
   });
 
@@ -1757,7 +1969,7 @@ async function updateAdminAdWorkDay(
   session: AuthSession,
   day: DayDraft
 ) {
-  const response = await fetch(config.url + "/rest/v1/ad_work_days?id=eq." + encodeURIComponent(day.id), {
+  const response = await adminFetch(config, session, config.url + "/rest/v1/ad_work_days?id=eq." + encodeURIComponent(day.id), {
     method: "PATCH",
     headers: {
       ...createHeaders(config, session.accessToken, true),
@@ -1785,7 +1997,7 @@ async function reviewDriverApplication(
   applicationId: string,
   draft: DriverApplicationReviewDraft
 ) {
-  const response = await fetch(config.url + "/rest/v1/rpc/review_driver_application", {
+  const response = await adminFetch(config, session, config.url + "/rest/v1/rpc/review_driver_application", {
     method: "POST",
     headers: createHeaders(config, session.accessToken, true),
     body: JSON.stringify({
@@ -1817,7 +2029,7 @@ async function updateDriverRecord(
   driverId: string,
   draft: DriverDraft
 ) {
-  const response = await fetch(config.url + "/rest/v1/drivers?id=eq." + encodeURIComponent(driverId), {
+  const response = await adminFetch(config, session, config.url + "/rest/v1/drivers?id=eq." + encodeURIComponent(driverId), {
     method: "PATCH",
     headers: {
       ...createHeaders(config, session.accessToken, true),
@@ -1842,7 +2054,7 @@ async function updateVehicleRecord(
   vehicleId: string,
   draft: VehicleDraft
 ) {
-  const response = await fetch(config.url + "/rest/v1/vehicles?id=eq." + encodeURIComponent(vehicleId), {
+  const response = await adminFetch(config, session, config.url + "/rest/v1/vehicles?id=eq." + encodeURIComponent(vehicleId), {
     method: "PATCH",
     headers: {
       ...createHeaders(config, session.accessToken, true),
@@ -1887,6 +2099,13 @@ function toAdWorkDraft(adWork: AdWorkRecord): AdWorkDraft {
     customerName: adWork.customer_name ?? "",
     businessName: adWork.business_name ?? "",
     mobileNumber: adWork.customer_phone ?? "",
+    deliveryMethod: adWork.delivery_method ?? "custom",
+    executionMode: adWork.execution_mode ?? "admin_managed",
+    driverRequired: adWork.driver_required ?? false,
+    vehicleRequired: adWork.vehicle_required ?? false,
+    speakerRequired: adWork.speaker_required ?? false,
+    areasRequired: adWork.areas_required ?? false,
+    customerUpdatesRequired: adWork.customer_updates_required ?? true,
     cityTown: adWork.city ?? "",
     title: adWork.title ?? "",
     advertisementDetails: adWork.advertisement_details ?? "",
@@ -2055,7 +2274,11 @@ function toAdWorkAssignmentReadiness(adWork: AdWorkRecord) {
     numberOfDays: adWork.number_of_days,
     packageInterest: adWork.package_interest,
     liveTrackingRequested: adWork.live_tracking_requested,
-    proofPlanSelected: adWork.photo_proof_needed || adWork.audio_video_proof_needed || adWork.area_update_needed || adWork.final_report_needed
+    proofPlanSelected: adWork.photo_proof_needed || adWork.audio_video_proof_needed || adWork.area_update_needed || adWork.final_report_needed,
+    driverRequired: adWork.driver_required,
+    vehicleRequired: adWork.vehicle_required,
+    speakerRequired: adWork.speaker_required,
+    areasRequired: adWork.areas_required
   };
 }
 
@@ -2596,12 +2819,15 @@ function buildPhoneLocationProofPreview(
 function OperationsDashboard({
   enquiries,
   adWorks,
+  adWorkDays,
   onOpen
 }: {
   enquiries: EnquiryRecord[];
   adWorks: AdWorkRecord[];
-  onOpen: (view: AdminView, step?: AdWorkWorkflowStep) => void;
+  adWorkDays: AdWorkDayRecord[];
+  onOpen: (view: AdminView, step?: AdWorkWorkflowStep, adWorkId?: string) => void;
 }) {
+  const actions = adWorks.map((adWork) => ({ adWork, next: getAdWorkNextAction(adWork, adWorkDays.filter((day) => day.ad_work_id === adWork.id)) }));
   const queueItems: {
     label: string;
     helper: string;
@@ -2609,6 +2835,7 @@ function OperationsDashboard({
     icon: typeof Inbox;
     view: AdminView;
     step?: AdWorkWorkflowStep;
+    adWorkId?: string;
   }[] = [
     {
       label: "New enquiries",
@@ -2619,35 +2846,39 @@ function OperationsDashboard({
     },
     {
       label: "Needs assignment",
-      helper: "Choose an approved driver and vehicle",
-      value: adWorks.filter((adWork) => adWork.planning_status === "ready_for_driver_assignment" && (adWork.assignment_status === "not_assigned" || adWork.assignment_status === "cancelled")).length,
+      helper: "Choose only the people and equipment this work needs",
+      value: actions.filter(({ next }) => next.action === "choose_resources").length,
       icon: Users,
       view: "adWorks",
-      step: "assign"
+      step: "assign",
+      adWorkId: actions.find(({ next }) => next.action === "choose_resources")?.adWork.id
     },
     {
-      label: "Ready to release",
-      helper: "Confirm readiness and give the driver access",
-      value: adWorks.filter((adWork) => adWork.assignment_status === "ready_for_execution" && adWork.execution_release_status !== "released_to_driver").length,
+      label: "Ready to start",
+      helper: "Send to a driver or start team-managed work",
+      value: actions.filter(({ next }) => next.action === "send_to_driver" || next.action === "start_work").length,
       icon: ClipboardCheck,
       view: "adWorks",
-      step: "release"
+      step: "release",
+      adWorkId: actions.find(({ next }) => next.action === "send_to_driver" || next.action === "start_work")?.adWork.id
     },
     {
       label: "Proof to review",
       helper: "Review completed work, photos, and updates",
-      value: adWorks.filter((adWork) => adWork.execution_overall_status === "completed" && !adWork.final_summary_reviewed).length,
+      value: actions.filter(({ next }) => next.action === "review_proof").length,
       icon: Megaphone,
       view: "adWorks",
-      step: "proof"
+      step: "proof",
+      adWorkId: actions.find(({ next }) => next.action === "review_proof")?.adWork.id
     },
     {
       label: "Ready to close",
-      helper: "Check the final summary and close the work",
-      value: adWorks.filter((adWork) => adWork.final_summary_reviewed && adWork.closure_status !== "closed").length,
+      helper: "Check the final summary and finish the work",
+      value: actions.filter(({ next }) => next.action === "finish_work").length,
       icon: ClipboardCheck,
       view: "adWorks",
-      step: "close"
+      step: "close",
+      adWorkId: actions.find(({ next }) => next.action === "finish_work")?.adWork.id
     }
   ];
 
@@ -2669,7 +2900,7 @@ function OperationsDashboard({
           {queueItems.map((item) => {
             const Icon = item.icon;
             return (
-              <button key={item.label} type="button" onClick={() => onOpen(item.view, item.step)}>
+              <button key={item.label} type="button" onClick={() => onOpen(item.view, item.step, item.adWorkId)}>
                 <span className="queue-icon"><Icon size={22} aria-hidden="true" /></span>
                 <span className="queue-copy"><strong>{item.label}</strong><small>{item.helper}</small></span>
                 <span className="queue-count">{item.value}</span>
@@ -2705,7 +2936,7 @@ function OperationsDashboard({
 }
 
 function CheckCircle2Icon() {
-  return <span className="empty-check" aria-hidden="true">✓</span>;
+  return <CheckCircle2 className="empty-check" aria-hidden="true" />;
 }
 function EnquirySummaryCards({ enquiries }: { enquiries: EnquiryRecord[] }) {
   const todayKey = new Date().toISOString().slice(0, 10);
@@ -3741,8 +3972,8 @@ function AdWorkAssignmentPanel({
   }, [adWork.id]);
 
   async function handleSaveAssignment() {
-    if (!draft.driverId || !draft.vehicleId) {
-      setMessage("Choose an approved driver and approved vehicle before saving.");
+    if (!draft.driverId || (adWork.vehicle_required && !draft.vehicleId)) {
+      setMessage(adWork.vehicle_required ? "Choose an approved driver and approved vehicle before saving." : "Choose an approved driver before saving.");
       return;
     }
 
@@ -3764,156 +3995,45 @@ function AdWorkAssignmentPanel({
     <section className="form-section" aria-labelledby="assignment-title">
       <div className="panel-heading">
         <div>
-          <h3 id="assignment-title">Assign Driver and Vehicle</h3>
-          <p>One approved driver and one approved vehicle apply to the full Ad Work.</p>
+          <h3 id="assignment-title">Choose people and equipment</h3>
+          <p>Choose only what this advertisement work needs.</p>
         </div>
-        <span className="status-pill">{getAdWorkAssignmentStatusLabel(draft.status)}</span>
+        <span className="status-pill">{assignment ? "Assigned" : "Not assigned"}</span>
       </div>
 
       {message && <p className="form-status admin-message" role="status">{message}</p>}
 
-      <div className="form-grid">
+      <div className="form-grid assignment-primary-fields">
         <label>
-          Driver search
-          <input
-            value={driverFilters.search}
-            placeholder="Name or mobile"
-            onChange={(event) => setDriverFilters((current) => ({ ...current, search: event.target.value }))}
-          />
-        </label>
-        <label>
-          Driver city/town
-          <select
-            value={driverFilters.city}
-            onChange={(event) => setDriverFilters((current) => ({ ...current, city: event.target.value }))}
-          >
-            <option value="all">All cities</option>
-            {driverCityOptions.map((city) => <option key={city} value={city}>{city}</option>)}
+          Choose driver or field worker
+          <select value={draft.driverId} onChange={(event) => setDraft((current) => ({ ...current, driverId: event.target.value }))}>
+            <option value="">Choose approved person</option>
+            {filteredDrivers.map((driver) => <option key={driver.id} value={driver.id}>{driver.name} - {driver.city || "Town not set"}</option>)}
           </select>
         </label>
-        <label>
-          Service Area
-          <input
-            value={driverFilters.serviceArea}
-            placeholder="Area name"
-            onChange={(event) => setDriverFilters((current) => ({ ...current, serviceArea: event.target.value }))}
-          />
-        </label>
-        <label>
-          Availability
-          <select
-            value={driverFilters.availability}
-            onChange={(event) => setDriverFilters((current) => ({ ...current, availability: event.target.value }))}
-          >
-            <option value="all">All availability</option>
-            {driverAvailabilityStatusOptions.map((status) => (
-              <option key={status} value={status}>{getDriverAvailabilityStatusLabel(status)}</option>
-            ))}
-          </select>
-        </label>
+        {adWork.vehicle_required && (
+          <label>
+            Choose vehicle
+            <select value={draft.vehicleId} onChange={(event) => setDraft((current) => ({ ...current, vehicleId: event.target.value }))}>
+              <option value="">Choose approved vehicle</option>
+              {filteredVehicles.map((vehicle) => <option key={vehicle.id} value={vehicle.id}>{vehicle.vehicle_number} - {vehicleTypeLabels[vehicle.vehicle_type]}</option>)}
+            </select>
+          </label>
+        )}
       </div>
 
-      <div className="form-grid">
-        <label>
-          Assign Driver
-          <select
-            value={draft.driverId}
-            onChange={(event) => setDraft((current) => ({ ...current, driverId: event.target.value }))}
-          >
-            <option value="">Choose approved driver</option>
-            {filteredDrivers.map((driver) => (
-              <option key={driver.id} value={driver.id}>
-                {driver.name} - {driver.phone} - {driver.city || "City not set"}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Vehicle search
-          <input
-            value={vehicleFilters.search}
-            placeholder="Vehicle number"
-            onChange={(event) => setVehicleFilters((current) => ({ ...current, search: event.target.value }))}
-          />
-        </label>
-        <label>
-          Vehicle city/town
-          <select
-            value={vehicleFilters.city}
-            onChange={(event) => setVehicleFilters((current) => ({ ...current, city: event.target.value }))}
-          >
-            <option value="all">All cities</option>
-            {vehicleCityOptions.map((city) => <option key={city} value={city}>{city}</option>)}
-          </select>
-        </label>
-        <label>
-          Vehicle type
-          <select
-            value={vehicleFilters.vehicleType}
-            onChange={(event) => setVehicleFilters((current) => ({ ...current, vehicleType: event.target.value }))}
-          >
-            <option value="all">All vehicle types</option>
-            {vehicleTypeOptions.map((option) => (
-              <option key={option} value={option}>{vehicleTypeLabels[option]}</option>
-            ))}
-          </select>
-        </label>
-      </div>
-
-      <div className="form-grid">
-        <label>
-          Speaker equipment
-          <select
-            value={vehicleFilters.micSystem}
-            onChange={(event) => setVehicleFilters((current) => ({ ...current, micSystem: event.target.value }))}
-          >
-            <option value="all">All</option>
-            <option value="yes">Available</option>
-            <option value="no">Not Available</option>
-          </select>
-        </label>
-        <label>
-          Vehicle GPS Device
-          <select
-            value={vehicleFilters.gpsDevice}
-            onChange={(event) => setVehicleFilters((current) => ({ ...current, gpsDevice: event.target.value }))}
-          >
-            <option value="all">All device answers</option>
-            {yesNoNotSureOptions.map((option) => (
-              <option key={option} value={option}>{yesNoNotSureLabels[option]}</option>
-            ))}
-            {vehicleGpsDeviceStatusOptions.map((status) => (
-              <option key={status} value={status}>{getVehicleGpsDeviceStatusLabel(status)}</option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Assign Vehicle
-          <select
-            value={draft.vehicleId}
-            onChange={(event) => setDraft((current) => ({ ...current, vehicleId: event.target.value }))}
-          >
-            <option value="">Choose approved vehicle</option>
-            {filteredVehicles.map((vehicle) => (
-              <option key={vehicle.id} value={vehicle.id}>
-                {vehicle.vehicle_number} - {vehicleTypeLabels[vehicle.vehicle_type]} - {vehicle.city || "City not set"}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Assignment status
-          <select
-            value={draft.status}
-            onChange={(event) => setDraft((current) => ({ ...current, status: event.target.value as AdWorkAssignmentStatus }))}
-          >
-            {adWorkAssignmentStatusOptions.map((status) => (
-              <option key={status} value={status}>{getAdWorkAssignmentStatusLabel(status)}</option>
-            ))}
-          </select>
-        </label>
-      </div>
-
+      <details className="more-details-block assignment-filters">
+        <summary>Search and filters</summary>
+        <div className="form-grid">
+          <label>Driver search<input value={driverFilters.search} placeholder="Name or mobile" onChange={(event) => setDriverFilters((current) => ({ ...current, search: event.target.value }))} /></label>
+          <label>Driver city/town<select value={driverFilters.city} onChange={(event) => setDriverFilters((current) => ({ ...current, city: event.target.value }))}><option value="all">All towns</option>{driverCityOptions.map((city) => <option key={city} value={city}>{city}</option>)}</select></label>
+          <label>Service area<input value={driverFilters.serviceArea} placeholder="Area name" onChange={(event) => setDriverFilters((current) => ({ ...current, serviceArea: event.target.value }))} /></label>
+          <label>Availability<select value={driverFilters.availability} onChange={(event) => setDriverFilters((current) => ({ ...current, availability: event.target.value }))}><option value="all">All</option>{driverAvailabilityStatusOptions.map((status) => <option key={status} value={status}>{getDriverAvailabilityStatusLabel(status)}</option>)}</select></label>
+          {adWork.vehicle_required && <label>Vehicle search<input value={vehicleFilters.search} placeholder="Vehicle number" onChange={(event) => setVehicleFilters((current) => ({ ...current, search: event.target.value }))} /></label>}
+          {adWork.vehicle_required && <label>Vehicle city/town<select value={vehicleFilters.city} onChange={(event) => setVehicleFilters((current) => ({ ...current, city: event.target.value }))}><option value="all">All towns</option>{vehicleCityOptions.map((city) => <option key={city} value={city}>{city}</option>)}</select></label>}
+          {adWork.speaker_required && <label>Speaker equipment<select value={vehicleFilters.micSystem} onChange={(event) => setVehicleFilters((current) => ({ ...current, micSystem: event.target.value }))}><option value="all">All</option><option value="yes">Available</option><option value="no">Not available</option></select></label>}
+        </div>
+      </details>
       <div className="lead-detail-grid">
         <div>
           <dt>Driver details</dt>
@@ -3927,18 +4047,14 @@ function AdWorkAssignmentPanel({
           <dt>Service Area</dt>
           <dd>{selectedDriver ? (selectedDriver.service_areas ?? []).join(", ") || "Not provided" : "Not selected"}</dd>
         </div>
-        <div>
+        {adWork.vehicle_required && <div>
           <dt>Vehicle details</dt>
           <dd>{selectedVehicle ? selectedVehicle.vehicle_number + " - " + vehicleTypeLabels[selectedVehicle.vehicle_type] + " - " + (selectedVehicle.city || "City not set") : "Not selected"}</dd>
-        </div>
-        <div>
+        </div>}
+        {adWork.vehicle_required && <div>
           <dt>Vehicle status</dt>
           <dd>{selectedVehicle ? getVehicleStatusLabel(selectedVehicle.onboarding_status) : "Not selected"}</dd>
-        </div>
-        <div>
-          <dt>Vehicle GPS Device</dt>
-          <dd>{selectedVehicle ? yesNoNotSureLabels[selectedVehicle.gps_device_available] + " / " + getVehicleGpsDeviceStatusLabel(selectedVehicle.gps_device_status) : "Not selected"}</dd>
-        </div>
+        </div>}
       </div>
 
       <label>
@@ -3950,7 +4066,7 @@ function AdWorkAssignmentPanel({
         />
       </label>
 
-      <div className="checkbox-grid">
+      {assignment && (assignment.driver_id !== draft.driverId || (assignment.vehicle_id ?? "") !== draft.vehicleId) && <div className="checkbox-grid">
         <label className="checkbox-row">
           <input
             type="checkbox"
@@ -3959,11 +4075,11 @@ function AdWorkAssignmentPanel({
           />
           <span>Confirm assignment change</span>
         </label>
-      </div>
+      </div>}
 
       <div className="lead-submitted-copy">
-        <h3>Readiness checklist</h3>
-        {readiness.checks.map((check) => (
+        <h3>Before saving</h3>
+        {readiness.checks.filter((check) => check.required).map((check) => (
           <p key={check.label}>{check.passed ? "OK" : "Needed"} - {check.label}</p>
         ))}
         <h3>Warnings</h3>
@@ -3977,7 +4093,7 @@ function AdWorkAssignmentPanel({
       {adWork.number_of_days > 1 && (
         <div className="lead-submitted-copy">
           <h3>Multi-day assignment</h3>
-          <p>Same driver and vehicle will be used for all planned days.</p>
+          <p>Same person{adWork.vehicle_required ? " and vehicle" : ""} will be used for all planned days.</p>
           {dayDrafts.map((day, index) => (
             <p key={day.id}>Day {index + 1}: {formatDate(day.workDate)} - {day.areasToCover || adWork.areas_to_cover || "Areas not set"}</p>
           ))}
@@ -4378,7 +4494,9 @@ function AdminFinalProofSummaryPanel({
     finalSummaryReviewed,
     customerUpdatesReviewed,
     proofNotRequiredConfirmed: proofNotRequired,
-    closureReason
+    closureReason,
+    assignmentRequired: adWork.driver_required,
+    releaseRequired: adWork.execution_mode === "driver_app"
   });
   const allClosureWarnings = [...readiness.hardStops, ...readiness.warnings, ...locationProofWarnings];
 
@@ -5448,7 +5566,130 @@ function AdminMobileLocationProofPanel({
       </div>
     </section>
   );
-}function AdminExecutionPanel({
+}
+
+function AdminManagedExecutionPanel({ config, session, adWork, dayDrafts, onUpdated }: {
+  config: SupabaseConfig;
+  session: AuthSession;
+  adWork: AdWorkRecord;
+  dayDrafts: DayDraft[];
+  onUpdated: () => Promise<void>;
+}) {
+  const [message, setMessage] = useState("");
+  const [note, setNote] = useState("");
+  const [savingKey, setSavingKey] = useState("");
+  const [proofType, setProofType] = useState<ExecutionProofNoteType>("other");
+  const [proofArea, setProofArea] = useState("");
+  const [proofNote, setProofNote] = useState("");
+  const [proofFile, setProofFile] = useState<File | null>(null);
+
+  async function handleAction(dayId: string, action: "start" | "complete" | "report_issue") {
+    setSavingKey(dayId + action);
+    setMessage("");
+    try {
+      const response = await adminFetch(config, session, config.url + "/rest/v1/rpc/admin_update_ad_work_day", {
+        method: "POST",
+        headers: createHeaders(config, session.accessToken, true),
+        body: JSON.stringify({ p_ad_work_day_id: dayId, p_action: action, p_note: note.trim() || null })
+      });
+      if (!response.ok) throw new Error("Could not update this work day.");
+      setNote("");
+      setMessage(action === "start" ? "Work started." : action === "complete" ? "Work completed." : "Issue recorded.");
+      await onUpdated();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not update this work day.");
+    } finally {
+      setSavingKey("");
+    }
+  }
+
+  async function handleProofUpload(dayId: string) {
+    if (!proofFile) {
+      setMessage("Choose a proof photo.");
+      return;
+    }
+
+    const fileErrors = validateProofPhotoFile({ mimeType: proofFile.type, fileSize: proofFile.size });
+    const inputErrors = [
+      ...(adWork.areas_required && !proofArea.trim() ? ["Enter the area or place."] : []),
+      ...(!proofNote.trim() ? ["Enter a short proof note."] : []),
+      ...fileErrors
+    ];
+    if (inputErrors.length > 0) {
+      setMessage(inputErrors[0]);
+      return;
+    }
+
+    setSavingKey(dayId + "proof");
+    setMessage("");
+    try {
+      await addAdminProofPhoto(config, session, {
+        dayId,
+        proofType,
+        areaPlaceName: proofArea,
+        note: proofNote,
+        file: proofFile
+      });
+      setProofArea("");
+      setProofNote("");
+      setProofFile(null);
+      setMessage("Photo proof added for review.");
+      await onUpdated();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not add the proof photo.");
+    } finally {
+      setSavingKey("");
+    }
+  }
+
+  const nextDayId = dayDrafts.find((day) => day.executionStatus !== "completed")?.id;
+
+  return (
+    <section className="form-section" aria-labelledby="team-execution-title">
+      <div className="panel-heading">
+        <div><h3 id="team-execution-title">Team-managed work</h3><p>No driver app or Work Code is needed.</p></div>
+        <span className="status-pill">{adWork.execution_overall_status.replace(/_/g, " ")}</span>
+      </div>
+      {message && <p className="form-status admin-message" role="status">{message}</p>}
+      <label>Work note (optional)<textarea value={note} maxLength={800} onChange={(event) => setNote(event.target.value)} placeholder="Completion detail or issue note" /></label>
+      <div className="managed-day-list">
+        {dayDrafts.map((day, index) => {
+          const isCurrentDay = day.id === nextDayId;
+          const isRunning = day.executionStatus === "running" || day.executionStatus === "on_break" || day.executionStatus === "issue_reported";
+          return (
+            <article className="managed-day-card" key={day.id}>
+              <div><strong>Day {index + 1} - {formatDate(day.workDate)}</strong><span className="status-pill">{getAdWorkExecutionDayStatusLabel(day.executionStatus)}</span></div>
+              <p>{day.areasToCover || adWork.areas_to_cover || "No location required"}</p>
+              {isCurrentDay ? (
+                <>
+                  {isRunning && adWork.photo_proof_needed && (
+                    <details className="admin-proof-capture">
+                      <summary>Add proof photo</summary>
+                      <div className="admin-form-grid">
+                        <label>Proof type<select value={proofType} onChange={(event) => setProofType(event.target.value as ExecutionProofNoteType)}>{executionProofNoteTypeOptions.map((option) => <option key={option} value={option}>{getExecutionProofNoteTypeLabel(option)}</option>)}</select></label>
+                        {adWork.areas_required && <label>Area or place<input value={proofArea} maxLength={160} onChange={(event) => setProofArea(event.target.value)} /></label>}
+                        <label className="admin-form-wide">What was completed?<textarea value={proofNote} maxLength={800} onChange={(event) => setProofNote(event.target.value)} /></label>
+                        <label className="admin-form-wide">Photo<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setProofFile(event.target.files?.[0] ?? null)} /></label>
+                      </div>
+                      <button className="secondary-button" type="button" disabled={Boolean(savingKey)} onClick={() => void handleProofUpload(day.id)}>{savingKey === day.id + "proof" ? "Adding..." : "Add photo proof"}</button>
+                    </details>
+                  )}
+                  <div className="admin-action-row">
+                    {(day.executionStatus === "planned" || day.executionStatus === "ready") && <button className="primary-button" type="button" disabled={Boolean(savingKey)} onClick={() => void handleAction(day.id, "start")}>Start work</button>}
+                    {isRunning && <button className="primary-button" type="button" disabled={Boolean(savingKey)} onClick={() => void handleAction(day.id, "complete")}>Complete work</button>}
+                    {day.executionStatus !== "completed" && <button className="secondary-button" type="button" disabled={Boolean(savingKey)} onClick={() => void handleAction(day.id, "report_issue")}>Report issue</button>}
+                  </div>
+                </>
+              ) : day.executionStatus !== "completed" ? <small>Complete the earlier day first.</small> : null}
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function AdminExecutionPanel({
   config,
   session,
   adWork,
@@ -5609,6 +5850,41 @@ function AdminMobileLocationProofPanel({
   );
 }
 
+
+function AuditView({ config, session }: { config: SupabaseConfig; session: AuthSession }) {
+  const [records, setRecords] = useState<AuditLogRecord[]>([]);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  async function loadAudit() {
+    setLoading(true);
+    setError("");
+    try {
+      const response = await adminFetch(
+        config,
+        session,
+        config.url + "/rest/v1/audit_logs?select=id,actor_type,action,entity_type,entity_id,created_at,safe_details&order=created_at.desc&limit=200",
+        { headers: createHeaders(config, session.accessToken) }
+      );
+      if (!response.ok) throw new Error("Could not load activity history.");
+      setRecords(await response.json() as AuditLogRecord[]);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Could not load activity history.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { void loadAudit(); }, [config, session.accessToken]);
+
+  return <section className="admin-audit-view" aria-labelledby="audit-title">
+    <div className="panel-heading"><div><h2 id="audit-title">Activity history</h2><p>Safe operational changes only. Private values are not displayed.</p></div><button className="secondary-button" type="button" onClick={() => void loadAudit()} disabled={loading}><RefreshCw size={18} /> Refresh</button></div>
+    {error && <p className="form-alert" role="alert">{error}</p>}
+    {!loading && records.length === 0 && <p className="empty-state">No recorded activity yet.</p>}
+    <div className="audit-list">{records.map((record) => <article key={record.id}><div><strong>{record.action.replaceAll("_", " ")}</strong><span>{record.entity_type}</span></div><time dateTime={record.created_at}>{new Date(record.created_at).toLocaleString()}</time></article>)}</div>
+  </section>;
+}
+
 function AdminShell({
   productName,
   children,
@@ -5630,15 +5906,19 @@ function AdminShell({
     { id: "adWorks", label: businessLabels.admin.adWorks, icon: Megaphone },
     { id: "driverApplications", label: "Requests", icon: UserRoundCheck },
     { id: "drivers", label: businessLabels.admin.drivers, icon: Users },
-    { id: "vehicles", label: businessLabels.admin.vehicles, icon: Truck }
+    { id: "vehicles", label: businessLabels.admin.vehicles, icon: Truck },
+    { id: "audit", label: "Activity", icon: FileClock }
   ];
 
   return (
     <main className="admin-app-shell">
       <aside className="admin-sidebar" aria-label="Admin navigation">
-        <a className="admin-brand" href="/" aria-label={productName + " home"}>
-          <img src="/assets/kootha-logo.svg" alt={productName} />
-          <span>Operations</span>
+        <a className="admin-brand" href="/admin" aria-label={productName + " operations home"}>
+          <img src="/assets/kootha-mark.svg" alt="" />
+          <span className="admin-brand-copy">
+            <strong>{productName}</strong>
+            <small>Operations</small>
+          </span>
         </a>
 
         {profile && activeView && onViewChange && (
@@ -5773,6 +6053,7 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
   const [selectedEnquiryId, setSelectedEnquiryId] = useState<string | null>(null);
   const [selectedAdWorkId, setSelectedAdWorkId] = useState<string | null>(null);
   const [activeAdWorkStep, setActiveAdWorkStep] = useState<AdWorkWorkflowStep>("plan");
+  const [isAdWorkListVisible, setIsAdWorkListVisible] = useState(true);
   const [draft, setDraft] = useState<AdminDraft | null>(null);
   const [adWorkDraft, setAdWorkDraft] = useState<AdWorkDraft | null>(null);
   const [dayDrafts, setDayDrafts] = useState<DayDraft[]>([]);
@@ -5781,6 +6062,52 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
   const [isCreatingAdWork, setIsCreatingAdWork] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [saveMessage, setSaveMessage] = useState("");
+
+
+
+  useEffect(() => {
+    const update = (event: Event) => setSession((event as CustomEvent<AuthSession>).detail);
+    const expire = () => {
+      clearStoredSession();
+      setSession(null);
+      setProfile(null);
+    };
+    window.addEventListener("kootha:admin-session", update);
+    window.addEventListener("kootha:admin-session-expired", expire);
+    return () => {
+      window.removeEventListener("kootha:admin-session", update);
+      window.removeEventListener("kootha:admin-session-expired", expire);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!config || !session?.refreshToken) return;
+
+    let cancelled = false;
+    const refreshIfNeeded = async () => {
+      if (session.expiresAt && session.expiresAt - Date.now() > 120_000) return;
+      try {
+        const refreshed = await refreshAdminSession(config, session);
+        if (!cancelled) {
+          writeStoredSession(refreshed);
+          setSession(refreshed);
+        }
+      } catch {
+        if (!cancelled) {
+          clearStoredSession();
+          setSession(null);
+          setProfile(null);
+        }
+      }
+    };
+
+    void refreshIfNeeded();
+    const timer = window.setInterval(() => void refreshIfNeeded(), 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [config, session?.accessToken, session?.expiresAt, session?.refreshToken]);
 
   const selectedEnquiry = enquiries.find((enquiry) => enquiry.id === selectedEnquiryId) ?? null;
   const selectedAdWork = adWorks.find((adWork) => adWork.id === selectedAdWorkId) ?? null;
@@ -5814,7 +6141,6 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
 
     setAdWorkDraft(toAdWorkDraft(selectedAdWork));
     setDayDrafts(selectedAdWorkDays.map(toDayDraft));
-    setActiveAdWorkStep("plan");
   }, [selectedAdWork, selectedAdWorkDays]);
 
   async function loadData() {
@@ -5830,22 +6156,34 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
 
     try {
       const adminProfile = await fetchAdminProfile(activeConfig, activeSession);
-      const [enquiryRows, adWorkRows, adWorkDayRows, cityRows, areaRows] = await Promise.all([
+      setProfile(adminProfile);
+
+      const results = await Promise.allSettled([
         fetchAdminEnquiries(activeConfig, activeSession),
         fetchAdminAdWorks(activeConfig, activeSession),
         fetchAdminAdWorkDays(activeConfig, activeSession),
         fetchCities(activeConfig, activeSession),
         fetchAreas(activeConfig, activeSession)
       ]);
+      const [enquiryResult, adWorkResult, dayResult, cityResult, areaResult] = results;
 
-      setProfile(adminProfile);
-      setEnquiries(enquiryRows);
-      setAdWorks(adWorkRows);
-      setAdWorkDays(adWorkDayRows);
-      setCities(cityRows);
-      setAreas(areaRows);
-      setSelectedEnquiryId((current) => current && enquiryRows.some((enquiry) => enquiry.id === current) ? current : enquiryRows[0]?.id ?? null);
-      setSelectedAdWorkId((current) => current && adWorkRows.some((adWork) => adWork.id === current) ? current : adWorkRows[0]?.id ?? null);
+      if (enquiryResult.status === "fulfilled") {
+        setEnquiries(enquiryResult.value);
+        setSelectedEnquiryId((current) => current && enquiryResult.value.some((enquiry) => enquiry.id === current) ? current : enquiryResult.value[0]?.id ?? null);
+      }
+      if (adWorkResult.status === "fulfilled") {
+        setAdWorks(adWorkResult.value);
+        setSelectedAdWorkId((current) => current && adWorkResult.value.some((adWork) => adWork.id === current) ? current : adWorkResult.value[0]?.id ?? null);
+      }
+      if (dayResult.status === "fulfilled") setAdWorkDays(dayResult.value);
+      if (cityResult.status === "fulfilled") setCities(cityResult.value);
+      if (areaResult.status === "fulfilled") setAreas(areaResult.value);
+
+      const failedSections = ["enquiries", "advertisement work", "work days", "cities", "areas"]
+        .filter((_, index) => results[index]?.status === "rejected");
+      if (failedSections.length > 0) {
+        setLoadError("Could not load: " + failedSections.join(", ") + ". Refresh after checking the database setup.");
+      }
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : "Could not load admin data.");
     } finally {
@@ -5908,6 +6246,7 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
     if (existingAdWorkForSelectedEnquiry) {
       setSelectedAdWorkId(existingAdWorkForSelectedEnquiry.id);
       setActiveView("adWorks");
+      setIsAdWorkListVisible(false);
       setSaveMessage("Existing ad work opened.");
       return;
     }
@@ -5920,6 +6259,7 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
       await loadData();
       setSelectedAdWorkId(result.adWorkId);
       setActiveView("adWorks");
+      setIsAdWorkListVisible(false);
       setSaveMessage(result.wasCreated ? "Ad work created." : "Existing ad work opened.");
     } catch (error) {
       setSaveMessage(error instanceof Error ? error.message : "Could not create ad work.");
@@ -6016,6 +6356,22 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
     });
   }
 
+  function applyDeliveryMethod(method: DeliveryMethod) {
+    const requirements = getDeliveryMethodRequirements(method);
+    setAdWorkDraft((current) => current && {
+      ...current,
+      deliveryMethod: method,
+      executionMode: requirements.executionMode,
+      driverRequired: requirements.driverRequired,
+      vehicleRequired: requirements.vehicleRequired,
+      speakerRequired: requirements.speakerRequired,
+      areasRequired: requirements.areasRequired,
+      photoProofNeeded: requirements.photoProofRequired,
+      customerUpdatesRequired: requirements.customerUpdatesRequired,
+      mobileLocationProofRequired: false
+    });
+  }
+
   if (!config) {
     return (
       <AdminShell productName={productName}>
@@ -6046,6 +6402,7 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
       activeView={activeView}
       onViewChange={(view) => {
         setActiveView(view);
+        if (view === "adWorks") setIsAdWorkListVisible(true);
         setSaveMessage("");
       }}
     >
@@ -6060,6 +6417,7 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
               {activeView === "driverApplications" && businessLabels.admin.driverApplications}
               {activeView === "drivers" && businessLabels.admin.drivers}
               {activeView === "vehicles" && businessLabels.admin.vehicles}
+              {activeView === "audit" && "Activity history"}
             </h1>
             <p>
               {activeView === "dashboard" && "See what needs attention and open the next action."}
@@ -6068,6 +6426,7 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
               {activeView === "driverApplications" && "Review driver registrations, approve records, and handle duplicate submissions."}
               {activeView === "drivers" && "Manage approved drivers and onboarding status."}
               {activeView === "vehicles" && "Manage vehicle approval, Speaker equipment details, and Vehicle GPS Device readiness."}
+              {activeView === "audit" && "Review safe operational changes without exposing private values."}
             </p>
           </div>
           <button className="secondary-button refresh-button" type="button" onClick={handleRefresh} disabled={isLoading}>
@@ -6080,9 +6439,11 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
           <OperationsDashboard
             enquiries={enquiries}
             adWorks={adWorks}
-            onOpen={(view, step) => {
+            adWorkDays={adWorkDays}
+            onOpen={(view, step, adWorkId) => {
               setActiveView(view);
               if (step) setActiveAdWorkStep(step);
+              if (adWorkId) { setSelectedAdWorkId(adWorkId); setIsAdWorkListVisible(false); }
             }}
           />
         )}        {activeView === "enquiries" && <EnquirySummaryCards enquiries={enquiries} />}
@@ -6093,6 +6454,7 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
         {activeView === "driverApplications" && <DriverApplicationsView config={config} session={session} />}
         {activeView === "drivers" && <DriversView config={config} session={session} />}
         {activeView === "vehicles" && <VehiclesView config={config} session={session} />}
+        {activeView === "audit" && <AuditView config={config} session={session} />}
 
         {activeView === "enquiries" && (
           <div className="admin-lead-layout">
@@ -6333,103 +6695,35 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
         )}
 
         {activeView === "adWorks" && (
-          <div className="admin-lead-layout ad-work-layout">
-            <section className="lead-list-panel" aria-labelledby="ad-work-list-title">
+          <div className={isAdWorkListVisible ? "admin-lead-layout ad-work-layout show-list" : "admin-lead-layout ad-work-layout show-detail"}>
+            <section className="lead-list-panel ad-work-list-panel" aria-labelledby="ad-work-list-title">
               <div className="panel-heading">
                 <h2 id="ad-work-list-title">Ad Works</h2>
                 <span>{filteredAdWorks.length} shown</span>
               </div>
 
-              <div className="admin-filter-grid" aria-label="Ad work filters">
-                <label>
-                  Search
-                  <input
-                    value={adWorkFilters.search}
-                    placeholder="Name, shop, mobile"
-                    onChange={(event) => setAdWorkFilters((current) => ({ ...current, search: event.target.value }))}
-                  />
-                </label>
-                <label>
-                  Status
-                  <select
-                    value={adWorkFilters.status}
-                    onChange={(event) => setAdWorkFilters((current) => ({ ...current, status: event.target.value }))}
-                  >
-                    <option value="all">All statuses</option>
-                    {adWorkStatusOptions.map((status) => (
-                      <option key={status} value={status}>{getAdWorkStatusLabel(status)}</option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  City/town
-                  <select
-                    value={adWorkFilters.city}
-                    onChange={(event) => setAdWorkFilters((current) => ({ ...current, city: event.target.value }))}
-                  >
-                    <option value="all">All cities</option>
-                    {adWorkCityOptions.map((city) => <option key={city} value={city}>{city}</option>)}
-                  </select>
-                </label>
-                <label>
-                  Package
-                  <select
-                    value={adWorkFilters.packageInterest}
-                    onChange={(event) => setAdWorkFilters((current) => ({ ...current, packageInterest: event.target.value }))}
-                  >
-                    <option value="all">All packages</option>
-                    {packageInterestOptions.map((option) => (
-                      <option key={option} value={option}>{packageInterestLabels[option]}</option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Live tracking requested
-                  <select
-                    value={adWorkFilters.liveTracking}
-                    onChange={(event) => setAdWorkFilters((current) => ({ ...current, liveTracking: event.target.value }))}
-                  >
-                    <option value="all">All answers</option>
-                    {liveTrackingNeedOptions.map((option) => (
-                      <option key={option} value={option}>{liveTrackingNeedLabels[option]}</option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  From date
-                  <input
-                    type="date"
-                    value={adWorkFilters.startDate}
-                    onChange={(event) => setAdWorkFilters((current) => ({ ...current, startDate: event.target.value }))}
-                  />
-                </label>
-                <label>
-                  To date
-                  <input
-                    type="date"
-                    value={adWorkFilters.endDate}
-                    onChange={(event) => setAdWorkFilters((current) => ({ ...current, endDate: event.target.value }))}
-                  />
-                </label>
+              <div className="admin-filter-grid simplified-work-filters" aria-label="Ad work filters">
+                <label>Search<input value={adWorkFilters.search} placeholder="Customer, business, or mobile" onChange={(event) => setAdWorkFilters((current) => ({ ...current, search: event.target.value }))} /></label>
+                <label>City/town<select value={adWorkFilters.city} onChange={(event) => setAdWorkFilters((current) => ({ ...current, city: event.target.value }))}><option value="all">All towns</option>{adWorkCityOptions.map((city) => <option key={city} value={city}>{city}</option>)}</select></label>
+                <details className="filter-date-options"><summary>Filter by date</summary><div className="form-grid"><label>From date<input type="date" value={adWorkFilters.startDate} onChange={(event) => setAdWorkFilters((current) => ({ ...current, startDate: event.target.value }))} /></label><label>To date<input type="date" value={adWorkFilters.endDate} onChange={(event) => setAdWorkFilters((current) => ({ ...current, endDate: event.target.value }))} /></label></div></details>
               </div>
-
               <div className="lead-list">
                 {filteredAdWorks.map((adWork) => (
                   <button
                     className={adWork.id === selectedAdWorkId ? "ad-work-row is-selected" : "ad-work-row"}
                     type="button"
                     key={adWork.id}
-                    onClick={() => setSelectedAdWorkId(adWork.id)}
+                    onClick={() => { setSelectedAdWorkId(adWork.id); setActiveAdWorkStep(getStepForAction(getAdWorkNextAction(adWork, adWorkDays.filter((day) => day.ad_work_id === adWork.id)).action)); setIsAdWorkListVisible(false); }}
                   >
                     <span className="ad-work-row-main">
                       <strong>{adWork.business_name || adWork.title || "Advertisement work"}</strong>
-                      <small>{getAdWorkReference(adWork.id)} · {adWork.customer_name}</small>
+                      <small>{getAdWorkReference(adWork.id)} - {adWork.customer_name}</small>
                     </span>
                     <span className="ad-work-row-meta">
                       <small>{adWork.city || "Town not set"}</small>
-                      <small>{formatDate(adWork.start_date)} · {adWork.number_of_days} day{adWork.number_of_days === 1 ? "" : "s"}</small>
+                      <small>{formatDate(adWork.start_date)} - {adWork.number_of_days} day{adWork.number_of_days === 1 ? "" : "s"}</small>
                     </span>
-                    <span className="status-pill">{getAdWorkStatusLabel(adWork.planning_status)}</span>
+                    <span className="status-pill">{getAdWorkNextAction(adWork, adWorkDays.filter((day) => day.ad_work_id === adWork.id)).label}</span>
                     <span className="row-open">Open</span>
                   </button>
                 ))}
@@ -6447,27 +6741,50 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
                 </div>
               ) : (
                 <form className="admin-edit-form ad-work-form" onSubmit={handleSaveAdWork}>
+                  <button className="back-to-list-button" type="button" onClick={() => setIsAdWorkListVisible(true)}>Back to all advertisement work</button>
                   <div className="panel-heading">
                     <div>
                       <h2 id="ad-work-detail-title">{adWorkDraft.title || "Ad Work"}</h2>
                       <p>{getAdWorkReference(selectedAdWork.id)} - {adWorkDraft.customerName}</p>
                     </div>
-                    <span className="status-pill">{getAdWorkStatusLabel(adWorkDraft.planningStatus)}</span>
+                    <span className="status-pill">{deliveryMethodTemplates[adWorkDraft.deliveryMethod].label}</span>
                   </div>
 
-                  <div className="ad-work-stepper" aria-label="Ad Work steps">
-                    {adWorkWorkflowSteps.map((step, index) => (
-                      <button
-                        className={activeAdWorkStep === step.id ? "is-active" : ""}
-                        key={step.id}
-                        type="button"
-                        onClick={() => setActiveAdWorkStep(step.id)}
-                      >
-                        <span className="step-number">{index + 1}</span>
-                        <span className="step-copy"><strong>{step.label}</strong><small>{step.helper}</small></span>
-                      </button>
-                    ))}
-                  </div>
+                  {(() => {
+                    const nextAction = getAdWorkNextAction(selectedAdWork, selectedAdWorkDays);
+                    return (
+                      <>
+                        <div className="workflow-phase-bar" aria-label="Work progress">
+                          {(["prepare", "do_work", "finish"] as const).map((phase, index) => (
+                            <div className={nextAction.phase === phase ? "is-current" : ""} key={phase}>
+                              <span>{index + 1}</span>
+                              <strong>{phase === "prepare" ? "Prepare" : phase === "do_work" ? "Do Work" : "Finish"}</strong>
+                            </div>
+                          ))}
+                        </div>
+                        <section className="next-action-card" aria-labelledby="next-action-title">
+                          <div>
+                            <p className="eyebrow">Next action</p>
+                            <h3 id="next-action-title">{nextAction.label}</h3>
+                            <p>{nextAction.helper}</p>
+                          </div>
+                          {activeAdWorkStep !== getStepForAction(nextAction.action) && (
+                            <button className="primary-button" type="button" onClick={() => setActiveAdWorkStep(getStepForAction(nextAction.action))}>{nextAction.label}</button>
+                          )}
+                        </section>
+                        <details className="workflow-section-picker">
+                          <summary>View or edit another section</summary>
+                          <div className="admin-action-row">
+                            {adWorkWorkflowSteps.map((step) => (
+                              <button className={activeAdWorkStep === step.id ? "secondary-button is-active" : "secondary-button"} key={step.id} type="button" onClick={() => setActiveAdWorkStep(step.id)}>
+                                {step.label}
+                              </button>
+                            ))}
+                          </div>
+                        </details>
+                      </>
+                    );
+                  })()}
 
                   {activeAdWorkStep === "plan" && (
                     <div className="ad-work-step-panel">
@@ -6532,49 +6849,38 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
                         onChange={(event) => updateAdWorkDraft("advertisementDetails", event.target.value)}
                       />
                     </label>
-                    <div className="form-grid">
-                      <label>
-                        Package
-                        <select
-                          value={adWorkDraft.packageInterest}
-                          onChange={(event) => updateAdWorkDraft("packageInterest", event.target.value as PackageInterest)}
-                        >
-                          {packageInterestOptions.map((option) => (
-                            <option key={option} value={option}>{packageInterestLabels[option]}</option>
-                          ))}
-                        </select>
-                      </label>
-                      <label>
-                        Live tracking requested
-                        <select
-                          value={adWorkDraft.liveTrackingRequested}
-                          onChange={(event) => updateAdWorkDraft("liveTrackingRequested", event.target.value as LiveTrackingNeed)}
-                        >
-                          {liveTrackingNeedOptions.map((option) => (
-                            <option key={option} value={option}>{liveTrackingNeedLabels[option]}</option>
-                          ))}
-                        </select>
-                      </label>
-                      <label>
-                        Live tracking enabled
-                        <select value="no" disabled>
-                          <option value="no">No</option>
-                        </select>
-                      </label>
-                      <label>
-                        Planning status
-                        <select
-                          value={adWorkDraft.planningStatus}
-                          onChange={(event) => updateAdWorkDraft("planningStatus", event.target.value as AdWorkStatus)}
-                        >
-                          {adWorkStatusOptions.map((status) => (
-                            <option key={status} value={status}>{getAdWorkStatusLabel(status)}</option>
-                          ))}
-                        </select>
-                      </label>
+                    <fieldset className="delivery-method-fieldset">
+                      <legend>How will this work be delivered?</legend>
+                      <p>Choose the closest option. The campaign subject can be anything.</p>
+                      <div className="delivery-method-grid">
+                        {deliveryMethods.map((method) => {
+                          const template = deliveryMethodTemplates[method];
+                          return (
+                            <label className={adWorkDraft.deliveryMethod === method ? "delivery-method-card is-selected" : "delivery-method-card"} key={method}>
+                              <input type="radio" name="delivery-method" checked={adWorkDraft.deliveryMethod === method} onChange={() => applyDeliveryMethod(method)} />
+                              <span><strong>{template.label}</strong><small>{template.helper}</small></span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </fieldset>
+                    <div className="requirement-summary" aria-label="Selected work requirements">
+                      <strong>Kootha will prepare:</strong>
+                      <span>{adWorkDraft.driverRequired ? "Driver" : "Team managed"}</span>
+                      {adWorkDraft.vehicleRequired && <span>Vehicle</span>}
+                      {adWorkDraft.speakerRequired && <span>Speaker equipment</span>}
+                      {adWorkDraft.photoProofNeeded && <span>Photo proof</span>}
                     </div>
                     <details className="more-details-block">
                       <summary>More planning details</summary>
+                      <fieldset className="requirement-options">
+                        <legend>Adjust job requirements</legend>
+                        <label className="checkbox-row"><input type="checkbox" checked={adWorkDraft.driverRequired} onChange={(event) => updateAdWorkDraft("driverRequired", event.target.checked)} /><span>Driver or field worker needed</span></label>
+                        <label className="checkbox-row"><input type="checkbox" checked={adWorkDraft.vehicleRequired} onChange={(event) => updateAdWorkDraft("vehicleRequired", event.target.checked)} /><span>Vehicle needed</span></label>
+                        <label className="checkbox-row"><input type="checkbox" checked={adWorkDraft.speakerRequired} onChange={(event) => updateAdWorkDraft("speakerRequired", event.target.checked)} /><span>Speaker equipment needed</span></label>
+                        <label className="checkbox-row"><input type="checkbox" checked={adWorkDraft.photoProofNeeded} onChange={(event) => updateAdWorkDraft("photoProofNeeded", event.target.checked)} /><span>Photo proof requested</span></label>
+                        <label className="checkbox-row"><input type="checkbox" checked={adWorkDraft.customerUpdatesRequired} onChange={(event) => updateAdWorkDraft("customerUpdatesRequired", event.target.checked)} /><span>Customer work updates requested</span></label>
+                      </fieldset>
                       <label>
                         Special instructions
                         <textarea
@@ -6740,31 +7046,23 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
                   )}
 
                   {activeAdWorkStep === "assign" && (
-                  <AdWorkAssignmentPanel
-                    config={config}
-                    session={session}
-                    adWork={selectedAdWork}
-                    dayDrafts={dayDrafts}
-                  />
+                    selectedAdWork.driver_required ? (
+                      <AdWorkAssignmentPanel config={config} session={session} adWork={selectedAdWork} dayDrafts={dayDrafts} />
+                    ) : (
+                      <section className="form-section no-assignment-needed"><h3>No assignment needed</h3><p>This advertisement work is managed by the Kootha team.</p></section>
+                    )
                   )}
 
                   {activeAdWorkStep === "release" && (
                     <div className="ad-work-step-panel">
-                  <AdminExecutionPanel
-                    config={config}
-                    session={session}
-                    adWork={selectedAdWork}
-                    dayDrafts={dayDrafts}
-                    onReleased={loadData}
-                  />
-
-                  <AdminMobileLocationProofPanel
-                    config={config}
-                    session={session}
-                    adWork={selectedAdWork}
-                    dayDrafts={dayDrafts}
-                    onUpdated={loadData}
-                  />
+                      {selectedAdWork.execution_mode === "admin_managed" ? (
+                        <AdminManagedExecutionPanel config={config} session={session} adWork={selectedAdWork} dayDrafts={dayDrafts} onUpdated={loadData} />
+                      ) : (
+                        <>
+                          <AdminExecutionPanel config={config} session={session} adWork={selectedAdWork} dayDrafts={dayDrafts} onReleased={loadData} />
+                          {selectedAdWork.mobile_location_proof_required && <AdminMobileLocationProofPanel config={config} session={session} adWork={selectedAdWork} dayDrafts={dayDrafts} onUpdated={loadData} />}
+                        </>
+                      )}
                     </div>
                   )}
 
@@ -6788,109 +7086,20 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
                   )}
 
                   {activeAdWorkStep === "plan" && (
-                    <div className="ad-work-step-panel">
-                  <details className="more-details-block proof-update-details">
-                    <summary>Proof and customer update choices</summary>
-                  <section className="form-section" aria-labelledby="proof-plan-title">
-                    <h3 id="proof-plan-title">Proof Needed</h3>
-                    <div className="checkbox-grid">
-                      <label className="checkbox-row">
-                        <input
-                          type="checkbox"
-                          checked={adWorkDraft.photoProofNeeded}
-                          onChange={(event) => updateAdWorkDraft("photoProofNeeded", event.target.checked)}
-                        />
-                        <span>Photo proof needed</span>
-                      </label>
-                      <label className="checkbox-row">
-                        <input
-                          type="checkbox"
-                          checked={adWorkDraft.audioVideoProofNeeded}
-                          onChange={(event) => updateAdWorkDraft("audioVideoProofNeeded", event.target.checked)}
-                        />
-                        <span>Audio/video proof needed</span>
-                      </label>
-                      <label className="checkbox-row">
-                        <input
-                          type="checkbox"
-                          checked={adWorkDraft.areaUpdateNeeded}
-                          onChange={(event) => updateAdWorkDraft("areaUpdateNeeded", event.target.checked)}
-                        />
-                        <span>Area update needed</span>
-                      </label>
-                      <label className="checkbox-row">
-                        <input
-                          type="checkbox"
-                          checked={adWorkDraft.finalReportNeeded}
-                          onChange={(event) => updateAdWorkDraft("finalReportNeeded", event.target.checked)}
-                        />
-                        <span>Final report needed</span>
-                      </label>
-                    </div>
-                  </section>
-
-                  <section className="form-section" aria-labelledby="customer-update-title">
-                    <h3 id="customer-update-title">Customer Updates</h3>
-                    <div className="checkbox-grid">
-                      <label className="checkbox-row">
-                        <input
-                          type="checkbox"
-                          checked={adWorkDraft.customerUpdateScheduled}
-                          onChange={(event) => updateAdWorkDraft("customerUpdateScheduled", event.target.checked)}
-                        />
-                        <span>Scheduled update</span>
-                      </label>
-                      <label className="checkbox-row">
-                        <input
-                          type="checkbox"
-                          checked={adWorkDraft.customerUpdateStarted}
-                          onChange={(event) => updateAdWorkDraft("customerUpdateStarted", event.target.checked)}
-                        />
-                        <span>Started update</span>
-                      </label>
-                      <label className="checkbox-row">
-                        <input
-                          type="checkbox"
-                          checked={adWorkDraft.customerUpdateInProgress}
-                          onChange={(event) => updateAdWorkDraft("customerUpdateInProgress", event.target.checked)}
-                        />
-                        <span>In-progress update</span>
-                      </label>
-                      <label className="checkbox-row">
-                        <input
-                          type="checkbox"
-                          checked={adWorkDraft.customerUpdateAreaCovered}
-                          onChange={(event) => updateAdWorkDraft("customerUpdateAreaCovered", event.target.checked)}
-                        />
-                        <span>Area covered update</span>
-                      </label>
-                      <label className="checkbox-row">
-                        <input
-                          type="checkbox"
-                          checked={adWorkDraft.customerUpdateCompleted}
-                          onChange={(event) => updateAdWorkDraft("customerUpdateCompleted", event.target.checked)}
-                        />
-                        <span>Completed update</span>
-                      </label>
-                      <label className="checkbox-row">
-                        <input
-                          type="checkbox"
-                          checked={adWorkDraft.customerUpdateReportReady}
-                          onChange={(event) => updateAdWorkDraft("customerUpdateReportReady", event.target.checked)}
-                        />
-                        <span>Report ready update</span>
-                      </label>
-                    </div>
-                  </section>
-                  </details>
+                    <details className="more-details-block proof-update-details">
+                      <summary>More proof choices</summary>
+                      <div className="checkbox-grid">
+                        <label className="checkbox-row"><input type="checkbox" checked={adWorkDraft.audioVideoProofNeeded} onChange={(event) => updateAdWorkDraft("audioVideoProofNeeded", event.target.checked)} /><span>Audio or video proof</span></label>
+                        <label className="checkbox-row"><input type="checkbox" checked={adWorkDraft.areaUpdateNeeded} onChange={(event) => updateAdWorkDraft("areaUpdateNeeded", event.target.checked)} /><span>Area progress updates</span></label>
+                        <label className="checkbox-row"><input type="checkbox" checked={adWorkDraft.finalReportNeeded} onChange={(event) => updateAdWorkDraft("finalReportNeeded", event.target.checked)} /><span>Final proof summary</span></label>
+                      </div>
+                    </details>
+                  )}
+                  {activeAdWorkStep === "plan" && (
+                    <div className="admin-action-row sticky-action-row">
+                      <button className="primary-button" type="submit" disabled={isSaving}>{isSaving ? "Saving..." : "Save setup"}</button>
                     </div>
                   )}
-
-                  <div className="admin-action-row sticky-action-row">
-                    <button className="primary-button" type="submit" disabled={isSaving}>
-                      {isSaving ? "Saving..." : "Save ad work"}
-                    </button>
-                  </div>
                 </form>
               )}
             </section>

@@ -9,7 +9,7 @@ const blockedCustomerDriverWordParts = [[
 ], [
   "m", "qtt"
 ], [
-  "http ", "ingestion"
+  "http ", "ing", "estion"
 ]] as const;
 
 const blockedCustomerAdminWordParts = [

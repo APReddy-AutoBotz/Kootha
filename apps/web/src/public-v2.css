@@ -32,13 +32,27 @@
 .kootha-hero {
   position: relative;
   isolation: isolate;
-  min-height: min(720px, calc(100vh - 76px));
+  min-height: 620px;
+  height: min(720px, calc(100svh - 76px));
+  max-height: 720px;
   width: 100%;
   display: flex;
   align-items: center;
   overflow: hidden;
-  background: var(--kootha-orange);
+  background-color: var(--kootha-orange);
   color: #fffdf8;
+}
+
+.kootha-hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background-image:
+    linear-gradient(rgba(120, 31, 7, 0.13), rgba(120, 31, 7, 0.13)),
+    url("/assets/kootha-town-road-static.webp");
+  background-position: center;
+  background-size: cover;
 }
 
 .kootha-hero::after {
@@ -47,7 +61,7 @@
   inset: auto 0 0;
   height: 12px;
   background: var(--kootha-orange-dark);
-  z-index: -1;
+  z-index: 1;
 }
 
 .kootha-hero .hero-copy {
@@ -55,7 +69,7 @@
   z-index: 2;
   width: min(1120px, calc(100% - 36px));
   margin-inline: auto;
-  padding: 72px 48% 72px 0;
+  padding: 72px 0;
 }
 
 .kootha-hero .eyebrow,
@@ -64,34 +78,20 @@
 }
 
 .kootha-hero h1 {
-  max-width: 720px;
+  max-width: 650px;
   color: #fffdf8;
-  font-size: 72px;
+  font-size: 68px;
   line-height: 1.01;
+  hyphens: none;
+  overflow-wrap: normal;
+  text-wrap: balance;
+  word-break: normal;
 }
 
 .kootha-hero .hero-copy > p:not(.eyebrow) {
   max-width: 620px;
   color: #fff2e7;
   font-size: 21px;
-}
-
-.hero-media {
-  position: absolute;
-  z-index: 1;
-  right: max(3vw, 28px);
-  bottom: -20px;
-  width: min(43vw, 610px);
-  pointer-events: none;
-}
-
-.hero-media img {
-  display: block;
-  width: 100%;
-  height: auto;
-  border: 6px solid #fff8ec;
-  border-radius: 8px 8px 0 0;
-  box-shadow: 18px 18px 0 rgba(32, 28, 24, 0.2);
 }
 
 .kootha-hero .primary-button {
@@ -418,7 +418,7 @@
 }
 
 .site-footer img {
-  width: 150px;
+  width: min(250px, 72vw);
 }
 
 .site-footer p {
@@ -429,21 +429,21 @@
 
 @media (max-width: 900px) {
   .kootha-hero {
-    min-height: 720px;
-    align-items: flex-start;
+    min-height: 640px;
+    height: min(680px, calc(100svh - 68px));
+    background-position: initial;
+  }
+
+  .kootha-hero::before {
+    background-position: 58% center;
   }
 
   .kootha-hero .hero-copy {
-    padding: 56px 0 330px;
+    padding: 56px 0;
   }
 
   .kootha-hero h1 {
     font-size: 56px;
-  }
-
-  .hero-media {
-    right: 8%;
-    width: 58%;
   }
 
   .section-heading-row,
@@ -487,11 +487,17 @@
   }
 
   .kootha-hero {
-    min-height: 680px;
+    min-height: 600px;
+    height: min(620px, calc(100svh - 68px));
+    background-position: initial;
+  }
+
+  .kootha-hero::before {
+    background-position: 63% center;
   }
 
   .kootha-hero .hero-copy {
-    padding: 40px 0 210px;
+    padding: 44px 0 52px;
   }
 
   .kootha-hero h1 {
@@ -501,11 +507,6 @@
 
   .kootha-hero .hero-copy > p:not(.eyebrow) {
     font-size: 18px;
-  }
-
-  .hero-media {
-    right: 4%;
-    width: 78%;
   }
 
   .trust-strip {

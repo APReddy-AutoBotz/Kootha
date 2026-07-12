@@ -48,7 +48,7 @@ describe("M8 final proof summary and campaign closure", () => {
     ]);
   });
 
-  it("blocks closure warnings unless admin provides a closure reason", () => {
+  it("keeps closure warnings visible without blocking an admin", () => {
     const missingReason = buildCampaignClosureReadiness({
       assignmentStatus: "ready_for_execution",
       releaseStatus: "released_to_driver",
@@ -79,7 +79,7 @@ describe("M8 final proof summary and campaign closure", () => {
       closureReason: "customer_accepted_partial_work"
     });
 
-    expect(missingReason.canClose).toBe(false);
+    expect(missingReason.canClose).toBe(true);
     expect(missingReason.blockingWarnings).toEqual(expect.arrayContaining([
       "Some planned days are not completed.",
       "Issue Reported and not resolved.",

@@ -753,6 +753,7 @@ async function pruneBufferedLocationPointsForWork(work: DriverWorkRow, trackingS
 }
 
 export function App() {
+  const [locale, setLocale] = useState<"en" | "te">("en");
   const [screen, setScreen] = useState<DriverScreen>("work");
   const [workPanel, setWorkPanel] = useState<WorkPanel>("work");
   const [form, setForm] = useState<DriverApplicationInput>(initialDriverApplication);
@@ -1254,6 +1255,11 @@ export function App() {
       <ScrollView contentContainerStyle={styles.shell} keyboardShouldPersistTaps="handled">
         <KoothaBrand name={productName} />
 
+        <Pressable style={styles.languageButton} onPress={() => setLocale((current) => current === "en" ? "te" : "en")} accessibilityRole="button">
+          <MaterialCommunityIcons name="translate" size={20} color="#b83f12" />
+          <Text style={styles.languageButtonText}>{locale === "en" ? "తెలుగు" : "English"}</Text>
+        </Pressable>
+
         <View style={styles.modeSwitch} accessibilityRole="tablist">
           <Pressable
             accessibilityRole="tab"
@@ -1262,7 +1268,7 @@ export function App() {
             onPress={() => setScreen("work")}
           >
             <MaterialCommunityIcons name="briefcase-outline" size={22} color={screen === "work" ? "#fffaf1" : "#65594f"} />
-            <Text style={[styles.modeButtonText, screen === "work" && styles.modeButtonTextActive]}>Open Work</Text>
+            <Text style={[styles.modeButtonText, screen === "work" && styles.modeButtonTextActive]}>{locale === "te" ? "పని తెరవండి" : "Open Work"}</Text>
           </Pressable>
           <Pressable
             accessibilityRole="tab"
@@ -1271,7 +1277,7 @@ export function App() {
             onPress={() => setScreen("register")}
           >
             <MaterialCommunityIcons name="account-plus-outline" size={22} color={screen === "register" ? "#fffaf1" : "#65594f"} />
-            <Text style={[styles.modeButtonText, screen === "register" && styles.modeButtonTextActive]}>Register</Text>
+            <Text style={[styles.modeButtonText, screen === "register" && styles.modeButtonTextActive]}>{locale === "te" ? "నమోదు" : "Register"}</Text>
           </Pressable>
         </View>
 
@@ -1282,7 +1288,7 @@ export function App() {
                 <View style={styles.introBlock}>
                   <View style={styles.introIcon}><MaterialCommunityIcons name="briefcase-search-outline" size={32} color="#fffaf1" /></View>
                   <View style={styles.introCopy}>
-                    <Text style={styles.title}>Open today&apos;s work</Text>
+                    <Text style={styles.title}>{locale === "te" ? "ఈరోజు పని తెరవండి" : "Open today&apos;s work"}</Text>
                     <Text style={styles.body}>Enter your mobile number and Work Code given by the Kootha admin.</Text>
                   </View>
                 </View>
@@ -1312,7 +1318,7 @@ export function App() {
                   />
 
                   <PrimaryButton
-                    label={isWorkLoading ? "Opening..." : "Open Assigned Work"}
+                    label={isWorkLoading ? (locale === "te" ? "తెరుస్తోంది..." : "Opening...") : (locale === "te" ? "కేటాయించిన పని తెరవండి" : "Open Assigned Work")}
                     icon="briefcase-search-outline"
                     disabled={isWorkLoading}
                     onPress={handleOpenWork}
@@ -1385,13 +1391,13 @@ export function App() {
                   <View style={styles.panelBody}>
                     <Text style={styles.panelTitle}>Next work action</Text>
                     {canStartWork(currentStatus) ? (
-                      <PrimaryButton label={driverLabels.startWork} icon="play-circle-outline" disabled={isWorkLoading} onPress={() => void handleWorkAction("start")} />
+                      <PrimaryButton label={locale === "te" ? "పని ప్రారంభించండి" : driverLabels.startWork} icon="play-circle-outline" disabled={isWorkLoading} onPress={() => void handleWorkAction("start")} />
                     ) : null}
                     {canResumeWork(currentStatus) ? (
-                      <PrimaryButton label={driverLabels.resumeWork} icon="play-circle-outline" disabled={isWorkLoading} onPress={() => void handleWorkAction("resume")} />
+                      <PrimaryButton label={locale === "te" ? "పని కొనసాగించండి" : driverLabels.resumeWork} icon="play-circle-outline" disabled={isWorkLoading} onPress={() => void handleWorkAction("resume")} />
                     ) : null}
                     {canTakeBreak(currentStatus) ? (
-                      <SecondaryButton label={driverLabels.takeBreak} icon="pause-circle-outline" disabled={isWorkLoading} onPress={() => void handleWorkAction("take_break")} />
+                      <SecondaryButton label={locale === "te" ? "విరామం తీసుకోండి" : driverLabels.takeBreak} icon="pause-circle-outline" disabled={isWorkLoading} onPress={() => void handleWorkAction("take_break")} />
                     ) : null}
                     {currentStatus === "completed" ? (
                       <View style={styles.completeBox}>
@@ -1411,18 +1417,18 @@ export function App() {
                         {currentWork.mobile_location_proof_note ? <Text style={styles.notice}>{currentWork.mobile_location_proof_note}</Text> : null}
                         <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: locationUnderstanding }} style={styles.consentRow} onPress={() => setLocationUnderstanding((current) => !current)}>
                           <View style={[styles.checkbox, locationUnderstanding && styles.checkboxChecked]} />
-                          <Text style={styles.consentText}>I understand Location Proof is used only during this assigned work.</Text>
+                          <Text style={styles.consentText}>{locale === "te" ? "ఈ కేటాయించిన పని సమయంలో మాత్రమే లొకేషన్ ఆధారం ఉపయోగిస్తారని నాకు తెలుసు." : "I understand Location Proof is used only during this assigned work."}</Text>
                         </Pressable>
                         <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: locationAgreement }} style={styles.consentRow} onPress={() => setLocationAgreement((current) => !current)}>
                           <View style={[styles.checkbox, locationAgreement && styles.checkboxChecked]} />
-                          <Text style={styles.consentText}>I allow Location Proof for this work.</Text>
+                          <Text style={styles.consentText}>{locale === "te" ? "ఈ పని కోసం లొకేషన్ ఆధారాన్ని అనుమతిస్తున్నాను." : "I allow Location Proof for this work."}</Text>
                         </Pressable>
                         <View style={styles.locationStatusRow}>
                           <Text style={styles.locationStatusText}>{getTrackingSessionStatusLabel(locationStatus)}</Text>
                           <Text style={styles.locationStatusText}>{pendingOfflineCount > 0 ? `${pendingOfflineCount} waiting to sync` : "Synced"}</Text>
                         </View>
                         <PrimaryButton label={driverLabels.startLocationProof} icon="crosshairs-gps" disabled={!canStartLocationProof || isLocationBusy} onPress={() => void handleStartLocationProof()} />
-                        {pendingOfflineCount > 0 ? <SecondaryButton label={isLocationSyncing ? driverLabels.syncingLocationProof : "Sync Now"} icon="sync" disabled={!locationSessionId || isLocationSyncing} onPress={() => void handleSyncNow()} /> : null}
+                        {pendingOfflineCount > 0 ? <SecondaryButton label={isLocationSyncing ? driverLabels.syncingLocationProof : (locale === "te" ? "ఇప్పుడే సింక్ చేయండి" : "Sync Now")} icon="sync" disabled={!locationSessionId || isLocationSyncing} onPress={() => void handleSyncNow()} /> : null}
                         {locationSessionId && locationStatus !== "stopped" ? <SecondaryButton label={driverLabels.stopLocationProof} icon="stop-circle-outline" disabled={isLocationBusy} onPress={() => void handleStopLocationProof("other")} /> : null}
                         {locationMessage ? <Text style={styles.notice}>{locationMessage}</Text> : null}
                       </View>
@@ -1432,7 +1438,7 @@ export function App() {
                       <View style={styles.finishBlock}>
                         <Text style={styles.label}>Completion note</Text>
                         <TextInput style={[styles.input, styles.textArea]} value={completionNote} maxLength={600} multiline onChangeText={setCompletionNote} placeholder="What was completed?" />
-                        <PrimaryButton label={driverLabels.endWork} icon="check-circle-outline" disabled={isWorkLoading} onPress={() => void handleWorkAction("end")} />
+                        <PrimaryButton label={locale === "te" ? "పని ముగించండి" : driverLabels.endWork} icon="check-circle-outline" disabled={isWorkLoading} onPress={() => void handleWorkAction("end")} />
                       </View>
                     ) : null}
                   </View>
@@ -2052,7 +2058,24 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 9
-  },  hiddenField: {
+  },  languageButton: {
+    alignSelf: "flex-end",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    minHeight: 42,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: "#d8c3a9",
+    borderRadius: 8,
+    backgroundColor: "#fffdf8"
+  },
+  languageButtonText: {
+    color: "#b83f12",
+    fontSize: 16,
+    fontWeight: "800"
+  },
+  hiddenField: {
     position: "absolute",
     left: -10000,
     width: 1,

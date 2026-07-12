@@ -987,7 +987,7 @@ body {
 
 .kootha-brand img {
   display: block;
-  width: 156px;
+  width: 190px;
   height: auto;
 }
 
@@ -1309,7 +1309,7 @@ textarea:focus {
 
 @media (max-width: 720px) {
   .kootha-brand img {
-    width: 138px;
+    width: 168px;
   }
 
   .proof-step-grid,

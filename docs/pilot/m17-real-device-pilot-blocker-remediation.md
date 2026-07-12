@@ -1,5 +1,8 @@
 # M17 Real Device Pilot Blocker Remediation
 
+> Current production-readiness update (12 July 2026): target Supabase migrations, admin access, and private proof storage are now configured and verified with safe status labels. The historical blocked result below remains accurate for the original M16 run. Physical Android permission, proof upload, offline buffer, Sync Now, and complete fake-data workflow evidence are still pending.
+
+
 M17 converts the M16 blocked result into a concrete remediation package. It does not claim that the real-device pilot is ready, and it does not add product behavior.
 
 ## M16 Blocked Result Summary
