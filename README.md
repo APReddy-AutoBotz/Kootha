@@ -420,6 +420,10 @@ M18 does not add product behavior, Google Maps, customer live tracking links, pu
 
 M19 is a separate, completed planning stream for portable physical-device telemetry ingestion, live-versus-delayed event-time handling, simulator-first delivery, and future hardware validation. See the [architecture](docs/architecture/physical-gps-iot-device-integration.md), [implementation plan](docs/planning/m19-physical-gps-iot-implementation-plan.md), [threat model](docs/security/physical-gps-iot-threat-model.md), and [Kiro requirements](.kiro/specs/kootha-physical-gps-iot/requirements.md). This milestone adds documentation and a guardrail test only: it does not add migrations, ingestion endpoints, credentials, maps, device connections, or any runtime physical-device feature. M18 remains incomplete and in progress.
 
+## M20A Physical Device Registry and History
+
+M20A extends the existing `gps_devices` master with an admin-only Device Registry, effective-dated vehicle-link history, installation and replacement history, explicit lifecycle controls, safe credential metadata, RLS, transactional admin actions, and audit records. It adds no telemetry ingestion, device connection, location-point writing, maps, customer live tracking, or real credential issuance. Existing Phone Location Proof behavior and privacy-safe live-tracking defaults remain unchanged; M18 remains incomplete and M20B–M26 remain not started.
+
 ## Run Driver
 
     pnpm dev:driver

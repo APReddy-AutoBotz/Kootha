@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import "./admin-workflow.css";
 import type { FormEvent, ReactNode } from "react";
-import { CheckCircle2, ClipboardCheck, FileClock, Globe2, Inbox, LayoutDashboard, LogOut, Megaphone, RefreshCw, Truck, UserRoundCheck, Users } from "lucide-react";
+import { CheckCircle2, ClipboardCheck, Cpu, FileClock, Globe2, Inbox, LayoutDashboard, LogOut, Megaphone, RefreshCw, Truck, UserRoundCheck, Users } from "lucide-react";
 import {
   adWorkAssignmentStatusOptions,
   adWorkExecutionDayStatusOptions,
@@ -32,6 +32,15 @@ import {
   getDriverApplicationStatusLabel,
   getDriverAvailabilityStatusLabel,
   getDriverStatusLabel,
+  getGpsDeviceCredentialStatusLabel,
+  getGpsDeviceLifecycleEventLabel,
+  getGpsDeviceStatusLabel,
+  gpsDeviceCredentialStatusOptions,
+  gpsDeviceInstallationStatusOptions,
+  gpsDeviceStatusOptions,
+  maskDeviceIdentifier,
+  validateGpsDeviceCode,
+  validateGpsDeviceReason,
   getEnquiryStatusLabel,
   getExecutionProofNoteTypeLabel,
   getExecutionReleaseStatusLabel,
@@ -86,6 +95,14 @@ import type {
   DriverApplicationStatus,
   DriverAvailabilityStatus,
   DriverStatus,
+  GpsDeviceAdapterType,
+  GpsDeviceCredentialMetadataRecord,
+  GpsDeviceCredentialStatus,
+  GpsDeviceLifecycleEventRecord,
+  GpsDeviceRegistryRecord,
+  GpsDeviceStatus,
+  GpsDeviceVehicleLinkRecord,
+  AdminRegisterGpsDeviceRequest,
   EnquiryStatus,
   ExecutionProofNoteType,
   ExecutionReleaseStatus,
@@ -269,7 +286,7 @@ type AreaRecord = {
   active: boolean;
 };
 
-type AdminView = "enquiries" | "adWorks" | "driverApplications" | "drivers" | "vehicles" | "audit" | "dashboard";
+type AdminView = "enquiries" | "adWorks" | "driverApplications" | "drivers" | "vehicles" | "devices" | "audit" | "dashboard";
 type AdWorkWorkflowStep = "plan" | "assign" | "release" | "proof" | "close";
 
 type AdminFilters = {
@@ -5851,6 +5868,353 @@ function AdminExecutionPanel({
 }
 
 
+function DeviceRegistryView({ config, session }: { config: SupabaseConfig; session: AuthSession }) {
+  type DeviceRow = GpsDeviceRegistryRecord & { current_vehicle_id?: string | null };
+  type VehicleRow = { id: string; vehicle_number: string; city: string | null };
+  const [devices, setDevices] = useState<DeviceRow[]>([]);
+  const [links, setLinks] = useState<GpsDeviceVehicleLinkRecord[]>([]);
+  const [events, setEvents] = useState<GpsDeviceLifecycleEventRecord[]>([]);
+  const [credentials, setCredentials] = useState<GpsDeviceCredentialMetadataRecord[]>([]);
+  const [vehicles, setVehicles] = useState<VehicleRow[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [vendorFilter, setVendorFilter] = useState("all");
+  const [modelFilter, setModelFilter] = useState("all");
+  const [vehicleFilter, setVehicleFilter] = useState("all");
+  const [installationFilter, setInstallationFilter] = useState("all");
+  const [linkFilter, setLinkFilter] = useState("all");
+  const [gpsFilter, setGpsFilter] = useState("all");
+  const [showRegistration, setShowRegistration] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [identity, setIdentity] = useState({
+    deviceCode: "", vendor: "", model: "", connectionProfile: "other",
+    serialNumber: "", imei: "", vendorIdentifier: "", custodianDriverId: "",
+    simProvider: "", firmwareVersion: "", adminNote: ""
+  });
+  const [operation, setOperation] = useState({
+    vehicleId: "", effectiveAt: new Date().toISOString().slice(0, 16),
+    reason: "", note: "", replacementDeviceId: ""
+  });
+  const [credentialDraft, setCredentialDraft] = useState({
+    keyId: "", status: "pending" as GpsDeviceCredentialStatus,
+    issuedAt: new Date().toISOString().slice(0, 16), expiresAt: "", note: ""
+  });
+
+  const selected = devices.find((device) => device.id === selectedId) ?? null;
+  const currentLink = links.find((link) => link.gps_device_id === selectedId && !link.effective_until) ?? null;
+  const currentVehicle = vehicles.find((vehicle) => vehicle.id === currentLink?.vehicle_id) ?? null;
+  const selectedEvents = events.filter((entry) => entry.gps_device_id === selectedId);
+  const selectedLinks = links.filter((entry) => entry.gps_device_id === selectedId);
+  const selectedCredentials = credentials.filter((entry) => entry.gps_device_id === selectedId);
+  const hardwareIdentityLocked = editing && selected !== null && (
+    selected.status !== "pending_setup"
+    || selected.installation_state !== "pending"
+    || selectedLinks.length > 0
+  );
+  const vendors = [...new Set(devices.map((device) => device.vendor).filter((vendor): vendor is string => Boolean(vendor)))].sort();
+  const models = [...new Set(devices.map((device) => device.model).filter((model): model is string => Boolean(model)))].sort();
+
+  function formatTime(value: string | null | undefined): string {
+    return value ? new Date(value).toLocaleString() : "Not recorded";
+  }
+
+  function vehicleLabel(vehicleId: string | null | undefined): string {
+    return vehicles.find((vehicle) => vehicle.id === vehicleId)?.vehicle_number ?? "Unlinked";
+  }
+
+  const filtered = devices.filter((device) => {
+    const link = links.find((entry) => entry.gps_device_id === device.id && !entry.effective_until);
+    const vehicle = vehicles.find((entry) => entry.id === link?.vehicle_id);
+    const query = search.trim().toLowerCase();
+    if (statusFilter !== "all" && device.status !== statusFilter) return false;
+    if (vendorFilter !== "all" && device.vendor !== vendorFilter) return false;
+    if (modelFilter !== "all" && device.model !== modelFilter) return false;
+    if (vehicleFilter !== "all" && link?.vehicle_id !== vehicleFilter) return false;
+    if (installationFilter !== "all" && device.installation_state !== installationFilter) return false;
+    if (gpsFilter !== "all" && device.gps_readiness !== gpsFilter) return false;
+    if (linkFilter === "linked" && !link) return false;
+    if (linkFilter === "unlinked" && link) return false;
+    return !query || [
+      device.device_code, device.vendor, device.model, device.serial_number,
+      device.imei, device.vendor_device_identifier, vehicle?.vehicle_number
+    ].some((value) => value?.toLowerCase().includes(query));
+  });
+
+  async function safeRead<T>(path: string): Promise<T[]> {
+    const response = await adminFetch(config, session, config.url + "/rest/v1/" + path, {
+      headers: createHeaders(config, session.accessToken)
+    });
+    if (!response.ok) throw new Error("Could not load Device Registry.");
+    return response.json() as Promise<T[]>;
+  }
+
+  async function loadRegistry() {
+    setError("");
+    try {
+      const [deviceRows, linkRows, eventRows, credentialRows, vehicleRows] = await Promise.all([
+        safeRead<DeviceRow>("gps_devices?select=id,device_code,status,vendor,model,adapter_type,protocol_type,serial_number,imei,vendor_device_identifier,custodian_driver_id,installation_state,sim_provider_name,firmware_version,gps_readiness,gsm_readiness,external_power_status,battery_status,last_heartbeat_at,last_telemetry_at,admin_note,created_at,updated_at&order=created_at.desc"),
+        safeRead<GpsDeviceVehicleLinkRecord>("gps_device_vehicle_links?select=id,gps_device_id,vehicle_id,is_primary,effective_from,effective_until,installation_reference_note,change_reason,created_by_admin,created_at,closed_by_admin,closed_at&order=effective_from.desc"),
+        safeRead<GpsDeviceLifecycleEventRecord>("gps_device_lifecycle_events?select=id,gps_device_id,vehicle_id,event_type,effective_at,reason,related_replacement_device_id,created_by_admin,created_at,safe_note&order=effective_at.desc"),
+        safeRead<GpsDeviceCredentialMetadataRecord>("gps_device_credential_metadata?select=id,gps_device_id,credential_key_id,status,issued_at,expires_at,rotated_at,revoked_at,rotated_from_credential_id,last_verified_at,admin_note,created_by_admin,created_at,updated_at&order=created_at.desc"),
+        safeRead<VehicleRow>("vehicles?select=id,vehicle_number,city&order=vehicle_number.asc")
+      ]);
+      setDevices(deviceRows);
+      setLinks(linkRows);
+      setEvents(eventRows);
+      setCredentials(credentialRows);
+      setVehicles(vehicleRows);
+      setSelectedId((current) => current && deviceRows.some((row) => row.id === current) ? current : deviceRows[0]?.id ?? null);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Could not load Device Registry.");
+    }
+  }
+
+  useEffect(() => { void loadRegistry(); }, [config, session.accessToken]);
+
+  useEffect(() => {
+    if (!selected || !editing) return;
+    setIdentity({
+      deviceCode: selected.device_code,
+      vendor: selected.vendor ?? "",
+      model: selected.model ?? "",
+      connectionProfile: selected.adapter_type ?? "other",
+      serialNumber: selected.serial_number ?? "",
+      imei: selected.imei ?? "",
+      vendorIdentifier: selected.vendor_device_identifier ?? "",
+      custodianDriverId: selected.custodian_driver_id ?? "",
+      simProvider: selected.sim_provider_name ?? "",
+      firmwareVersion: selected.firmware_version ?? "",
+      adminNote: selected.admin_note ?? ""
+    });
+  }, [editing, selectedId]);
+
+  async function callDeviceRpc(name: string, body: object, success: string) {
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const response = await adminFetch(config, session, config.url + "/rest/v1/rpc/" + name, {
+        method: "POST",
+        headers: createHeaders(config, session.accessToken, true),
+        body: JSON.stringify(body)
+      });
+      if (!response.ok) throw new Error("Device change could not be saved.");
+      setMessage(success);
+      setOperation((current) => ({ ...current, reason: "", note: "" }));
+      await loadRegistry();
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : "Device change could not be saved.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function identityBody(): AdminRegisterGpsDeviceRequest {
+    const optional = (value: string) => value.trim() || null;
+    return {
+      p_device_code: identity.deviceCode.trim(),
+      p_vendor: optional(identity.vendor),
+      p_model: optional(identity.model),
+      p_adapter_type: identity.connectionProfile as GpsDeviceAdapterType,
+      p_protocol_type: identity.connectionProfile === "vendor_cloud" ? "vendor_managed" : identity.connectionProfile === "generic_http" ? "https" : "other",
+      p_serial_number: optional(identity.serialNumber),
+      p_imei: optional(identity.imei),
+      p_vendor_device_identifier: optional(identity.vendorIdentifier),
+      p_custodian_driver_id: optional(identity.custodianDriverId),
+      p_sim_provider_name: optional(identity.simProvider),
+      p_firmware_version: optional(identity.firmwareVersion),
+      p_admin_note: optional(identity.adminNote)
+    };
+  }
+
+  async function saveIdentity(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const validationError = validateGpsDeviceCode(identity.deviceCode);
+    if (validationError) { setError(validationError); return; }
+    const body = identityBody();
+    if (editing && selected) {
+      await callDeviceRpc("admin_update_gps_device", { p_device_id: selected.id, ...body }, "Device details updated.");
+      setEditing(false);
+    } else {
+      await callDeviceRpc("admin_register_gps_device", body, "Device registered.");
+      setShowRegistration(false);
+      setIdentity({ deviceCode: "", vendor: "", model: "", connectionProfile: "other", serialNumber: "", imei: "", vendorIdentifier: "", custodianDriverId: "", simProvider: "", firmwareVersion: "", adminNote: "" });
+    }
+  }
+
+  function requireReason(): string | null {
+    const validationError = validateGpsDeviceReason(operation.reason);
+    if (validationError) setError(validationError);
+    return validationError;
+  }
+
+  async function changeStatus(status: GpsDeviceStatus) {
+    if (!selected || requireReason()) return;
+    await callDeviceRpc("admin_change_gps_device_status", {
+      p_device_id: selected.id, p_status: status, p_reason: operation.reason.trim()
+    }, `Device marked ${getGpsDeviceStatusLabel(status)}.`);
+  }
+
+  async function linkVehicle() {
+    if (!selected || !operation.vehicleId || requireReason()) return;
+    await callDeviceRpc("admin_link_gps_device_vehicle", {
+      p_device_id: selected.id, p_vehicle_id: operation.vehicleId,
+      p_effective_from: new Date(operation.effectiveAt).toISOString(),
+      p_note: operation.note.trim() || null, p_reason: operation.reason.trim()
+    }, currentLink ? "Vehicle reassigned." : "Vehicle linked.");
+  }
+
+  async function removeVehicle() {
+    if (!selected || requireReason()) return;
+    await callDeviceRpc("admin_remove_gps_device_vehicle", {
+      p_device_id: selected.id, p_effective_until: new Date(operation.effectiveAt).toISOString(),
+      p_reason: operation.reason.trim(), p_note: operation.note.trim() || null
+    }, "Vehicle link removed.");
+  }
+
+  async function recordInstallation() {
+    if (!selected) return;
+    await callDeviceRpc("admin_record_gps_device_event", {
+      p_device_id: selected.id, p_event_type: "installed",
+      p_effective_at: new Date(operation.effectiveAt).toISOString(),
+      p_vehicle_id: operation.vehicleId || currentLink?.vehicle_id || null,
+      p_related_device_id: null, p_reason: operation.reason.trim() || null,
+      p_note: operation.note.trim() || null
+    }, "Installation recorded.");
+  }
+
+  async function replaceDevice() {
+    if (!selected || !operation.replacementDeviceId || !(operation.vehicleId || currentLink?.vehicle_id) || requireReason()) return;
+    await callDeviceRpc("admin_replace_gps_device", {
+      p_old_device_id: selected.id, p_new_device_id: operation.replacementDeviceId,
+      p_vehicle_id: operation.vehicleId || currentLink?.vehicle_id,
+      p_effective_at: new Date(operation.effectiveAt).toISOString(),
+      p_reason: operation.reason.trim(), p_note: operation.note.trim() || null
+    }, "Replacement recorded.");
+  }
+
+  async function saveCredential(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected || !credentialDraft.keyId.trim()) { setError("Credential key ID is required."); return; }
+    await callDeviceRpc("admin_upsert_gps_device_credential_metadata", {
+      p_device_id: selected.id, p_credential_key_id: credentialDraft.keyId.trim(),
+      p_status: credentialDraft.status,
+      p_issued_at: new Date(credentialDraft.issuedAt).toISOString(),
+      p_expires_at: credentialDraft.expiresAt ? new Date(credentialDraft.expiresAt).toISOString() : null,
+      p_rotated_from_credential_id: null, p_admin_note: credentialDraft.note.trim() || null
+    }, "Credential metadata updated.");
+  }
+
+  return <section className="device-registry" aria-labelledby="device-registry-title">
+    <div className="panel-heading">
+      <div><h2 id="device-registry-title">Device Registry</h2><p>Admin-only physical device identity, vehicle links, installation, and lifecycle history.</p></div>
+      <button className="primary-button" type="button" onClick={() => { setEditing(false); setShowRegistration((value) => !value); }}>Register Device</button>
+    </div>
+    {error && <p className="form-alert admin-message" role="alert">{error}</p>}
+    {message && <p className="form-status admin-message" role="status">{message}</p>}
+    {showRegistration && <form className="form-section device-identity-form" onSubmit={saveIdentity}>
+      <h3>{editing ? "Edit Device" : "Register Device"}</h3>
+      {hardwareIdentityLocked && <p className="quiet-note">Hardware identity is locked after vehicle linking or installation. Use Record Replacement for different hardware; maintenance metadata remains editable.</p>}
+      <div className="admin-filter-grid">
+        <label>Device code<input value={identity.deviceCode} disabled={hardwareIdentityLocked} onChange={(event) => setIdentity({ ...identity, deviceCode: event.target.value })} required /></label>
+        <label>Vendor<input value={identity.vendor} required disabled={hardwareIdentityLocked} onChange={(event) => setIdentity({ ...identity, vendor: event.target.value })} /></label>
+        <label>Model<input value={identity.model} required disabled={hardwareIdentityLocked} onChange={(event) => setIdentity({ ...identity, model: event.target.value })} /></label>
+        <label>Connection profile<select value={identity.connectionProfile} disabled={hardwareIdentityLocked} onChange={(event) => setIdentity({ ...identity, connectionProfile: event.target.value })}><option value="other">Not selected</option><option value="vendor_cloud">Vendor managed</option><option value="generic_http">Generic secure web (future setup)</option></select></label>
+        <label>Serial number<input value={identity.serialNumber} disabled={hardwareIdentityLocked} onChange={(event) => setIdentity({ ...identity, serialNumber: event.target.value })} /></label>
+        <label>IMEI<input value={identity.imei} disabled={hardwareIdentityLocked} onChange={(event) => setIdentity({ ...identity, imei: event.target.value })} /></label>
+        <label>Vendor device ID<input value={identity.vendorIdentifier} disabled={hardwareIdentityLocked} onChange={(event) => setIdentity({ ...identity, vendorIdentifier: event.target.value })} /></label>
+        <label>Optional custodian reference<input value={identity.custodianDriverId} onChange={(event) => setIdentity({ ...identity, custodianDriverId: event.target.value })} /><small>Non-authoritative; cannot override the active Ad Work assignment.</small></label>
+        <label>SIM/network provider<input value={identity.simProvider} onChange={(event) => setIdentity({ ...identity, simProvider: event.target.value })} /></label>
+        <label>Firmware version<input value={identity.firmwareVersion} onChange={(event) => setIdentity({ ...identity, firmwareVersion: event.target.value })} /></label>
+      </div>
+      <label>Admin note<textarea value={identity.adminNote} onChange={(event) => setIdentity({ ...identity, adminNote: event.target.value })} maxLength={1000} /></label>
+      <div className="admin-action-row"><button className="primary-button" disabled={busy}>{busy ? "Saving..." : "Save Device"}</button><button className="secondary-button" type="button" onClick={() => { setShowRegistration(false); setEditing(false); }}>Cancel</button></div>
+    </form>}
+    <div className="admin-filter-grid device-filters" aria-label="Device filters">
+      <label>Search<input value={search} placeholder="Code, identifier, vehicle" onChange={(event) => setSearch(event.target.value)} /></label>
+      <label>Device Status<select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">All statuses</option>{gpsDeviceStatusOptions.map((status) => <option value={status} key={status}>{getGpsDeviceStatusLabel(status)}</option>)}</select></label>
+      <label>Vendor<select value={vendorFilter} onChange={(event) => setVendorFilter(event.target.value)}><option value="all">All vendors</option>{vendors.map((vendor) => <option key={vendor}>{vendor}</option>)}</select></label>
+      <label>Model<select value={modelFilter} onChange={(event) => setModelFilter(event.target.value)}><option value="all">All models</option>{models.map((model) => <option key={model}>{model}</option>)}</select></label>
+      <label>Vehicle<select value={vehicleFilter} onChange={(event) => setVehicleFilter(event.target.value)}><option value="all">All vehicles</option>{vehicles.map((vehicle) => <option key={vehicle.id} value={vehicle.id}>{vehicle.vehicle_number}</option>)}</select></label>
+      <label>Installation<select value={installationFilter} onChange={(event) => setInstallationFilter(event.target.value)}><option value="all">All states</option>{gpsDeviceInstallationStatusOptions.map((status) => <option value={status} key={status}>{status.replaceAll("_", " ")}</option>)}</select></label>
+      <label>Linked Vehicle<select value={linkFilter} onChange={(event) => setLinkFilter(event.target.value)}><option value="all">All</option><option value="linked">Linked</option><option value="unlinked">Unlinked</option></select></label>
+      <label>GPS readiness<select value={gpsFilter} onChange={(event) => setGpsFilter(event.target.value)}><option value="all">All</option><option value="ready">Ready</option><option value="degraded">Degraded</option><option value="unavailable">Unavailable</option><option value="unknown">Unknown</option></select></label>
+    </div>
+    <div className="device-registry-layout">
+      <section className="lead-list-panel">
+        <div className="panel-heading"><h3>Devices</h3><span>{filtered.length} shown</span></div>
+        <div className="device-list">{filtered.map((device) => {
+          const link = links.find((entry) => entry.gps_device_id === device.id && !entry.effective_until);
+          return <button type="button" key={device.id} className={selectedId === device.id ? "is-selected" : ""} onClick={() => setSelectedId(device.id)}>
+            <span><strong>{device.device_code}</strong><small>{[device.vendor, device.model].filter(Boolean).join(" · ") || "Vendor/model not recorded"}</small></span>
+            <span><small>{maskDeviceIdentifier(device.imei || device.serial_number || device.vendor_device_identifier)} · {vehicleLabel(link?.vehicle_id)}</small><small>Installation: {device.installation_state?.replaceAll("_", " ") ?? "unknown"} · GPS: {device.gps_readiness ?? "unknown"}</small><small>Heartbeat: {formatTime(device.last_heartbeat_at)}</small><small>Last Update: {formatTime(device.last_telemetry_at)} · Updated: {formatTime(device.updated_at)}</small></span>
+            <span className="status-pill">{getGpsDeviceStatusLabel(device.status)}</span>
+          </button>;
+        })}{filtered.length === 0 && <p className="empty-state">No devices match these filters.</p>}</div>
+      </section>
+      <section className="lead-detail-panel device-detail" aria-labelledby="device-detail-title">
+        {!selected ? <p className="empty-state">Select a device to view Device Detail.</p> : <>
+          <div className="panel-heading"><div><h3 id="device-detail-title">Device Detail</h3><p>{selected.device_code}</p></div><button className="secondary-button" type="button" disabled={selected.status === "retired"} onClick={() => { setEditing(true); setShowRegistration(true); }}>Edit Device</button></div>
+          <dl className="detail-grid">
+            <div><dt>Device Status</dt><dd>{getGpsDeviceStatusLabel(selected.status)}</dd></div>
+            <div><dt>Installation</dt><dd>{selected.installation_state?.replaceAll("_", " ") ?? "Not recorded"}</dd></div>
+            <div><dt>Linked Vehicle</dt><dd>{currentVehicle?.vehicle_number ?? "Unlinked"}</dd></div>
+            <div><dt>City/town</dt><dd>{currentVehicle?.city ?? "Not recorded"}</dd></div>
+            <div><dt>Vendor / model</dt><dd>{[selected.vendor, selected.model].filter(Boolean).join(" / ") || "Not recorded"}</dd></div>
+            <div><dt>Serial / IMEI</dt><dd>{maskDeviceIdentifier(selected.serial_number || selected.imei)}</dd></div>
+            <div><dt>Adapter / protocol</dt><dd>{selected.adapter_type === "vendor_cloud" ? "Vendor managed" : selected.adapter_type === "generic_http" ? "Generic secure web (future setup)" : "Not selected"}</dd></div>
+            <div><dt>GPS / GSM readiness</dt><dd>{selected.gps_readiness ?? "unknown"} / {selected.gsm_readiness ?? "unknown"}</dd></div>
+            <div><dt>Power / battery</dt><dd>{selected.external_power_status?.replaceAll("_", " ") ?? "unknown"}{selected.battery_status == null ? "" : ` / ${selected.battery_status}`}</dd></div>
+            <div><dt>Last Heartbeat</dt><dd>{formatTime(selected.last_heartbeat_at)}</dd></div>
+            <div><dt>Last Update</dt><dd>{formatTime(selected.last_telemetry_at)}</dd></div>
+            <div><dt>Updated</dt><dd>{formatTime(selected.updated_at)}</dd></div>
+          </dl>
+          {selected.admin_note && <p className="quiet-note"><strong>Admin note:</strong> {selected.admin_note}</p>}
+          <fieldset className="form-section device-actions" disabled={busy || selected.status === "retired"}><legend>Admin actions</legend>
+            <div className="admin-filter-grid">
+              <label>Vehicle<select value={operation.vehicleId} onChange={(event) => setOperation({ ...operation, vehicleId: event.target.value })}><option value="">Select vehicle</option>{vehicles.map((vehicle) => <option key={vehicle.id} value={vehicle.id}>{vehicle.vehicle_number}</option>)}</select></label>
+              <label>Effective time<input type="datetime-local" value={operation.effectiveAt} onChange={(event) => setOperation({ ...operation, effectiveAt: event.target.value })} /></label>
+              <label>Replacement Device<select value={operation.replacementDeviceId} onChange={(event) => setOperation({ ...operation, replacementDeviceId: event.target.value })}><option value="">Select replacement</option>{devices.filter((device) => device.id !== selected.id && device.status !== "retired").map((device) => <option value={device.id} key={device.id}>{device.device_code}</option>)}</select></label>
+            </div>
+            <label>Reason<textarea value={operation.reason} onChange={(event) => setOperation({ ...operation, reason: event.target.value })} maxLength={500} placeholder="Required for high-impact actions" /></label>
+            <label>Safe note<textarea value={operation.note} onChange={(event) => setOperation({ ...operation, note: event.target.value })} maxLength={1000} /></label>
+            <div className="device-action-buttons">
+              <button type="button" onClick={() => void linkVehicle()} disabled={busy}>{currentLink ? "Reassign Vehicle" : "Link Vehicle"}</button>
+              <button type="button" onClick={() => void removeVehicle()} disabled={busy || !currentLink}>Remove from Vehicle</button>
+              <button type="button" onClick={() => void recordInstallation()} disabled={busy}>Record Installation</button>
+              <button type="button" onClick={() => void changeStatus("offline")} disabled={busy}>Mark Offline</button>
+              <button type="button" onClick={() => void changeStatus("not_working")} disabled={busy}>Mark Not Working</button>
+              <button type="button" onClick={() => void changeStatus("suspended")} disabled={busy}>Suspend Device</button>
+              <button type="button" onClick={() => void changeStatus("active")} disabled={busy}>Reactivate</button>
+              <button type="button" onClick={() => void replaceDevice()} disabled={busy}>Record Replacement</button>
+              <button type="button" onClick={() => void changeStatus("retired")} disabled={busy}>Retire Device</button>
+            </div>
+          </fieldset>
+          <div className="device-history-grid">
+            <section><h3>Vehicle link history</h3>{selectedLinks.map((link) => <article key={link.id}><strong>{vehicleLabel(link.vehicle_id)}</strong><span>{formatTime(link.effective_from)} – {link.effective_until ? formatTime(link.effective_until) : "Current"}</span>{link.installation_reference_note && <small>{link.installation_reference_note}</small>}</article>)}{selectedLinks.length === 0 && <p>No vehicle links recorded.</p>}</section>
+            <section><h3>Installation and lifecycle history</h3>{selectedEvents.map((entry) => <article key={entry.id}><strong>{getGpsDeviceLifecycleEventLabel(entry.event_type)}</strong><span>{formatTime(entry.effective_at)}</span>{entry.reason && <small>{entry.reason}</small>}</article>)}{selectedEvents.length === 0 && <p>No lifecycle events recorded.</p>}</section>
+          </div>
+          <section className="form-section credential-metadata"><h3>Credential Status</h3><p>Safe metadata only. Secret or verification material is never shown here.</p>
+            <div className="credential-list">{selectedCredentials.map((entry) => <article key={entry.id}><strong>{maskDeviceIdentifier(entry.credential_key_id)}</strong><span className="status-pill">{getGpsDeviceCredentialStatusLabel(entry.status)}</span><small>Issued {formatTime(entry.issued_at)} · Expires {formatTime(entry.expires_at)}</small></article>)}</div>
+            <form onSubmit={saveCredential}><div className="admin-filter-grid">
+              <label>Key ID<input value={credentialDraft.keyId} onChange={(event) => setCredentialDraft({ ...credentialDraft, keyId: event.target.value })} required /></label>
+              <label>Credential Status<select value={credentialDraft.status} onChange={(event) => setCredentialDraft({ ...credentialDraft, status: event.target.value as GpsDeviceCredentialStatus })}>{gpsDeviceCredentialStatusOptions.map((status) => <option value={status} key={status}>{getGpsDeviceCredentialStatusLabel(status)}</option>)}</select></label>
+              <label>Issued<input type="datetime-local" value={credentialDraft.issuedAt} onChange={(event) => setCredentialDraft({ ...credentialDraft, issuedAt: event.target.value })} /></label>
+              <label>Expires<input type="datetime-local" value={credentialDraft.expiresAt} onChange={(event) => setCredentialDraft({ ...credentialDraft, expiresAt: event.target.value })} /></label>
+            </div><label>Safe note<input value={credentialDraft.note} onChange={(event) => setCredentialDraft({ ...credentialDraft, note: event.target.value })} /></label><button className="secondary-button" disabled={busy || selected.status === "retired"}>Save metadata</button></form>
+          </section>
+          <section className="form-section"><h3>Audit summary</h3><p>Registration, identity, status, vehicle, installation, replacement, retirement, and credential-metadata changes are recorded in Activity history.</p></section>
+        </>}
+      </section>
+    </div>
+  </section>;
+}
+
+
 function AuditView({ config, session }: { config: SupabaseConfig; session: AuthSession }) {
   const [records, setRecords] = useState<AuditLogRecord[]>([]);
   const [error, setError] = useState("");
@@ -5907,6 +6271,7 @@ function AdminShell({
     { id: "driverApplications", label: "Requests", icon: UserRoundCheck },
     { id: "drivers", label: businessLabels.admin.drivers, icon: Users },
     { id: "vehicles", label: businessLabels.admin.vehicles, icon: Truck },
+    { id: "devices", label: businessLabels.admin.devices, icon: Cpu },
     { id: "audit", label: "Activity", icon: FileClock }
   ];
 
@@ -6417,6 +6782,7 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
               {activeView === "driverApplications" && businessLabels.admin.driverApplications}
               {activeView === "drivers" && businessLabels.admin.drivers}
               {activeView === "vehicles" && businessLabels.admin.vehicles}
+              {activeView === "devices" && businessLabels.admin.devices}
               {activeView === "audit" && "Activity history"}
             </h1>
             <p>
@@ -6426,6 +6792,7 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
               {activeView === "driverApplications" && "Review driver registrations, approve records, and handle duplicate submissions."}
               {activeView === "drivers" && "Manage approved drivers and onboarding status."}
               {activeView === "vehicles" && "Manage vehicle approval, Speaker equipment details, and Vehicle GPS Device readiness."}
+              {activeView === "devices" && "Manage physical device identity, vehicle links, installation, lifecycle, and safe credential metadata."}
               {activeView === "audit" && "Review safe operational changes without exposing private values."}
             </p>
           </div>
@@ -6454,6 +6821,7 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
         {activeView === "driverApplications" && <DriverApplicationsView config={config} session={session} />}
         {activeView === "drivers" && <DriversView config={config} session={session} />}
         {activeView === "vehicles" && <VehiclesView config={config} session={session} />}
+        {activeView === "devices" && <DeviceRegistryView config={config} session={session} />}
         {activeView === "audit" && <AuditView config={config} session={session} />}
 
         {activeView === "enquiries" && (
