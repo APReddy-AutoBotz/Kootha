@@ -109,3 +109,11 @@ Status values:
 - [~] In progress.
   - Target Supabase migrations, public enquiry policy, proof bucket privacy, admin role, and admin login are verified with safe labels only.
   - Physical Android driver app execution, proof upload, Phone Location Proof, offline sync, and final summary retry remain pending with fake data only.
+
+## Milestone M19 - Physical GPS and IoT architecture and requirements
+
+- [x] Planning/specification completed as a separate stream.
+  - Documented the portable ingress architecture, physical-device registry extensions, event-time work resolution, live freshness, authenticated delayed backfill, deterministic simulator path, security/privacy model, cost gate, implementation roadmap, and AP decision register.
+  - Split the next implementation work into reviewable M20A registry/history and M20B canonical-contract/simulator pull requests.
+  - Added no migration, endpoint, runtime adapter, credential, device connection, map, or physical-device runtime feature.
+  - M18 real-device evidence remains incomplete and in progress; M19 does not change that conclusion.
