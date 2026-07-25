@@ -40,8 +40,8 @@ M19 is a planning-only stream. M18 real-device Phone Location Proof evidence rem
 
 ## M20B — Contracts and Simulator
 
-- [ ] M20B-T001 Add host-independent ingress, adapter, canonical event, processing-result, and resolver contracts.
-  - Requirements: ING-SEC-001, TEL-NORM-001, ADAPTER-001
+- [ ] M20B-T001 Add host-independent ingress, adapter, canonical event, sensor-observation extension, processing-result, and resolver contracts.
+  - Requirements: ING-SEC-001, TEL-NORM-001, TEL-NORM-003, ADAPTER-001
 - [ ] M20B-T002 Build deterministic synthetic device, route, clock, sequence, and delay generators.
   - Requirements: SIM-001
 - [ ] M20B-T003 Implement every healthy, fault, backfill, privacy, and comparison scenario.
@@ -55,6 +55,8 @@ M19 is a planning-only stream. M18 real-device Phone Location Proof evidence rem
   - Requirements: ING-SEC-001, ING-SEC-002, ING-SEC-005, ADAPTER-001
 - [ ] M21-T002 Implement event identity, replay, sequence, and duplicate controls.
   - Requirements: ING-SEC-004
+- [ ] M21-T002A Measure constant-time token/digest verification cost at sustained and burst telemetry frequency.
+  - Requirements: ING-SEC-002, SCALE-001
 - [ ] M21-T003 Implement event-time work resolution, live freshness, delayed backfill, and End Work race handling.
   - Requirements: PRIVACY-001 through PRIVACY-004, WORK-LINK-001
 - [ ] M21-T004 Reuse physical tracking sessions and location points without changing phone behavior.

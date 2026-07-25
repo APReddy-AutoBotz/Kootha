@@ -159,6 +159,31 @@ test("sequence and replay design permits bounded legitimate reordering", () => {
   assert.match(text, /out-of-order/i);
   assert.match(text, /reused sequence/i);
   assert.match(text, /reduced ordering confidence/i);
+  assert.match(text, /stable vendor event ID/i);
+  assert.match(text, /deterministic idempotency identity/i);
+  assert.match(text, /stable across retries/i);
+  assert.match(text, /random (?:ID|identity).{0,30}per (?:retry|attempt)/i);
+  assert.match(text, /reused identity with changed canonical content/i);
+});
+
+test("authority, authentication, clock trust, and sensor extension are explicit", () => {
+  const text = combinedPlanningText();
+
+  assert.match(text, /active driver identity normally comes from the valid Ad Work assignment/i);
+  assert.match(text, /payload-provided driver identity is ignored/i);
+  assert.match(text, /custodian.{0,80}non-authoritative/is);
+  assert.match(text, /constant-time comparison/i);
+  assert.match(text, /telemetry frequency/i);
+  assert.match(text, /password hash.{0,60}without (?:measured )?evidence/is);
+  assert.match(text, /device-captured time is untrusted/i);
+  assert.match(text, /future\/past tolerance/i);
+  assert.match(text, /Device time alone never authorizes proof/i);
+  assert.match(text, /suspect\/Needs Review/i);
+  assert.match(text, /CanonicalSensorObservationV1/);
+  assert.match(text, /approved metric key/i);
+  assert.match(text, /number\/boolean\/controlled-text/i);
+  assert.match(text, /no arbitrary (?:unvalidated )?JSON/i);
+  assert.match(text, /M19 implements no sensor runtime/i);
 });
 
 test("M20 stays reviewable and M21 contains a measurable Netlify gate", () => {

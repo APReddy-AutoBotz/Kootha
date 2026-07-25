@@ -34,12 +34,12 @@ This roadmap follows M19 planning. Estimates assume one engineer plus review and
 ## M20B — Canonical Contracts and Simulator
 
 - **Objective:** Make the full processing path testable without hardware.
-- **Scope:** Portable ingress contracts, adapter interface, canonical event/result, resolver inputs, deterministic simulator, all synthetic scenarios.
+- **Scope:** Portable ingress contracts, adapter interface, canonical event/result, constrained sensor-observation extension, resolver inputs, deterministic simulator, all synthetic scenarios.
 - **Non-goals:** Production ingress, database point writes, vendor selection, real routes, or real credentials.
 - **Database:** Only synthetic fixture contracts where needed; no production telemetry migration in this PR.
 - **Backend:** Host-neutral TypeScript contracts and simulator/test utilities.
 - **UI:** None.
-- **Tests:** Determinism, optional fields, event identity, sequence/reordering, delay, fault cases, comparison cases, immutable synthetic marking.
+- **Tests:** Determinism, optional fields, stable vendor identity, deterministic derived identity across retries, changed-content identity conflict, approved sensor key/type/unit validation, sequence/reordering, delay, fault cases, comparison cases, immutable synthetic marking.
 - **Security checks:** No real coordinates/routes/people; no production secret names or values.
 - **Acceptance:** Every required scenario produces reproducible expected events and classifications.
 - **Dependencies:** M20A identifiers/history contract.
@@ -55,8 +55,8 @@ This roadmap follows M19 planning. Estimates assume one engineer plus review and
 - **Database:** Receipts, physical session/source fields, accepted point metadata, event-time history lookup, and indexes.
 - **Backend:** First generic HTTP host plus portable core; Netlify is a candidate, not a mandate.
 - **UI:** Minimal admin diagnostics only if required; primary health UI is M22.
-- **Tests:** Authentication, suspension, duplicates, replay, bounded reordering, malformed values, active interval, delayed post-End-Work arrival, expired backfill, race locking, RLS, and no phone regression.
-- **Security checks:** Body/rate limits, safe logs, server-only credentials, no payload-trusted work identity.
+- **Tests:** Authentication, constant-time verification, frequency cost, suspension, duplicates, replay, bounded reordering, ambiguous/future/past device clock, malformed values, active interval, delayed post-End-Work arrival, expired backfill, race locking, RLS, and no phone regression.
+- **Security checks:** Body/rate limits, safe logs, server-only non-reversible credential verification material, no payload-trusted work/vehicle/driver identity, no device-time-only proof authorization.
 - **Acceptance:** Process a deterministic 60,000-event profile; sustain about two events/second; exercise roughly 17 events/second retry/burst; flush bounded reconnect batches from 25 devices; repeat batches three times with no duplicates; record latency/errors/concurrency/request/compute cost.
 - **Dependencies:** M20A and M20B.
 - **Effort/risk:** 10–15 days; high security and event-time correctness risk.

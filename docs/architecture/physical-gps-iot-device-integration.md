@@ -94,7 +94,7 @@ Requires an always-on, isolated gateway with connection management, protocol dec
 
 ## Device Registry and History
 
-The existing `gps_devices` table remains the master. Future M20A fields cover vendor/model, adapter, serial/IMEI, optional custodian, SIM/network, installation, lifecycle, heartbeat, telemetry, firmware, power, battery, GPS/GSM, notes, and synthetic state.
+The existing `gps_devices` table remains the master. Future M20A fields cover vendor/model, adapter, serial/IMEI, optional non-authoritative custodian/install/contact reference, SIM/network, installation, lifecycle, heartbeat, telemetry, firmware, power, battery, GPS/GSM, notes, and synthetic state. Device identity authoritatively resolves the effective vehicle link. Active driver identity normally comes from the valid Ad Work assignment at captured time; payload-provided driver identity and a permanent device custodian reference never override that assignment.
 
 Pilot lifecycle:
 
@@ -108,7 +108,7 @@ Pilot lifecycle:
 
 Duplicate prevention uses normalized vendor identifiers and serial/IMEI uniqueness. One active primary device per vehicle is the pilot rule. Effective-dated link rows preserve reassignment and replacement history. Old points never change device or vehicle when a current link changes.
 
-Credentials have a separate server-only metadata boundary. Generic bearer tokens are stored only as hashes. Vendor/HMAC secrets live in the approved server secret store. Rotation records key ID, issue/expiry/revocation time, reason, and actor without the secret.
+Credentials have a separate server-only metadata boundary. High-entropy generic bearer tokens are displayed once and only non-reversible verification material is stored. Verification uses constant-time comparison. M20A/M21 may select a token ID plus cryptographic digest or keyed digest with an approved server-held pepper after measuring sustained/burst request-time cost; an expensive password hash is not mandated per telemetry point without evidence. Vendor/HMAC secrets live in the approved server secret store. Rotation records key ID, issue/expiry/revocation time, reason, and actor without the secret.
 
 ## Canonical Event and Persistence
 
@@ -121,6 +121,9 @@ The canonical event includes:
 - optional ignition, motion, external power, battery, network, GPS fix, odometer, and tamper;
 - source, adapter, adapter version, normalization version, synthetic marker;
 - quality, freshness, disposition, rejection reason, duplicate status, and raw payload hash.
+When a vendor supplies a stable unique event ID, its adapter uses it. Otherwise the adapter derives a deterministic idempotency identity from an approved combination of registered device identity, adapter/version, device-captured time, optional stream/boot epoch, optional sequence, and canonical payload hash. The identity remains stable across retries; adapters never generate a random identity per attempt. Reused identity with changed canonical content is rejected and alerted.
+
+`CanonicalSensorObservationV1` is a constrained future extension with approved metric key, typed number/boolean/controlled-text value, approved unit, captured time, source/device, quality, normalization version, and synthetic marker. Possible later metrics include fuel level, temperature, door state, vibration, external power, ignition, and tamper. Metric keys/types/units come from an approved versioned registry; arbitrary JSON and unsupported values are rejected or reduced to safe metadata. Applicable active-work, privacy, retention, and customer-summary rules remain authoritative. M19 implements no sensor runtime.
 
 Resolved internal device, vehicle, driver, assignment, Ad Work, work-day, and tracking-session IDs are server outputs.
 
@@ -172,9 +175,11 @@ Reject location captured:
 
 ## Sequence and Replay
 
-Generic events require a stable client event ID. With device stream epoch/boot ID and sequence, uniqueness is enforced within the stream. A bounded replay window records seen sequence values and allows unseen lower values when they are legitimate delayed backfill.
+Generic events require a stable idempotency identity: use the vendor/client event ID when available, otherwise use the adapter's deterministic derived identity. With device stream epoch/boot ID and sequence, uniqueness is enforced within the stream. A bounded replay window records seen sequence values and allows unseen lower values when they are legitimate delayed backfill.
 
-Sequence gaps and out-of-order delivery are quality warnings, not automatic fraud findings. A reused sequence containing different content, an impossible regression, or an expired replay event is rejected. If a vendor provides no sequence, its adapter uses event ID, captured time, and payload hash with reduced ordering confidence.
+Sequence gaps and out-of-order delivery are quality warnings, not automatic fraud findings. A reused sequence containing different content, an impossible regression, or an expired replay event is rejected. If a vendor provides no sequence, its adapter uses stable or derived event identity, captured time, and payload hash with reduced ordering confidence.
+
+Device-captured time is untrusted. It is compared with server receipt, configurable future/past tolerance, observed clock offset, sequence/epoch evidence, effective link/assignment/release/execution history, replay state, and backfill expiry. Device time alone never authorizes proof. Materially inconsistent or ambiguous clock evidence is rejected or quarantined as suspect/Needs Review.
 
 ## End Work Race
 

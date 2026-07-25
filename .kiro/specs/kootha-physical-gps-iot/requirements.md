@@ -14,11 +14,12 @@ Each requirement records its business purpose, actor, statement, WHEN/THEN accep
 
 - **Business purpose:** Give operations one authoritative record for every physical tracker.
 - **User/actor:** Kootha admin.
-- **Requirement statement:** The existing `gps_devices` record shall be extended rather than duplicated and shall support internal ID, vendor, model, adapter type, serial/IMEI, optional vehicle and driver links, SIM/network state, installation date, status, heartbeat and telemetry times, firmware, power, battery, GPS/GSM health, notes, and timestamps.
+- **Requirement statement:** The existing `gps_devices` record shall be extended rather than duplicated and shall support internal ID, vendor, model, adapter type, serial/IMEI, optional vehicle link, optional non-authoritative custodian/install/contact reference, SIM/network state, installation date, status, heartbeat and telemetry times, firmware, power, battery, GPS/GSM health, notes, and timestamps.
 - **Acceptance criteria:**
   - WHEN an admin registers a device, THEN stable lowercase values and simple UI labels are used.
   - WHEN a serial/IMEI or vendor device identifier already exists, THEN a duplicate active record is not created.
   - WHEN a frontend user reads a device, THEN no secret or credential value is returned.
+  - WHEN a custodian/install/contact reference exists, THEN it does not identify the active driver or override the Ad Work assignment.
 - **Priority:** Must
 - **Dependencies:** M20A
 - **Security/privacy notes:** Admin-only RLS; identifiers are operational data and must not be public.
@@ -89,14 +90,16 @@ Each requirement records its business purpose, actor, statement, WHEN/THEN accep
 
 - **Business purpose:** Accept telemetry only from an authorized source.
 - **User/actor:** Ingestion service.
-- **Requirement statement:** The pilot HTTP adapter shall support a high-entropy per-device token stored only as a server-side hash; vendor signatures or HMAC shall be supported by adapter capability when available.
+- **Requirement statement:** The pilot HTTP adapter shall support a high-entropy per-device token displayed once, with only non-reversible verification material and key/status/rotation metadata stored server-side; vendor signatures or HMAC shall be supported by adapter capability when available.
 - **Acceptance criteria:**
   - WHEN authentication fails, THEN the endpoint returns a generic rejection and no coordinate is stored.
   - WHEN a vendor webhook is used, THEN its documented signature is validated before normalization.
   - WHEN server credentials are configured, THEN they exist only in the approved server secret store.
+  - WHEN a token or signature is verified, THEN comparison is constant-time and plaintext secret material is unavailable to the database, frontend, driver app, Git, logs, and customer data.
+  - WHEN M20A/M21 selects the verification mechanism, THEN its request-time cost is measured against the 15-second telemetry profile and burst tests before approval.
 - **Priority:** Must
 - **Dependencies:** DEV-REG-001
-- **Security/privacy notes:** No service-role key or device secret in web, driver, Git, or frontend-readable tables.
+- **Security/privacy notes:** A token ID plus cryptographic digest or keyed digest with an approved server-held pepper is permitted. Do not mandate a password-hash operation for every point without measured frequency/cost evidence. No service-role key or plaintext device secret may exist in web, driver, Git, logs, customer data, or frontend-readable tables.
 - **Device required:** No
 - **Status:** Not Started
 
@@ -118,9 +121,11 @@ Each requirement records its business purpose, actor, statement, WHEN/THEN accep
 
 - **Business purpose:** Prevent repeated or reordered messages from corrupting proof.
 - **User/actor:** Ingestion service.
-- **Requirement statement:** Generic events require a unique event ID; adapters validate optional stream/boot epoch and sequence with a bounded replay/reordering window.
+- **Requirement statement:** Adapters shall use a stable vendor event ID when one exists; otherwise they shall derive a deterministic idempotency identity from an approved combination of registered device identity, adapter/version, captured time, optional stream/boot epoch, optional sequence, and canonical payload hash. Adapters also validate sequence with a bounded replay/reordering window.
 - **Acceptance criteria:**
   - WHEN an identical event is retried, THEN it is acknowledged as duplicate without another point or alert occurrence.
+  - WHEN no stable vendor event ID exists, THEN the derived identity remains stable across retries and a random identity is not generated per attempt.
+  - WHEN an identity is reused with changed canonical content, THEN the event is rejected and safely alerted.
   - WHEN an unseen lower sequence is valid delayed backfill inside the bounded window, THEN it may be accepted and marked out of order.
   - WHEN a sequence is reused with different content or falls outside the replay window, THEN it is rejected and safely alerted.
 - **Priority:** Must
@@ -165,14 +170,32 @@ Each requirement records its business purpose, actor, statement, WHEN/THEN accep
 
 - **Business purpose:** Keep corrupt telemetry out of proof.
 - **User/actor:** Canonical processor.
-- **Requirement statement:** Coordinates, optional accuracy/speed/heading, clock offset, derived movement, and ordering shall be validated with versioned rules.
+- **Requirement statement:** Coordinates, optional accuracy/speed/heading, untrusted device-captured time, clock offset, derived movement, and ordering shall be validated with versioned rules.
 - **Acceptance criteria:**
   - WHEN latitude or longitude is outside its legal range, THEN the point is rejected.
   - WHEN movement or speed is impossible, THEN the coordinate is rejected or marked suspect according to the recorded rule version and an admin alert is created.
   - WHEN accuracy is unavailable, THEN quality is `unknown`, not fabricated.
+  - WHEN device time exceeds configurable future/past tolerance or conflicts materially with receipt time, clock-offset history, sequence/epoch evidence, or work history, THEN the coordinate is rejected or quarantined as `suspect`/`needs_review`.
+  - WHEN proof eligibility is evaluated, THEN device time alone never authorizes capture.
 - **Priority:** Must
 - **Dependencies:** TEL-NORM-001, HEALTH-001
 - **Security/privacy notes:** Validation warnings are operational signals, not fraud findings.
+- **Device required:** No
+- **Status:** Not Started
+
+### TEL-NORM-003 — Versioned Sensor Observation Extension
+
+- **Business purpose:** Allow later approved IoT measurements without accepting arbitrary vendor JSON or redesigning the telemetry pipeline.
+- **User/actor:** Telemetry adapter, canonical processor, and Kootha admin.
+- **Requirement statement:** `CanonicalSensorObservationV1` shall contain an approved metric key, typed number/boolean/controlled-text value, approved unit, captured time, source/device identity, quality status, normalization version, and synthetic marker.
+- **Acceptance criteria:**
+  - WHEN a supported metric such as fuel level, temperature, door state, vibration, external power, ignition, or tamper is normalized, THEN its key, type, and unit match an approved versioned registry.
+  - WHEN a metric key, unit, type, or controlled-text value is unsupported, THEN it is rejected or retained only as safe non-value metadata according to policy.
+  - WHEN a sensor observation is location-, movement-, work-, or person-sensitive, THEN active-work, privacy, retention, and customer-summary controls apply.
+  - WHEN M19 is merged, THEN no sensor ingestion or persistence runtime exists.
+- **Priority:** Should
+- **Dependencies:** TEL-NORM-001, ADAPTER-001, RETENTION-001
+- **Security/privacy notes:** No arbitrary unvalidated JSON, unbounded text, or vendor-defined units enter canonical storage.
 - **Device required:** No
 - **Status:** Not Started
 
@@ -255,10 +278,11 @@ Each requirement records its business purpose, actor, statement, WHEN/THEN accep
 
 - **Business purpose:** Link physical telemetry to Kootha operations safely.
 - **User/actor:** Event-time work resolver.
-- **Requirement statement:** Device identity resolves the effective vehicle link, assignment, released Ad Work, active work day, and physical tracking session; payload work IDs are ignored.
+- **Requirement statement:** Device identity authoritatively resolves the effective vehicle link; the active driver normally resolves from the valid Ad Work assignment at captured time, followed by released Ad Work, active work day, and physical tracking session. Payload work, vehicle, and driver IDs are ignored.
 - **Acceptance criteria:**
   - WHEN exactly one historical match exists, THEN resolved IDs are attached by the server.
   - WHEN no match or multiple matches exist, THEN coordinates are rejected and an admin alert is created.
+  - WHEN a permanent custodian/install/contact reference exists on the device, THEN it never overrides the active assignment or serves as operational proof authority.
 - **Priority:** Must
 - **Dependencies:** DEV-REG-003, PRIVACY-001
 - **Security/privacy notes:** Unknown-device alerts retain only a safe identifier fingerprint.

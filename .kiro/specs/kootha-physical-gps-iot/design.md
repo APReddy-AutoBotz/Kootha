@@ -105,7 +105,8 @@ interface IngressHostV1 {
 interface CanonicalTelemetryEventV1 {
   canonicalEventId: string;
   vendorEventId?: string;
-  clientEventId: string;
+  clientEventId?: string;
+  idempotencyIdentity: string;
   deviceExternalId: string;
   streamEpoch?: string;
   sequence?: number;
@@ -135,9 +136,23 @@ interface CanonicalTelemetryEventV1 {
   synthetic: boolean;
   rawPayloadHash: string;
 }
-
+interface CanonicalSensorObservationV1 {
+  metricKey: string;
+  valueType: "number" | "boolean" | "controlled_text";
+  numberValue?: number;
+  booleanValue?: boolean;
+  controlledTextValue?: string;
+  unit: string;
+  capturedAt: string;
+  deviceExternalId: string;
+  sourceType: "physical_device";
+  quality: "valid" | "degraded" | "suspect" | "rejected";
+  normalizationVersion: string;
+  synthetic: boolean;
+}
 interface TelemetryProcessingResultV1 {
-  clientEventId: string;
+  clientEventId?: string;
+  idempotencyIdentity: string;
   disposition:
     | "accepted_live"
     | "accepted_delayed"
@@ -151,15 +166,18 @@ interface TelemetryProcessingResultV1 {
 }
 ```
 
-Optional device fields remain absent when the adapter cannot supply them. Resolved internal device, vehicle, driver, assignment, Ad Work, work-day, and session IDs are server outputs, not accepted inputs.
+Optional device fields remain absent when the adapter cannot supply them. Resolved internal device, vehicle, driver, assignment, Ad Work, work-day, and session IDs are server outputs, not accepted inputs. Device identity authoritatively resolves the effective vehicle link. Active driver identity normally comes from the valid Ad Work assignment at captured time. Any device registry custodian/install/contact reference is non-authoritative, and payload-provided driver identity is ignored.
+
+`CanonicalSensorObservationV1` is an architecture extension point only. Metric keys, types, controlled text, and units come from an approved versioned registry; examples may later include fuel level, temperature, door state, vibration, external power, ignition, and tamper. Unsupported values are rejected or reduced to safe metadata. Arbitrary vendor JSON is never canonical sensor data, and applicable work-window, privacy, retention, and customer-summary policies still apply.
 
 ## Authentication and Replay Design
 
-- Generic HTTP: high-entropy bearer token shown once; only its hash and key metadata are stored server-side.
+- Generic HTTP: high-entropy bearer token shown once; only non-reversible verification material plus key ID/status/rotation/revocation metadata is stored server-side. Use constant-time comparison. M20A/M21 may select a token ID plus cryptographic digest or keyed digest with an approved server-held pepper, but must measure request-time cost at the telemetry frequency and must not assume an expensive password hash is appropriate for every point.
 - Vendor webhook: verify the vendor signature against a server secret before parsing device content.
 - HMAC-capable device: validate key ID, timestamp, body digest, and signature using an approved secret store.
 - Direct protocols: authenticate according to device capability, isolate connection gateways, and pass an `AuthContext` to the common processor.
-- Require a generic client event ID. Uniqueness is scoped to device and adapter.
+- Use a stable vendor/client event ID when supplied. Otherwise the adapter derives `idempotencyIdentity` deterministically from an approved combination of registered device identity, adapter/version, device-captured time, optional stream/boot epoch, optional sequence, and canonical payload hash. The identity must remain stable across retries; never generate a random ID per attempt.
+- Scope event identity to device and adapter. Reuse with changed canonical content is rejected and alerted.
 - If stream epoch and sequence exist, store uniqueness by device/epoch/sequence. Maintain a bounded replay/reordering window so unseen lower sequences may represent valid offline backfill.
 - Sequence gaps and out-of-order events become quality signals. Reused sequence with changed content, impossible regression, invalid timestamp, or expired replay window is rejected.
 - Unknown-device attempts store only received time, adapter, safe identifier fingerprint, payload hash, and reason; no coordinates or raw body.
@@ -168,6 +186,8 @@ Optional device fields remain absent when the adapter cannot supply them. Resolv
 ## Live Freshness and Delayed Backfill
 
 The two windows serve different purposes and must never be collapsed.
+
+`deviceCapturedAt` is untrusted. The processor compares it with receipt time, configurable future/past tolerance, observed clock offset, sequence/epoch evidence, effective link/assignment/release/execution history, replay state, and backfill expiry. Device time alone never authorizes proof. Materially ambiguous or inconsistent clock evidence is rejected or quarantined as `suspect`/`needs_review`.
 
 ### Live freshness
 
@@ -182,7 +202,7 @@ Initial planning assumption: receipt up to 24 hours after actual End Work or, wh
 Delayed coordinates are accepted only if:
 
 1. authentication succeeds and the device was eligible at capture;
-2. event ID is unique and replay/sequence checks pass;
+2. stable or deterministically derived idempotency identity is unique and replay/sequence checks pass;
 3. device-to-vehicle link was effective at capture;
 4. assignment and release were effective at capture;
 5. captured time is at or after actual Start Work and at or before actual End Work;
@@ -211,9 +231,10 @@ Receipt after End Work is not an automatic rejection. Valid capture before or at
 | Area | Future change | Reuse rule |
 |---|---|---|
 | `gps_devices` | Vendor/model/protocol/serial, lifecycle, health summaries, install state, synthetic marker | Existing table remains master |
-| Device links | Effective vehicle/optional custodian history | Current `vehicle_id` may remain a convenience pointer |
+| Device links | Effective vehicle/non-authoritative custodian history | Current `vehicle_id` may remain a convenience pointer; active driver comes from assignment |
 | Credentials | Hash/key/status/rotation metadata only | Secrets stay in server secret store |
 | Telemetry receipts | Identity, time, adapter, disposition, quality, safe health, hashes | No off-work coordinates or raw payload |
+| Sensor observations | Approved metric/type/unit/value, capture time, source, quality, version, synthetic marker | Architecture extension only; no arbitrary JSON |
 | `tracking_sessions` | Physical source/mode and device reference | Phone sessions unchanged |
 | `location_points` | Receipt, altitude/satellites, freshness/backfill/synthetic fields | Accepted coordinates remain in existing table |
 | `alerts` | Rich source/device/work context and lifecycle | Extend existing alert platform |

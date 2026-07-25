@@ -52,7 +52,9 @@ The primary attacker stories are a remote sender forging or replaying telemetry,
 | Threat | Impact | Required controls | Safe evidence |
 |---|---|---|---|
 | Fake device message | False location proof | Per-device token hash or adapter signature/HMAC, TLS, active-device check | Adapter, safe fingerprint, reason, time |
-| Replayed message | Duplicate/false proof | Event-ID uniqueness, epoch/sequence replay window, timestamp, payload hash | Duplicate/replay count |
+| Replayed message | Duplicate/false proof | Stable/derived identity uniqueness, epoch/sequence replay window, timestamp, payload hash | Duplicate/replay count |
+| Missing vendor event ID | Retry duplication or random-ID bypass | Stable vendor ID when present; otherwise deterministic device/adapter/time/epoch/sequence/canonical-hash identity | Identity type and duplicate count |
+| Reused identity with changed content | Proof substitution | Persist canonical hash with identity; reject and alert conflicts | Conflict reason/count |
 | Duplicate retry | Inflated points/alerts | Idempotent receipt and point transaction, duplicate acknowledgement | Existing event reference |
 | Device impersonation | Vehicle tracking corruption | High-entropy credentials, signature when supported, rotation/revocation, anomaly alert | Key ID and status only |
 | Stolen credential | Ongoing forged events | Immediate suspension/revoke, bounded credential lifetime, rate/behavior monitoring | Revocation action and safe counts |
@@ -61,6 +63,7 @@ The primary attacker stories are a remote sender forging or replaying telemetry,
 | Invalid coordinates | Corrupt proof | Latitude/longitude constraints, finite numbers, quality rejection | Reason without coordinate |
 | Impossible speed/movement | False route evidence | Reported/derived versioned thresholds, suspect/reject policy, admin alert | Rule/version/count |
 | Past/future timestamp | Replay or clock error | Captured/received comparison, clock-offset bounds, backfill expiry | Offset class/reason |
+| Ambiguous device clock | False in-work capture claim | Configurable tolerances, offset history, sequence/epoch and work-history corroboration; reject or quarantine | Suspect/Needs Review reason |
 | Sequence manipulation | Replay/order corruption | Stream epoch, bounded seen-sequence window, content-hash conflict detection | Gap/reuse/regression class |
 | Out-of-order store-and-forward | False rejection or bad freshness | Accept unseen valid lower sequence in bounded delayed window, degrade freshness | Ordering/freshness flags |
 | Denial-of-service storm | Availability/cost loss | Per-device/global rate limits, concurrency/backpressure, circuit breaker, retry-after | Safe aggregate metrics |
@@ -72,6 +75,7 @@ The primary attacker stories are a remote sender forging or replaying telemetry,
 | End Work race | Incorrect acceptance/rejection | Lock event/work/history rows and evaluate captured/received time atomically | Transaction disposition |
 | Revocation after valid capture | Historical evidence loss | Evaluate release/link validity at capture time and current credential validity at receipt | Historical link/release references |
 | Raw payload leakage | Location/secret exposure | Raw retention disabled; scrub logs/errors; hash only | Hash and normalization version |
+| Arbitrary sensor payload | Injection, privacy, or storage abuse | Approved metric/type/unit registry, bounded controlled text, no arbitrary JSON, work/privacy/retention checks | Metric registry version/reason |
 | Frontend service key exposure | Full database compromise | Service role only in server host; CI guardrails; no client env name | Presence/status checks only |
 | Admin account compromise | Private telemetry exposure | Supabase Auth, admin role RLS, session controls, audit, least privilege | Safe audit actions |
 | Customer data exposure | Privacy/legal harm | No customer policies for raw tables, conservative summary projection | Summary status only |
@@ -83,7 +87,9 @@ The primary attacker stories are a remote sender forging or replaying telemetry,
 
 - TLS required.
 - High-entropy per-device bearer token generated server-side and displayed once.
-- Database stores a slow/appropriate token hash, key ID, status, issued/expiry/revoked time, and rotation relation.
+- Database stores only non-reversible verification material, key ID, status, issued/expiry/revoked time, and rotation relation.
+- Verification uses constant-time comparison. A token ID plus cryptographic digest or keyed digest with an approved server-held pepper is permitted.
+- M20A/M21 must measure verification cost at sustained and burst telemetry frequency; do not mandate an expensive password hash per point without evidence.
 - A valid token identifies the device; the request cannot choose its linked vehicle or work.
 - Token failure returns a generic response and stores no coordinate.
 
@@ -117,6 +123,8 @@ Coordinates are retained only when captured during a historically valid actual w
 ### Delayed coordinates
 
 Delayed receipt is allowed only inside a separately configured backfill window. It is labelled delayed/offline/degraded and cannot affect live status or customer live tracking.
+
+Device-captured time is untrusted and never authorizes proof alone. Future/past tolerance, receipt time, clock-offset history, sequence/epoch, effective link/assignment/release/execution history, replay state, and expiry must corroborate it. Ambiguous or materially inconsistent evidence is rejected or quarantined as suspect/Needs Review.
 
 ### Off-work health
 
