@@ -416,6 +416,10 @@ M18 docs:
 M18 result: in progress. Target Supabase migrations, public enquiry insert-only behavior, private `proof-photos` storage, admin role, and admin login are verified. Driver app execution on the physical Android phone, photo proof upload, Phone Location Proof, offline buffer, Sync Now, admin proof review, and customer-safe final summary evidence remain pending until AP runs them with fake data only.
 
 M18 does not add product behavior, Google Maps, customer live tracking links, public GPS reports, GPS device ingestion, payments, provider integrations, customer app, iOS app, or PWA.
+## M19 Physical GPS and IoT planning
+
+M19 is a separate, completed planning stream for portable physical-device telemetry ingestion, live-versus-delayed event-time handling, simulator-first delivery, and future hardware validation. See the [architecture](docs/architecture/physical-gps-iot-device-integration.md), [implementation plan](docs/planning/m19-physical-gps-iot-implementation-plan.md), [threat model](docs/security/physical-gps-iot-threat-model.md), and [Kiro requirements](.kiro/specs/kootha-physical-gps-iot/requirements.md). This milestone adds documentation and a guardrail test only: it does not add migrations, ingestion endpoints, credentials, maps, device connections, or any runtime physical-device feature. M18 remains incomplete and in progress.
+
 ## Run Driver
 
     pnpm dev:driver
