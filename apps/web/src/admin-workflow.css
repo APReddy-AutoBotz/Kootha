@@ -178,3 +178,23 @@
   padding: 10px;
   background: var(--kootha-panel);
 }
+/* M20A device registry */
+.device-registry { display: grid; gap: 20px; }
+.device-filters { grid-template-columns: repeat(6, minmax(130px, 1fr)); }
+.device-registry-layout { display: grid; grid-template-columns: minmax(330px, .75fr) minmax(0, 1.25fr); gap: 22px; align-items: start; }
+.device-list { display: grid; }
+.device-list > button { display: grid; grid-template-columns: minmax(0, 1fr) minmax(120px, .55fr) auto; gap: 14px; align-items: center; border: 0; border-bottom: 1px solid #e0d2c0; background: transparent; padding: 14px 18px; text-align: left; cursor: pointer; }
+.device-list > button:hover, .device-list > button.is-selected { background: #fff1de; }
+.device-list > button span:not(.status-pill) { display: grid; gap: 3px; min-width: 0; }
+.device-list small { color: var(--kootha-muted); overflow-wrap: anywhere; }
+.device-detail { display: grid; gap: 18px; }
+.device-action-buttons { display: flex; flex-wrap: wrap; gap: 9px; }
+.device-action-buttons button { min-height: 40px; border: 1px solid #cdbba5; border-radius: 6px; background: #fffaf2; padding: 8px 12px; font-weight: 800; cursor: pointer; }
+.device-action-buttons button:hover { border-color: var(--kootha-orange); background: var(--kootha-orange-soft); }
+.device-history-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.device-history-grid > section, .credential-metadata { border: 1px solid #d6c5b1; border-radius: 8px; background: #fffaf2; padding: 18px; }
+.device-history-grid article, .credential-list article { display: grid; gap: 4px; border-top: 1px solid #e0d2c0; padding: 12px 0; }
+.credential-list article { grid-template-columns: minmax(0, 1fr) auto; }
+.credential-list article small { grid-column: 1 / -1; }
+@media (max-width: 1120px) { .device-filters { grid-template-columns: repeat(3, minmax(0, 1fr)); } .device-registry-layout { grid-template-columns: 1fr; } }
+@media (max-width: 680px) { .device-filters, .device-history-grid { grid-template-columns: 1fr; } .device-list > button { grid-template-columns: 1fr auto; } .device-list > button > span:nth-child(2) { grid-column: 1; } }

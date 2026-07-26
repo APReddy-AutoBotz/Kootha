@@ -27,15 +27,15 @@ M19 is a planning-only stream. M18 real-device Phone Location Proof evidence rem
 
 ## M20A — Device Registry and History
 
-- [ ] M20A-T001 Design and migrate the existing `gps_devices` registry without creating a duplicate master.
+- [x] M20A-T001 Design and migrate the existing `gps_devices` registry without creating a duplicate master.
   - Requirements: DEV-REG-001, DEV-REG-002
-- [ ] M20A-T002 Add effective vehicle-link and installation/replacement history.
+- [x] M20A-T002 Add effective vehicle-link and installation/replacement history.
   - Requirements: DEV-REG-003, DEV-REG-004
-- [ ] M20A-T003 Add credential hash/rotation metadata with no client-readable secrets.
+- [x] M20A-T003 Add credential hash/rotation metadata with no client-readable secrets.
   - Requirements: ING-SEC-002, ING-SEC-003
-- [ ] M20A-T004 Add admin-only RLS, safe audit actions, registry, and device detail UI.
+- [x] M20A-T004 Add admin-only RLS, safe audit actions, registry, and device detail UI.
   - Requirements: ADMIN-001
-- [ ] M20A-T005 Add schema, RLS, duplicate, history, lifecycle, and audit tests.
+- [x] M20A-T005 Add schema, RLS, duplicate, history, lifecycle, and audit tests.
   - Requirements: DEV-REG-001 through DEV-REG-004
 
 ## M20B — Contracts and Simulator

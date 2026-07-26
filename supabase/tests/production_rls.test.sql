@@ -11,7 +11,7 @@ select ok(
   not exists (
     select 1 from pg_policies
     where schemaname = 'public'
-      and tablename in ('audit_logs', 'ad_works', 'ad_work_assignments', 'drivers', 'vehicles', 'tracking_sessions', 'location_points', 'location_proof_reviews', 'final_proof_summaries')
+      and tablename in ('audit_logs', 'ad_works', 'ad_work_assignments', 'drivers', 'vehicles', 'gps_devices', 'gps_device_vehicle_links', 'gps_device_lifecycle_events', 'gps_device_credential_metadata', 'tracking_sessions', 'location_points', 'location_proof_reviews', 'final_proof_summaries')
       and roles::text like '%anon%'
   ),
   'admin and tracking tables have no anonymous policies'
@@ -21,7 +21,7 @@ select ok(
   not exists (
     select 1 from pg_policies
     where schemaname = 'public'
-      and tablename in ('audit_logs', 'tracking_sessions', 'location_points', 'location_proof_reviews', 'final_proof_summaries')
+      and tablename in ('audit_logs', 'gps_devices', 'gps_device_vehicle_links', 'gps_device_lifecycle_events', 'gps_device_credential_metadata', 'tracking_sessions', 'location_points', 'location_proof_reviews', 'final_proof_summaries')
       and roles::text like '%authenticated%'
       and coalesce(qual, with_check, '') not like '%is_admin%'
   ),
@@ -56,6 +56,7 @@ select ok(
       and p.prosecdef
       and p.proconfig is distinct from array['search_path=public']
       and p.proconfig is distinct from array['search_path=public, pg_temp']
+      and p.proconfig is distinct from array['search_path=pg_catalog, public']
   ),
   'security definer functions pin a safe search path'
 );

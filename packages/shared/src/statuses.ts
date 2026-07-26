@@ -32,7 +32,6 @@ export const vehicleOwnershipOptions = ["own_vehicle", "hired_vehicle", "driver_
 export const vehicleTypes = ["auto", "car", "van", "small_truck", "other"] as const;
 export const yesNoNotSureOptions = ["yes", "no", "not_sure"] as const;
 export const vehicleGpsDeviceStatuses = ["none", "planned", "installed", "not_working"] as const;
-export const gpsDeviceStatuses = ["active", "inactive", "not_connected", "integration_pending"] as const;
 export const packageTypes = ["basic", "standard", "premium", "not_sure"] as const;
 
 export const adWorkStatuses = [
@@ -162,7 +161,6 @@ export const statusGroups = {
   vehicleTypes,
   yesNoNotSureOptions,
   vehicleGpsDeviceStatuses,
-  gpsDeviceStatuses,
   packageTypes,
   adWorkStatuses,
   adWorkDayStatuses,
