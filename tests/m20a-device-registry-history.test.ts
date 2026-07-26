@@ -396,6 +396,10 @@ describe("M20A physical device registry and history", () => {
     expect(adminSource).not.toMatch(
       /\b(?:ingest_token_hash|verification_material_hash|credential_hash|hmac_secret)\b/i,
     );
+    expect(lowerSql).toContain("view public.gps_device_admin_list");
+    expect(lowerSql).toContain("with (security_invoker = true)");
+    expect(adminSource).toContain("gps_device_admin_list?select=");
+    expect(adminSource).toMatch(/gps_devices\?select=[^"]+&id=eq\./);
   });
 
   it("adds no map, endpoint, simulator, secret, or physical telemetry runtime", () => {

@@ -528,6 +528,44 @@ create policy "Admin users can view safe device credential metadata"
   on public.gps_device_credential_metadata for select to authenticated
   using (public.is_admin());
 
+create or replace view public.gps_device_admin_list
+with (security_invoker = true)
+as
+select
+  id,
+  device_code,
+  status,
+  vendor,
+  model,
+  adapter_type,
+  protocol_type,
+  case when serial_number is null then null
+       when char_length(serial_number) <= 4 then '****'
+       else '****' || right(serial_number, 4) end as serial_number,
+  case when imei is null then null
+       when char_length(imei) <= 4 then '****'
+       else '****' || right(imei, 4) end as imei,
+  case when vendor_device_identifier is null then null
+       when char_length(vendor_device_identifier) <= 4 then '****'
+       else '****' || right(vendor_device_identifier, 4) end as vendor_device_identifier,
+  custodian_driver_id,
+  installation_state,
+  sim_provider_name,
+  firmware_version,
+  gps_readiness,
+  gsm_readiness,
+  external_power_status,
+  battery_status,
+  last_heartbeat_at,
+  last_telemetry_at,
+  null::text as admin_note,
+  created_at,
+  updated_at
+from public.gps_devices;
+
+revoke all on public.gps_device_admin_list from public, anon, authenticated;
+grant select on public.gps_device_admin_list to authenticated;
+
 revoke all on public.gps_devices from anon, authenticated;
 revoke all on public.gps_device_vehicle_links from anon, authenticated;
 revoke all on public.gps_device_lifecycle_events from anon, authenticated;

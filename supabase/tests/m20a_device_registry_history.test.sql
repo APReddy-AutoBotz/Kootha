@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(44);
+select plan(45);
 
 insert into public.user_profiles (auth_user_id, display_name, role)
 values
@@ -49,6 +49,7 @@ select ok(
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-0000000000a2', true);
 select is((select count(*)::integer from public.gps_devices), 0, 'non-admin reads return no devices');
+select is((select count(*)::integer from public.gps_device_admin_list), 0, 'non-admin reads return no masked device list rows');
 select throws_ok(
   $$select public.admin_register_gps_device('M20A-DENIED', 'Vendor', 'Model', 'generic_http', 'https', 'DENIED-SERIAL', null, null, null, null, null, null)$$,
   '42501', 'Admin access required', 'non-admin cannot call registry RPCs'

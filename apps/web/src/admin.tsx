@@ -5966,7 +5966,7 @@ function DeviceRegistryView({ config, session }: { config: SupabaseConfig; sessi
     setError("");
     try {
       const [deviceRows, linkRows, eventRows, credentialRows, vehicleRows] = await Promise.all([
-        safeRead<DeviceRow>("gps_devices?select=id,device_code,status,vendor,model,adapter_type,protocol_type,serial_number,imei,vendor_device_identifier,custodian_driver_id,installation_state,sim_provider_name,firmware_version,gps_readiness,gsm_readiness,external_power_status,battery_status,last_heartbeat_at,last_telemetry_at,admin_note,created_at,updated_at&order=created_at.desc"),
+        safeRead<DeviceRow>("gps_device_admin_list?select=id,device_code,status,vendor,model,adapter_type,protocol_type,serial_number,imei,vendor_device_identifier,custodian_driver_id,installation_state,sim_provider_name,firmware_version,gps_readiness,gsm_readiness,external_power_status,battery_status,last_heartbeat_at,last_telemetry_at,admin_note,created_at,updated_at&order=created_at.desc"),
         safeRead<GpsDeviceVehicleLinkRecord>("gps_device_vehicle_links?select=id,gps_device_id,vehicle_id,is_primary,effective_from,effective_until,installation_reference_note,change_reason,created_by_admin,created_at,closed_by_admin,closed_at&order=effective_from.desc"),
         safeRead<GpsDeviceLifecycleEventRecord>("gps_device_lifecycle_events?select=id,gps_device_id,vehicle_id,event_type,effective_at,reason,related_replacement_device_id,created_by_admin,created_at,safe_note&order=effective_at.desc"),
         safeRead<GpsDeviceCredentialMetadataRecord>("gps_device_credential_metadata?select=id,gps_device_id,credential_key_id,status,issued_at,expires_at,rotated_at,revoked_at,rotated_from_credential_id,last_verified_at,admin_note,created_by_admin,created_at,updated_at&order=created_at.desc"),
@@ -5987,19 +5987,30 @@ function DeviceRegistryView({ config, session }: { config: SupabaseConfig; sessi
 
   useEffect(() => {
     if (!selected || !editing) return;
-    setIdentity({
-      deviceCode: selected.device_code,
-      vendor: selected.vendor ?? "",
-      model: selected.model ?? "",
-      connectionProfile: selected.adapter_type ?? "other",
-      serialNumber: selected.serial_number ?? "",
-      imei: selected.imei ?? "",
-      vendorIdentifier: selected.vendor_device_identifier ?? "",
-      custodianDriverId: selected.custodian_driver_id ?? "",
-      simProvider: selected.sim_provider_name ?? "",
-      firmwareVersion: selected.firmware_version ?? "",
-      adminNote: selected.admin_note ?? ""
-    });
+    let cancelled = false;
+    const detailPath = "gps_devices?select=id,device_code,status,vendor,model,adapter_type,protocol_type,serial_number,imei,vendor_device_identifier,custodian_driver_id,installation_state,sim_provider_name,firmware_version,gps_readiness,gsm_readiness,external_power_status,battery_status,last_heartbeat_at,last_telemetry_at,admin_note,created_at,updated_at&id=eq."
+      + encodeURIComponent(selected.id) + "&limit=1";
+    void safeRead<DeviceRow>(detailPath)
+      .then(([detail]) => {
+        if (cancelled || !detail) return;
+        setIdentity({
+          deviceCode: detail.device_code,
+          vendor: detail.vendor ?? "",
+          model: detail.model ?? "",
+          connectionProfile: detail.adapter_type ?? "other",
+          serialNumber: detail.serial_number ?? "",
+          imei: detail.imei ?? "",
+          vendorIdentifier: detail.vendor_device_identifier ?? "",
+          custodianDriverId: detail.custodian_driver_id ?? "",
+          simProvider: detail.sim_provider_name ?? "",
+          firmwareVersion: detail.firmware_version ?? "",
+          adminNote: detail.admin_note ?? ""
+        });
+      })
+      .catch((detailError) => {
+        if (!cancelled) setError(detailError instanceof Error ? detailError.message : "Could not load device detail.");
+      });
+    return () => { cancelled = true; };
   }, [editing, selectedId]);
 
   async function callDeviceRpc(name: string, body: object, success: string) {
