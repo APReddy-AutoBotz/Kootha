@@ -198,6 +198,7 @@ select ok(
   and exists (select 1 from public.gps_device_lifecycle_events e join public.gps_devices d on d.id=e.gps_device_id where d.device_code='M20A-DEV-001' and e.event_type='replaced'),
   'replacement retires the old link and preserves replacement history'
 );
+reset role;
 select ok(
   not exists (
     select 1 from public.audit_logs
@@ -206,6 +207,7 @@ select ok(
   ),
   'M20A audit actors use the established auth user identity'
 );
+set local role authenticated;
 select ok(
   not has_table_privilege('authenticated', 'public.gps_devices', 'DELETE')
   and not has_table_privilege('authenticated', 'public.gps_device_vehicle_links', 'DELETE')
