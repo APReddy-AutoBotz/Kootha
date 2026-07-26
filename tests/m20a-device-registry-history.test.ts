@@ -360,6 +360,7 @@ describe("M20A physical device registry and history", () => {
     }
     expect(sharedSource).toContain("canTransitionGpsDeviceStatus");
     expect(sharedSource).toContain("isGpsDeviceProofReady");
+    expect(sharedSource).toContain("serverProofReady");
     expect(sharedSource).toContain("validateGpsDeviceCode");
     expect(sharedSource).toContain("validateGpsDeviceReason");
     expect(new Set(deviceStatuses).size).toBe(deviceStatuses.length);
@@ -438,7 +439,7 @@ describe("M20A physical device registry and history", () => {
     expect(m20aTasks).toBeTruthy();
     for (const taskId of ["T001", "T002", "T003", "T004", "T005"]) {
       expect(m20aTasks).toMatch(
-        new RegExp(`- \\[x\\] M20A-`),
+        new RegExp(`- \\[x\\] M20A-${taskId}\\b`),
       );
     }
     const laterTasks = physicalTasks.match(/## M20B[\s\S]*$/)?.[0];

@@ -116,8 +116,10 @@ export function isGpsDeviceProofReady(input: {
   installationStatus?: GpsDeviceInstallationStatus | null;
   gpsReadiness?: GpsDeviceSignalStatus | null;
   gsmReadiness?: GpsDeviceSignalStatus | null;
+  serverProofReady: boolean;
 }): boolean {
-  return input.status === "active"
+  return input.serverProofReady
+    && input.status === "active"
     && Boolean(input.vehicleId)
     && input.credentialStatus === "active"
     && input.installationStatus === "installed"

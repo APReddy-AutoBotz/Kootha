@@ -35,6 +35,7 @@ import {
   getGpsDeviceCredentialStatusLabel,
   getGpsDeviceLifecycleEventLabel,
   getGpsDeviceStatusLabel,
+  getAllowedGpsDeviceStatusTransitions,
   gpsDeviceCredentialStatusOptions,
   gpsDeviceInstallationStatusOptions,
   gpsDeviceStatusOptions,
@@ -5910,6 +5911,15 @@ function DeviceRegistryView({ config, session }: { config: SupabaseConfig; sessi
   const selectedEvents = events.filter((entry) => entry.gps_device_id === selectedId);
   const selectedLinks = links.filter((entry) => entry.gps_device_id === selectedId);
   const selectedCredentials = credentials.filter((entry) => entry.gps_device_id === selectedId);
+  const allowedStatusTransitions = selected
+    ? getAllowedGpsDeviceStatusTransitions(selected.status)
+    : [];
+  const replacementCandidates = devices.filter((device) =>
+    device.id !== selected?.id
+    && ["pending_setup", "offline"].includes(device.status)
+    && !device.current_vehicle_id
+    && Boolean(device.vendor && device.model && device.adapter_type && device.protocol_type)
+  );
   const hardwareIdentityLocked = editing && selected !== null && (
     selected.status !== "pending_setup"
     || selected.installation_state !== "pending"
@@ -6131,7 +6141,7 @@ function DeviceRegistryView({ config, session }: { config: SupabaseConfig; sessi
         <label>SIM/network provider<input value={identity.simProvider} onChange={(event) => setIdentity({ ...identity, simProvider: event.target.value })} /></label>
         <label>Firmware version<input value={identity.firmwareVersion} onChange={(event) => setIdentity({ ...identity, firmwareVersion: event.target.value })} /></label>
       </div>
-      <label>Admin note<textarea value={identity.adminNote} onChange={(event) => setIdentity({ ...identity, adminNote: event.target.value })} maxLength={1000} /></label>
+      <label>Admin note<textarea value={identity.adminNote} onChange={(event) => setIdentity({ ...identity, adminNote: event.target.value })} maxLength={500} /></label>
       <div className="admin-action-row"><button className="primary-button" disabled={busy}>{busy ? "Saving..." : "Save Device"}</button><button className="secondary-button" type="button" onClick={() => { setShowRegistration(false); setEditing(false); }}>Cancel</button></div>
     </form>}
     <div className="admin-filter-grid device-filters" aria-label="Device filters">
@@ -6161,6 +6171,7 @@ function DeviceRegistryView({ config, session }: { config: SupabaseConfig; sessi
           <div className="panel-heading"><div><h3 id="device-detail-title">Device Detail</h3><p>{selected.device_code}</p></div><button className="secondary-button" type="button" disabled={selected.status === "retired"} onClick={() => { setEditing(true); setShowRegistration(true); }}>Edit Device</button></div>
           <dl className="detail-grid">
             <div><dt>Device Status</dt><dd>{getGpsDeviceStatusLabel(selected.status)}</dd></div>
+            <p className="form-help">Active is an operational registry state, not proof readiness. Proof readiness is decided server-side and also requires verified credential material.</p>
             <div><dt>Installation</dt><dd>{selected.installation_state?.replaceAll("_", " ") ?? "Not recorded"}</dd></div>
             <div><dt>Linked Vehicle</dt><dd>{currentVehicle?.vehicle_number ?? "Unlinked"}</dd></div>
             <div><dt>City/town</dt><dd>{currentVehicle?.city ?? "Not recorded"}</dd></div>
@@ -6178,20 +6189,20 @@ function DeviceRegistryView({ config, session }: { config: SupabaseConfig; sessi
             <div className="admin-filter-grid">
               <label>Vehicle<select value={operation.vehicleId} onChange={(event) => setOperation({ ...operation, vehicleId: event.target.value })}><option value="">Select vehicle</option>{vehicles.map((vehicle) => <option key={vehicle.id} value={vehicle.id}>{vehicle.vehicle_number}</option>)}</select></label>
               <label>Effective time<input type="datetime-local" value={operation.effectiveAt} onChange={(event) => setOperation({ ...operation, effectiveAt: event.target.value })} /></label>
-              <label>Replacement Device<select value={operation.replacementDeviceId} onChange={(event) => setOperation({ ...operation, replacementDeviceId: event.target.value })}><option value="">Select replacement</option>{devices.filter((device) => device.id !== selected.id && device.status !== "retired").map((device) => <option value={device.id} key={device.id}>{device.device_code}</option>)}</select></label>
+              <label>Replacement Device<select value={operation.replacementDeviceId} onChange={(event) => setOperation({ ...operation, replacementDeviceId: event.target.value })}><option value="">Select replacement</option>{replacementCandidates.map((device) => <option value={device.id} key={device.id}>{device.device_code}</option>)}</select></label>
             </div>
             <label>Reason<textarea value={operation.reason} onChange={(event) => setOperation({ ...operation, reason: event.target.value })} maxLength={500} placeholder="Required for high-impact actions" /></label>
-            <label>Safe note<textarea value={operation.note} onChange={(event) => setOperation({ ...operation, note: event.target.value })} maxLength={1000} /></label>
+            <label>Safe note<textarea value={operation.note} onChange={(event) => setOperation({ ...operation, note: event.target.value })} maxLength={500} /></label>
             <div className="device-action-buttons">
               <button type="button" onClick={() => void linkVehicle()} disabled={busy}>{currentLink ? "Reassign Vehicle" : "Link Vehicle"}</button>
               <button type="button" onClick={() => void removeVehicle()} disabled={busy || !currentLink}>Remove from Vehicle</button>
               <button type="button" onClick={() => void recordInstallation()} disabled={busy}>Record Installation</button>
-              <button type="button" onClick={() => void changeStatus("offline")} disabled={busy}>Mark Offline</button>
-              <button type="button" onClick={() => void changeStatus("not_working")} disabled={busy}>Mark Not Working</button>
-              <button type="button" onClick={() => void changeStatus("suspended")} disabled={busy}>Suspend Device</button>
-              <button type="button" onClick={() => void changeStatus("active")} disabled={busy}>Reactivate</button>
-              <button type="button" onClick={() => void replaceDevice()} disabled={busy}>Record Replacement</button>
-              <button type="button" onClick={() => void changeStatus("retired")} disabled={busy}>Retire Device</button>
+              <button type="button" onClick={() => void changeStatus("offline")} disabled={busy || !allowedStatusTransitions.includes("offline")}>Mark Offline</button>
+              <button type="button" onClick={() => void changeStatus("not_working")} disabled={busy || !allowedStatusTransitions.includes("not_working")}>Mark Not Working</button>
+              <button type="button" onClick={() => void changeStatus("suspended")} disabled={busy || !allowedStatusTransitions.includes("suspended")}>Suspend Device</button>
+              <button type="button" onClick={() => void changeStatus("active")} disabled={busy || !allowedStatusTransitions.includes("active")}>Reactivate</button>
+              <button type="button" onClick={() => void replaceDevice()} disabled={busy || replacementCandidates.length === 0}>Record Replacement</button>
+              <button type="button" onClick={() => void changeStatus("retired")} disabled={busy || !allowedStatusTransitions.includes("retired")}>Retire Device</button>
             </div>
           </fieldset>
           <div className="device-history-grid">
@@ -6201,11 +6212,11 @@ function DeviceRegistryView({ config, session }: { config: SupabaseConfig; sessi
           <section className="form-section credential-metadata"><h3>Credential Status</h3><p>Safe metadata only. Secret or verification material is never shown here.</p>
             <div className="credential-list">{selectedCredentials.map((entry) => <article key={entry.id}><strong>{maskDeviceIdentifier(entry.credential_key_id)}</strong><span className="status-pill">{getGpsDeviceCredentialStatusLabel(entry.status)}</span><small>Issued {formatTime(entry.issued_at)} · Expires {formatTime(entry.expires_at)}</small></article>)}</div>
             <form onSubmit={saveCredential}><div className="admin-filter-grid">
-              <label>Key ID<input value={credentialDraft.keyId} onChange={(event) => setCredentialDraft({ ...credentialDraft, keyId: event.target.value })} required /></label>
-              <label>Credential Status<select value={credentialDraft.status} onChange={(event) => setCredentialDraft({ ...credentialDraft, status: event.target.value as GpsDeviceCredentialStatus })}>{gpsDeviceCredentialStatusOptions.map((status) => <option value={status} key={status}>{getGpsDeviceCredentialStatusLabel(status)}</option>)}</select></label>
+              <label>Key ID<input maxLength={128} value={credentialDraft.keyId} onChange={(event) => setCredentialDraft({ ...credentialDraft, keyId: event.target.value })} required /></label>
+              <label>Credential Status<select value={credentialDraft.status} onChange={(event) => setCredentialDraft({ ...credentialDraft, status: event.target.value as GpsDeviceCredentialStatus })}>{gpsDeviceCredentialStatusOptions.filter((status) => status !== "rotating").map((status) => <option value={status} key={status}>{getGpsDeviceCredentialStatusLabel(status)}</option>)}</select></label>
               <label>Issued<input type="datetime-local" value={credentialDraft.issuedAt} onChange={(event) => setCredentialDraft({ ...credentialDraft, issuedAt: event.target.value })} /></label>
               <label>Expires<input type="datetime-local" value={credentialDraft.expiresAt} onChange={(event) => setCredentialDraft({ ...credentialDraft, expiresAt: event.target.value })} /></label>
-            </div><label>Safe note<input value={credentialDraft.note} onChange={(event) => setCredentialDraft({ ...credentialDraft, note: event.target.value })} /></label><button className="secondary-button" disabled={busy || selected.status === "retired"}>Save metadata</button></form>
+            </div><label>Safe note<input maxLength={500} value={credentialDraft.note} onChange={(event) => setCredentialDraft({ ...credentialDraft, note: event.target.value })} /></label><button className="secondary-button" disabled={busy || selected.status === "retired"}>Save metadata</button></form>
           </section>
           <section className="form-section"><h3>Audit summary</h3><p>Registration, identity, status, vehicle, installation, replacement, retirement, and credential-metadata changes are recorded in Activity history.</p></section>
         </>}

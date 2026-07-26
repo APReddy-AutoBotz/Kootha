@@ -422,6 +422,8 @@ M19 is a separate, completed planning stream for portable physical-device teleme
 
 ## M20A Physical Device Registry and History
 
+The M20A schema migration is `supabase/migrations/20260725010000_m20a_device_registry_history.sql`.
+
 M20A extends the existing `gps_devices` master with an admin-only Device Registry, effective-dated vehicle-link history, installation and replacement history, explicit lifecycle controls, safe credential metadata, RLS, transactional admin actions, and audit records. It adds no telemetry ingestion, device connection, location-point writing, maps, customer live tracking, or real credential issuance. Existing Phone Location Proof behavior and privacy-safe live-tracking defaults remain unchanged; M18 remains incomplete and M20B–M26 remain not started.
 
 ## Run Driver

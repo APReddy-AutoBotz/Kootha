@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(34);
+select plan(44);
 
 insert into public.user_profiles (auth_user_id, display_name, role)
 values
@@ -72,7 +72,7 @@ select throws_ok(
   '22023', 'Vehicle links cannot start in the future', 'future vehicle links are rejected'
 );
 select lives_ok(
-  $$select public.admin_link_gps_device_vehicle((select id from public.gps_devices where device_code='M20A-DEV-001'), '00000000-0000-0000-0000-0000000000b1', clock_timestamp() - interval '2 minutes', 'installation planned', 'initial link')$$,
+  $$select public.admin_link_gps_device_vehicle((select id from public.gps_devices where device_code='M20A-DEV-001'), '00000000-0000-0000-0000-0000000000b1', clock_timestamp(), 'installation planned', 'initial link')$$,
   'admin can create an authoritative vehicle link'
 );
 select ok(
@@ -84,12 +84,37 @@ select ok(
   'linking plans installation without making the device active'
 );
 select lives_ok(
-  $$select public.admin_record_gps_device_event((select id from public.gps_devices where device_code='M20A-DEV-001'), 'installed', clock_timestamp() - interval '1 minute', '00000000-0000-0000-0000-0000000000b1', null, null, 'installed locally')$$,
+  $$select public.admin_record_gps_device_event((select id from public.gps_devices where device_code='M20A-DEV-001'), 'installed', clock_timestamp(), '00000000-0000-0000-0000-0000000000b1', null, null, 'installed locally')$$,
   'installation can be recorded against the matching current link'
 );
 select lives_ok(
   $$select public.admin_change_gps_device_status((select id from public.gps_devices where device_code='M20A-DEV-001'), 'active', null)$$,
   'installed device can become active'
+);
+select throws_ok(
+  $$select public.admin_register_gps_device('BAD-PAIR', 'Vendor', 'Model', 'generic_http', 'vendor_managed', null, null, null, null, null, null, null)$$,
+  '22023', 'Unsupported adapter and protocol combination',
+  'database rejects unsupported adapter and protocol pairs'
+);
+select throws_ok(
+  $$select public.admin_register_gps_device('LONG-MODEL', 'Vendor', repeat('x', 121), 'generic_http', 'https', null, null, null, null, null, null, null)$$,
+  '22023', 'Model must be safe plain text of at most 120 characters',
+  'database bounds durable identity text'
+);
+select throws_ok(
+  $$select public.admin_record_gps_device_event((select id from public.gps_devices where device_code='M20A-DEV-001'), 'installation_planned', clock_timestamp() + interval '1 hour', '00000000-0000-0000-0000-0000000000b1', null, null, null)$$,
+  '22023', 'Lifecycle events cannot be future dated',
+  'installation planning cannot mutate current state from the future'
+);
+select throws_ok(
+  $$select public.admin_record_gps_device_event((select id from public.gps_devices where device_code='M20A-DEV-001'), 'marked_offline', clock_timestamp(), '00000000-0000-0000-0000-0000000000b2', null, 'wrong vehicle', null)$$,
+  '22023', 'Lifecycle vehicle must match authoritative link history',
+  'lifecycle events cannot bind to a different vehicle'
+);
+select throws_ok(
+  $$select public.admin_record_gps_device_event((select id from public.gps_devices where device_code='M20A-DEV-001'), 'marked_offline', (select min(effective_at) - interval '1 second' from public.gps_device_lifecycle_events where gps_device_id=(select id from public.gps_devices where device_code='M20A-DEV-001')), null, null, 'backdated', null)$$,
+  '22023', 'Lifecycle event cannot predate device history',
+  'immutable lifecycle chronology is monotonic'
 );
 select lives_ok(
   $$select public.admin_upsert_gps_device_credential_metadata((select id from public.gps_devices where device_code='M20A-DEV-001'), 'pilot-key-001', 'active', clock_timestamp() - interval '1 day', clock_timestamp() + interval '30 days', null, 'metadata only')$$,
@@ -98,6 +123,30 @@ select lives_ok(
 select is(
   public.m20a_gps_device_is_proof_ready((select id from public.gps_devices where device_code='M20A-DEV-001')),
   false, 'metadata without server-only verification material is never proof ready'
+);
+select throws_ok(
+  $$select public.admin_upsert_gps_device_credential_metadata((select id from public.gps_devices where device_code='M20A-DEV-001'), 'expired-no-date', 'expired', clock_timestamp() - interval '2 days', null, null, null)$$,
+  '22023', 'Expired credential metadata requires an elapsed expiry',
+  'expired credential metadata requires an elapsed expiry'
+);
+select throws_ok(
+  $$select public.admin_upsert_gps_device_credential_metadata((select id from public.gps_devices where device_code='M20A-DEV-001'), 'rotating-no-source', 'rotating', clock_timestamp(), clock_timestamp() + interval '1 day', null, null)$$,
+  '22023', 'Rotating status is managed on the active rotation source',
+  'rotating is a server-managed source state'
+);
+select lives_ok(
+  $$select public.admin_upsert_gps_device_credential_metadata((select id from public.gps_devices where device_code='M20A-DEV-001'), 'expired-terminal', 'expired', clock_timestamp() - interval '2 days', clock_timestamp() - interval '1 day', null, null)$$,
+  'admin can record valid expired metadata'
+);
+select throws_ok(
+  $$select public.admin_upsert_gps_device_credential_metadata((select id from public.gps_devices where device_code='M20A-DEV-001'), 'expired-terminal', 'active', clock_timestamp(), clock_timestamp() + interval '1 day', null, null)$$,
+  '55000', 'Revoked or expired credential metadata is terminal',
+  'expired credential metadata cannot be reactivated'
+);
+select throws_ok(
+  $$select public.admin_upsert_gps_device_credential_metadata((select id from public.gps_devices where device_code='M20A-DEV-001'), 'second-active', 'active', clock_timestamp(), clock_timestamp() + interval '1 day', null, null)$$,
+  '23505', null,
+  'a device cannot have two active credential metadata rows'
 );
 select lives_ok(
   $$select public.admin_link_gps_device_vehicle((select id from public.gps_devices where device_code='M20A-DEV-001'), '00000000-0000-0000-0000-0000000000b2', clock_timestamp(), 'move', 'vehicle reassignment')$$,

@@ -60,6 +60,16 @@ alter table public.gps_devices
   add column if not exists admin_note text,
   add column if not exists updated_at timestamptz not null default now();
 
+insert into public.audit_logs (
+  actor_type, actor_id, action, entity_type, entity_id, safe_details
+)
+select
+  'system', null, 'gps_device_legacy_vehicle_summary_quarantined',
+  'gps_device', id,
+  jsonb_build_object('gps_device_id', id, 'legacy_vehicle_id', vehicle_id)
+from public.gps_devices
+where vehicle_id is not null;
+
 update public.gps_devices
 set status = case status
   -- Legacy active rows require M20A identity, installation, and link review before activation.
@@ -70,6 +80,7 @@ set status = case status
   else 'pending_setup'
 end,
 admin_note = coalesce(nullif(trim(admin_note), ''), nullif(trim(notes), '')),
+vehicle_id = null,
 updated_at = now();
 
 alter table public.gps_devices
@@ -165,6 +176,39 @@ begin
         )
       );
   end if;
+
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.gps_devices'::regclass
+      and conname = 'gps_devices_adapter_protocol_check'
+  ) then
+    alter table public.gps_devices
+      add constraint gps_devices_adapter_protocol_check check (
+        (adapter_type is null and protocol_type is null)
+        or (adapter_type = 'generic_http' and protocol_type = 'https')
+        or (adapter_type = 'vendor_cloud' and protocol_type = 'vendor_managed')
+        or (adapter_type = 'other' and protocol_type = 'other')
+      );
+  end if;
+
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.gps_devices'::regclass
+      and conname = 'gps_devices_safe_text_bounds_check'
+  ) then
+    alter table public.gps_devices
+      add constraint gps_devices_safe_text_bounds_check check (
+        char_length(device_code) between 1 and 64
+        and (vendor is null or char_length(vendor) between 1 and 120)
+        and (model is null or char_length(model) between 1 and 120)
+        and (serial_number is null or char_length(serial_number) <= 128)
+        and (imei is null or char_length(imei) <= 32)
+        and (vendor_device_identifier is null or char_length(vendor_device_identifier) <= 128)
+        and (sim_provider_name is null or char_length(sim_provider_name) <= 120)
+        and (firmware_version is null or char_length(firmware_version) <= 120)
+        and (admin_note is null or char_length(admin_note) <= 500)
+      );
+  end if;
 end
 $$;
 
@@ -211,7 +255,11 @@ create table if not exists public.gps_device_vehicle_links (
   closed_at timestamptz,
   constraint gps_device_vehicle_links_primary_check check (is_primary),
   constraint gps_device_vehicle_links_interval_check
-    check (effective_until is null or effective_until >= effective_from),
+    check (effective_until is null or effective_until > effective_from),
+  constraint gps_device_vehicle_links_text_bounds_check check (
+    char_length(change_reason) between 1 and 500
+    and (installation_reference_note is null or char_length(installation_reference_note) <= 500)
+  ),
   constraint gps_device_vehicle_links_closure_check check (
     (effective_until is null and closed_by_admin is null and closed_at is null)
     or (effective_until is not null and closed_by_admin is not null and closed_at is not null)
@@ -292,6 +340,10 @@ create table if not exists public.gps_device_lifecycle_events (
   )),
   constraint gps_device_lifecycle_events_replacement_check check (
     event_type <> 'replaced' or related_replacement_device_id is not null
+  ),
+  constraint gps_device_lifecycle_events_text_bounds_check check (
+    (reason is null or char_length(reason) <= 500)
+    and (safe_note is null or char_length(safe_note) <= 500)
   )
 );
 
@@ -321,7 +373,13 @@ create table if not exists public.gps_device_credential_metadata (
   constraint gps_device_credential_metadata_expiry_check
     check (expires_at is null or issued_at is null or expires_at > issued_at),
   constraint gps_device_credential_metadata_revoked_check
-    check (status <> 'revoked' or revoked_at is not null)
+    check (status <> 'revoked' or revoked_at is not null),
+  constraint gps_device_credential_metadata_expired_check
+    check (status <> 'expired' or expires_at is not null),
+  constraint gps_device_credential_metadata_text_bounds_check check (
+    char_length(credential_key_id) between 1 and 128
+    and (admin_note is null or char_length(admin_note) <= 500)
+  )
 );
 
 comment on column public.gps_device_credential_metadata.verification_material_hash is
@@ -329,6 +387,14 @@ comment on column public.gps_device_credential_metadata.verification_material_ha
 
 create unique index if not exists gps_device_credential_metadata_key_unique
   on public.gps_device_credential_metadata (gps_device_id, lower(trim(credential_key_id)));
+
+create unique index if not exists gps_device_credential_metadata_one_active
+  on public.gps_device_credential_metadata (gps_device_id)
+  where status = 'active';
+
+create unique index if not exists gps_device_credential_metadata_one_rotating
+  on public.gps_device_credential_metadata (gps_device_id)
+  where status = 'rotating';
 
 create index if not exists gps_device_credential_metadata_device_idx
   on public.gps_device_credential_metadata (gps_device_id, created_at desc);
@@ -517,7 +583,60 @@ begin
   if v_reason is null then
     raise exception 'A reason is required for this action' using errcode = '22023';
   end if;
+  if char_length(v_reason) > 500 or v_reason ~ '[[:cntrl:]]' then
+    raise exception 'Reason must be safe plain text of at most 500 characters'
+      using errcode = '22023';
+  end if;
   return v_reason;
+end;
+$$;
+
+create or replace function public.m20a_validate_safe_text(
+  p_value text,
+  p_label text,
+  p_max_length integer,
+  p_required boolean default false
+)
+returns text
+language plpgsql
+immutable
+set search_path = pg_catalog, public
+as $$
+declare
+  v_value text := nullif(trim(coalesce(p_value, '')), '');
+begin
+  if p_required and v_value is null then
+    raise exception '% is required', p_label using errcode = '22023';
+  end if;
+  if v_value is not null and (
+    char_length(v_value) > p_max_length
+    or v_value ~ '[[:cntrl:]]'
+  ) then
+    raise exception '% must be safe plain text of at most % characters',
+      p_label, p_max_length using errcode = '22023';
+  end if;
+  return v_value;
+end;
+$$;
+
+create or replace function public.m20a_validate_adapter_protocol(
+  p_adapter_type text,
+  p_protocol_type text
+)
+returns void
+language plpgsql
+immutable
+set search_path = pg_catalog, public
+as $$
+begin
+  if not (
+    (p_adapter_type = 'generic_http' and p_protocol_type = 'https')
+    or (p_adapter_type = 'vendor_cloud' and p_protocol_type = 'vendor_managed')
+    or (p_adapter_type = 'other' and p_protocol_type = 'other')
+  ) then
+    raise exception 'Unsupported adapter and protocol combination'
+      using errcode = '22023';
+  end if;
 end;
 $$;
 
@@ -587,6 +706,16 @@ declare
   v_actor_id uuid := public.m20a_require_admin();
   v_device_id uuid;
 begin
+  perform public.m20a_validate_safe_text(p_device_code, 'Device code', 64, true);
+  perform public.m20a_validate_safe_text(p_vendor, 'Vendor', 120, true);
+  perform public.m20a_validate_safe_text(p_model, 'Model', 120, true);
+  perform public.m20a_validate_safe_text(p_serial_number, 'Serial number', 128);
+  perform public.m20a_validate_safe_text(p_imei, 'IMEI', 32);
+  perform public.m20a_validate_safe_text(p_vendor_device_identifier, 'Vendor device identifier', 128);
+  perform public.m20a_validate_safe_text(p_sim_provider_name, 'SIM provider', 120);
+  perform public.m20a_validate_safe_text(p_firmware_version, 'Firmware version', 120);
+  perform public.m20a_validate_safe_text(p_admin_note, 'Admin note', 500);
+  perform public.m20a_validate_adapter_protocol(trim(p_adapter_type), trim(p_protocol_type));
   if nullif(trim(coalesce(p_device_code, '')), '') is null then
     raise exception 'Device code is required' using errcode = '22023';
   end if;
@@ -663,6 +792,16 @@ declare
   v_actor_id uuid := public.m20a_require_admin();
   v_device public.gps_devices%rowtype;
 begin
+  perform public.m20a_validate_safe_text(p_device_code, 'Device code', 64, true);
+  perform public.m20a_validate_safe_text(p_vendor, 'Vendor', 120, true);
+  perform public.m20a_validate_safe_text(p_model, 'Model', 120, true);
+  perform public.m20a_validate_safe_text(p_serial_number, 'Serial number', 128);
+  perform public.m20a_validate_safe_text(p_imei, 'IMEI', 32);
+  perform public.m20a_validate_safe_text(p_vendor_device_identifier, 'Vendor device identifier', 128);
+  perform public.m20a_validate_safe_text(p_sim_provider_name, 'SIM provider', 120);
+  perform public.m20a_validate_safe_text(p_firmware_version, 'Firmware version', 120);
+  perform public.m20a_validate_safe_text(p_admin_note, 'Admin note', 500);
+  perform public.m20a_validate_adapter_protocol(trim(p_adapter_type), trim(p_protocol_type));
   select * into v_device from public.gps_devices
   where id = p_device_id for update;
   if not found then
@@ -750,6 +889,7 @@ declare
   v_reason text := nullif(trim(coalesce(p_reason, '')), '');
   v_event_type text;
 begin
+  perform public.m20a_validate_safe_text(p_reason, 'Reason', 500);
   if p_status not in (
     'pending_setup', 'active', 'offline', 'not_working',
     'suspended', 'removed', 'retired'
@@ -813,6 +953,22 @@ begin
   end if;
 
   if p_status in ('removed', 'retired') then
+    insert into public.audit_logs (
+      actor_type, actor_id, action, entity_type, entity_id, safe_details
+    )
+    select
+      'admin', v_actor_id, 'gps_device_vehicle_link_closed',
+      'gps_device_vehicle_link', links.id,
+      jsonb_build_object(
+        'gps_device_id', p_device_id,
+        'vehicle_id', links.vehicle_id,
+        'reason', v_reason
+      )
+    from public.gps_device_vehicle_links links
+    where links.gps_device_id = p_device_id
+      and links.is_primary
+      and links.effective_until is null;
+
     update public.gps_device_vehicle_links links
     set effective_until = greatest(links.effective_from, clock_timestamp()),
         closed_by_admin = v_actor_id,
@@ -893,6 +1049,8 @@ declare
   v_link_id uuid;
   v_reason text;
 begin
+  perform public.m20a_validate_safe_text(p_note, 'Installation note', 500);
+  perform public.m20a_validate_safe_text(p_reason, 'Reason', 500);
   if p_effective_from is null then
     raise exception 'Effective-from time is required' using errcode = '22023';
   end if;
@@ -903,6 +1061,15 @@ begin
   select * into v_device from public.gps_devices
   where id = p_device_id for update;
   if not found then raise exception 'Device not found' using errcode = 'P0002'; end if;
+  if p_effective_from < v_device.created_at
+    or p_effective_from < coalesce((
+      select max(effective_at) from public.gps_device_lifecycle_events
+      where gps_device_id = p_device_id
+    ), v_device.created_at)
+  then
+    raise exception 'Vehicle link cannot predate device history'
+      using errcode = '22023';
+  end if;
   if v_device.status in (
     'suspended'::public.gps_device_status,
     'removed'::public.gps_device_status,
@@ -925,7 +1092,7 @@ begin
       raise exception 'Device is already linked to that vehicle' using errcode = '22023';
     end if;
     v_reason := public.m20a_require_reason(p_reason);
-    if p_effective_from < v_existing.effective_from then
+    if p_effective_from <= v_existing.effective_from then
       raise exception 'Reassignment cannot predate the current link'
         using errcode = '22023';
     end if;
@@ -1024,6 +1191,7 @@ declare
   v_device public.gps_devices%rowtype;
   v_link public.gps_device_vehicle_links%rowtype;
 begin
+  perform public.m20a_validate_safe_text(p_note, 'Removal note', 500);
   select * into v_device from public.gps_devices
   where id = p_device_id for update;
   if not found then raise exception 'Device not found' using errcode = 'P0002'; end if;
@@ -1032,8 +1200,12 @@ begin
   where gps_device_id = p_device_id and is_primary and effective_until is null
   for update;
   if not found then raise exception 'Device has no current vehicle link' using errcode = 'P0002'; end if;
-  if p_effective_until is null or p_effective_until < v_link.effective_from
+  if p_effective_until is null or p_effective_until <= v_link.effective_from
     or p_effective_until > clock_timestamp()
+    or p_effective_until < coalesce((
+      select max(effective_at) from public.gps_device_lifecycle_events
+      where gps_device_id = p_device_id
+    ), v_link.effective_from)
   then
     raise exception 'Invalid effective-until time' using errcode = '22023';
   end if;
@@ -1097,7 +1269,10 @@ declare
   v_device public.gps_devices%rowtype;
   v_event_id uuid;
   v_reason text := nullif(trim(coalesce(p_reason, '')), '');
+  v_vehicle_id uuid;
 begin
+  perform public.m20a_validate_safe_text(p_note, 'Lifecycle note', 500);
+  perform public.m20a_validate_safe_text(p_reason, 'Reason', 500);
   if p_event_type not in (
     'installation_planned', 'installed', 'removed', 'lost', 'stolen',
     'suspended', 'reactivated', 'marked_not_working', 'marked_offline',
@@ -1108,8 +1283,8 @@ begin
   if p_effective_at is null then
     raise exception 'Effective time is required' using errcode = '22023';
   end if;
-  if p_event_type <> 'installation_planned' and p_effective_at > clock_timestamp() then
-    raise exception 'State-changing lifecycle events cannot be future dated'
+  if p_effective_at > clock_timestamp() then
+    raise exception 'Lifecycle events cannot be future dated'
       using errcode = '22023';
   end if;
   if p_event_type in (
@@ -1122,14 +1297,30 @@ begin
   select * into v_device from public.gps_devices
   where id = p_device_id for update;
   if not found then raise exception 'Device not found' using errcode = 'P0002'; end if;
+  if p_effective_at < v_device.created_at
+    or p_effective_at < coalesce((
+      select max(effective_at) from public.gps_device_lifecycle_events
+      where gps_device_id = p_device_id
+    ), v_device.created_at)
+  then
+    raise exception 'Lifecycle event cannot predate device history'
+      using errcode = '22023';
+  end if;
   if v_device.status = 'retired'::public.gps_device_status then
     raise exception 'Retired devices cannot receive normal lifecycle events'
       using errcode = '55000';
   end if;
-  if p_vehicle_id is not null
-    and not exists (select 1 from public.vehicles where id = p_vehicle_id)
-  then
-    raise exception 'Vehicle not found' using errcode = 'P0002';
+  select links.vehicle_id into v_vehicle_id
+  from public.gps_device_vehicle_links links
+  where links.gps_device_id = p_device_id
+    and links.is_primary
+    and links.effective_from <= p_effective_at
+    and (links.effective_until is null or links.effective_until > p_effective_at)
+  order by links.effective_from desc
+  limit 1;
+  if p_vehicle_id is not null and p_vehicle_id is distinct from v_vehicle_id then
+    raise exception 'Lifecycle vehicle must match authoritative link history'
+      using errcode = '22023';
   end if;
 
   if p_event_type = 'installation_planned'
@@ -1163,7 +1354,7 @@ begin
     if not exists (
       select 1 from public.gps_device_vehicle_links
       where gps_device_id = p_device_id
-        and vehicle_id = coalesce(p_vehicle_id, v_device.vehicle_id)
+        and vehicle_id = v_vehicle_id
         and is_primary
         and effective_from <= p_effective_at
         and effective_until is null
@@ -1218,7 +1409,7 @@ begin
     gps_device_id, vehicle_id, event_type, effective_at, reason,
     related_replacement_device_id, created_by_admin, safe_note
   ) values (
-    p_device_id, coalesce(p_vehicle_id, v_device.vehicle_id), p_event_type,
+    p_device_id, v_vehicle_id, p_event_type,
     p_effective_at, coalesce(v_reason, 'Lifecycle event recorded'),
     p_related_device_id, v_actor_id, nullif(trim(coalesce(p_note, '')), '')
   ) returning id into v_event_id;
@@ -1260,6 +1451,7 @@ declare
   v_old_link public.gps_device_vehicle_links%rowtype;
   v_new_link_id uuid;
 begin
+  perform public.m20a_validate_safe_text(p_note, 'Replacement note', 500);
   if p_old_device_id = p_new_device_id then
     raise exception 'Replacement devices must be different' using errcode = '22023';
   end if;
@@ -1314,8 +1506,14 @@ begin
     raise exception 'Old device is not currently linked to the selected vehicle'
       using errcode = 'P0002';
   end if;
-  if p_effective_at < v_old_link.effective_from then
-    raise exception 'Replacement cannot predate the current link'
+  if p_effective_at <= v_old_link.effective_from
+    or p_effective_at < v_new.created_at
+    or p_effective_at < coalesce((
+      select max(effective_at) from public.gps_device_lifecycle_events
+      where gps_device_id in (p_old_device_id, p_new_device_id)
+    ), p_effective_at)
+  then
+    raise exception 'Replacement cannot predate device or link history'
       using errcode = '22023';
   end if;
 
@@ -1407,7 +1605,10 @@ declare
   v_existing public.gps_device_credential_metadata%rowtype;
   v_rotated public.gps_device_credential_metadata%rowtype;
   v_credential_id uuid;
+  v_rows_updated integer;
 begin
+  perform public.m20a_validate_safe_text(p_credential_key_id, 'Credential key ID', 128, true);
+  perform public.m20a_validate_safe_text(p_admin_note, 'Credential note', 500);
   if nullif(trim(coalesce(p_credential_key_id, '')), '') is null then
     raise exception 'Credential key ID is required' using errcode = '22023';
   end if;
@@ -1418,6 +1619,23 @@ begin
     and p_expires_at <= p_issued_at
   then
     raise exception 'Credential expiry must follow issue time' using errcode = '22023';
+  end if;
+  if p_status = 'expired'
+    and (p_expires_at is null or p_expires_at > clock_timestamp())
+  then
+    raise exception 'Expired credential metadata requires an elapsed expiry'
+      using errcode = '22023';
+  end if;
+  if p_status in ('active', 'rotating')
+    and p_expires_at is not null
+    and p_expires_at <= clock_timestamp()
+  then
+    raise exception 'Active credential metadata cannot already be expired'
+      using errcode = '22023';
+  end if;
+  if p_status = 'rotating' then
+    raise exception 'Rotating status is managed on the active rotation source'
+      using errcode = '22023';
   end if;
 
   select * into v_device from public.gps_devices
@@ -1439,7 +1657,7 @@ begin
   for update;
 
   if p_rotated_from_credential_id is not null
-    and p_status not in ('pending', 'active', 'rotating')
+    and p_status not in ('pending', 'active')
   then
     raise exception 'Revoked or expired metadata cannot begin a rotation'
       using errcode = '22023';
@@ -1458,10 +1676,19 @@ begin
       raise exception 'Rotation source credential metadata not found for device'
         using errcode = 'P0002';
     end if;
+    if v_rotated.status <> 'active' then
+      raise exception 'Rotation source credential metadata must be active'
+        using errcode = '55000';
+    end if;
     update public.gps_device_credential_metadata
     set status = 'rotating', rotated_at = coalesce(rotated_at, clock_timestamp())
     where id = p_rotated_from_credential_id
-      and status in ('pending', 'active');
+      and status = 'active';
+    get diagnostics v_rows_updated = row_count;
+    if v_rows_updated <> 1 then
+      raise exception 'Rotation source credential metadata changed concurrently'
+        using errcode = '40001';
+    end if;
   end if;
 
   if v_existing.id is null then
@@ -1475,8 +1702,20 @@ begin
       nullif(trim(coalesce(p_admin_note, '')), ''), v_actor_id
     ) returning id into v_credential_id;
   else
-    if v_existing.status = 'revoked' and p_status <> 'revoked' then
-      raise exception 'Revoked credential metadata cannot be reactivated'
+    if v_existing.status in ('revoked', 'expired')
+      and p_status <> v_existing.status
+    then
+      raise exception 'Revoked or expired credential metadata is terminal'
+        using errcode = '55000';
+    end if;
+    if not (
+      (v_existing.status = 'pending' and p_status in ('pending', 'active', 'revoked', 'expired'))
+      or (v_existing.status = 'active' and p_status in ('active', 'revoked', 'expired'))
+      or (v_existing.status = 'rotating' and p_status in ('revoked', 'expired'))
+      or (v_existing.status = 'revoked' and p_status = 'revoked')
+      or (v_existing.status = 'expired' and p_status = 'expired')
+    ) then
+      raise exception 'Blocked credential metadata transition'
         using errcode = '55000';
     end if;
     update public.gps_device_credential_metadata
@@ -1521,6 +1760,8 @@ revoke all on function public.m20a_protect_vehicle_link_history() from public, a
 revoke all on function public.m20a_protect_lifecycle_event_history() from public, anon, authenticated;
 revoke all on function public.m20a_require_admin() from public, anon, authenticated;
 revoke all on function public.m20a_require_reason(text) from public, anon, authenticated;
+revoke all on function public.m20a_validate_safe_text(text, text, integer, boolean) from public, anon, authenticated;
+revoke all on function public.m20a_validate_adapter_protocol(text, text) from public, anon, authenticated;
 
 revoke all on function public.m20a_gps_device_is_proof_ready(uuid) from public, anon;
 grant execute on function public.m20a_gps_device_is_proof_ready(uuid) to authenticated;
