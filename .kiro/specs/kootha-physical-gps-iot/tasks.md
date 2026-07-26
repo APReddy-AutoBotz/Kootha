@@ -40,14 +40,18 @@ M19 is a planning-only stream. M18 real-device Phone Location Proof evidence rem
 
 ## M20B — Contracts and Simulator
 
-- [ ] M20B-T001 Add host-independent ingress, adapter, canonical event, sensor-observation extension, processing-result, and resolver contracts.
+[~] M20B is in progress in a draft pull request and is not complete until merge and post-merge verification.
+
+- [~] M20B-T001 Add host-independent ingress, adapter, canonical event, sensor-observation extension, processing-result, and resolver contracts.
   - Requirements: ING-SEC-001, TEL-NORM-001, TEL-NORM-003, ADAPTER-001
-- [ ] M20B-T002 Build deterministic synthetic device, route, clock, sequence, and delay generators.
+- [~] M20B-T002 Build deterministic synthetic device, route, clock, sequence, and delay generators.
   - Requirements: SIM-001
-- [ ] M20B-T003 Implement every healthy, fault, backfill, privacy, and comparison scenario.
+- [~] M20B-T003 Implement every healthy, fault, backfill, privacy, and comparison scenario.
   - Requirements: SIM-002
-- [ ] M20B-T004 Prove synthetic marking and absence of real routes, people, and production credentials.
+- [~] M20B-T004 Prove synthetic marking and absence of real routes, people, and production credentials.
   - Requirements: SIM-001, PRIVACY-004
+
+M18 remains incomplete and in progress. M20A is complete. M21 through M26 remain Not Started.
 
 ## M21 — Generic Secure HTTP Ingestion
 

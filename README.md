@@ -426,6 +426,12 @@ The M20A schema migration is `supabase/migrations/20260725010000_m20a_device_reg
 
 M20A extends the existing `gps_devices` master with an admin-only Device Registry, effective-dated vehicle-link history, installation and replacement history, explicit lifecycle controls, safe credential metadata, RLS, transactional admin actions, and audit records. It adds no telemetry ingestion, device connection, location-point writing, maps, customer live tracking, or real credential issuance. Existing Phone Location Proof behavior and privacy-safe live-tracking defaults remain unchanged; M18 remains incomplete and M20B–M26 remain not started.
 
+## M20B Canonical Contracts and Deterministic Simulator
+
+M20B is in progress in a draft pull request and is not yet complete. It adds host-neutral, versioned TypeScript telemetry contracts, deterministic identity and event-time decision helpers, runtime validation, and a manual-clock synthetic simulator with a typed scenario catalog. See the [concise M20B guide](docs/planning/m20b-canonical-contracts-deterministic-simulator.md).
+
+M20B adds no migration, endpoint, persistence, real credential, vendor or physical-device connection, maps, customer live tracking, operational alert runtime, production phone/device comparison, or AI/ML runtime. Existing Phone Location Proof is unchanged; M18 remains incomplete and in progress, M20A is complete, and M21 through M26 remain Not Started.
+
 ## Run Driver
 
     pnpm dev:driver

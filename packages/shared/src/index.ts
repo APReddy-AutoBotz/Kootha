@@ -7,6 +7,7 @@ export * from "./execution";
 export * from "./enquiry";
 export * from "./labels";
 export * from "./pilotReadiness";
+export * from "./physicalTelemetry";
 export * from "./product";
 export * from "./statuses";
 export * from "./tracking";
