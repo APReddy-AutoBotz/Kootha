@@ -1,4 +1,4 @@
-# M20B Canonical Contracts and Deterministic Simulator
+﻿# M20B Canonical Contracts and Deterministic Simulator
 
 M20B is in progress in a draft pull request and is not complete until merge and post-merge verification.
 
@@ -20,7 +20,13 @@ The simulator uses an explicit seed, synthetic identities and coordinates, virtu
 
 Simulator provenance is a one-way invariant: `source: "simulator"` requires `synthetic: true` at both canonical-event and sensor-observation validation boundaries. Synthetic physical-device-shaped fixtures remain explicitly synthetic and retain `source: "physical_device"`; they are not phone telemetry, authenticated device context, persisted proof, or production evidence. Future M21 hosting must authenticate and resolve real devices, but it cannot weaken this M20B marker.
 
-The typed catalog contains healthy movement, long stop, missing heartbeat, duplicate retry, changed-content duplicate, out-of-order event, delayed offline backfill, invalid coordinate, impossible speed, low battery, poor GPS, poor GSM, offline/reconnect, telemetry before Start Work, telemetry after End Work, phone and physical device together, phone/device mismatch, approved sensor observations, and unsupported sensor metric. Alert-like scenarios are evidence only; M22 owns alert evaluation and M23 owns production phone/device comparison.
+The typed catalog contains healthy movement, long stop, missing heartbeat, duplicate retry, changed-content duplicate, sequence gap, out-of-order event, delayed offline backfill, expired delayed backfill, invalid coordinate, impossible speed, low battery, poor GPS, poor GSM, offline/reconnect, telemetry before Start Work, telemetry after End Work, phone and physical device together, phone/device mismatch, approved sensor observations, and unsupported sensor metric. Every ID has executable semantic assertions for its applicable validation, event-time, duplicate, ordering, health, point-eligibility, sensor, or source-separation behavior. Rule and comparison expectations are bounded test data only; M22 owns alert evaluation and M23 owns production phone/device comparison.
+
+`SyntheticTelemetryScenarioContextV1` supplies deterministic, obviously synthetic registry, device-to-vehicle link, assignment, release, work-day, execution-window, and optional session fixtures. It is scenario/test context only, is never authoritative ingress identity, and is never copied into a canonical event. The same seed, scenario ID, configuration, and virtual starting time reproduce the same context and events.
+
+`SyntheticPhonePointV1` explicitly uses `source: "phone"`, a separate `synthetic-phone-device-*` identity, and an optional `synthetic-session-*` identity. Phone fixtures stay outside `CanonicalTelemetryEventV1` and in a collection separate from physical-device-shaped simulator events. Match and sustained-mismatch relationships remain typed fixture expectations only; M20B performs no production comparison.
+
+The impossible-speed fixture uses two independently valid canonical events whose legal coordinates and deterministic captured times imply impossible movement. Only the test calculates that implied speed; no M22 movement-rule runtime is implemented.
 
 ## Security, privacy, and non-goals
 

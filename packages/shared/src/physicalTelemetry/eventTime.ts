@@ -13,6 +13,8 @@ export interface CaptureWindowPolicyV1 {
 }
 
 export interface EventTimeCaptureInputV1 {
+  readonly idempotencyIdentity: string;
+  readonly clientEventId?: string;
   readonly capturedAt: string;
   readonly receivedAt: string;
   readonly actualWorkStartedAt: string;
@@ -44,8 +46,22 @@ const INVALID_REASON_BY_EVIDENCE: ReadonlyArray<
 
 function rejected(
   reasonCode: TelemetryRejectionReasonCodeV1,
+  input: Pick<
+    EventTimeCaptureInputV1,
+    "idempotencyIdentity" | "clientEventId"
+  >,
 ): CaptureWindowDecisionV1 {
-  return { contractVersion: "1", disposition: "rejected", reasonCode };
+  return {
+    contractVersion: "1",
+    idempotencyIdentity: input.idempotencyIdentity,
+    clientEventId: input.clientEventId,
+    disposition: "rejected",
+    reasonCode,
+    freshness: "not_applicable",
+    offlineBackfill: false,
+    quality: "rejected",
+    persistenceStatus: "not_attempted",
+  };
 }
 
 function hasValidPolicy(policy: CaptureWindowPolicyV1): boolean {
@@ -67,8 +83,8 @@ export function decideCaptureWindowV1(
   input: EventTimeCaptureInputV1,
   policy: CaptureWindowPolicyV1,
 ): CaptureWindowDecisionV1 {
-  if (!hasValidPolicy(policy)) {
-    return rejected("captured_time_invalid");
+  if (!hasValidPolicy(policy) || input.idempotencyIdentity.trim().length === 0) {
+    return rejected("captured_time_invalid", input);
   }
 
   const capturedAt = parseStrictUtcIsoTimestampV1(input.capturedAt);
@@ -85,42 +101,43 @@ export function decideCaptureWindowV1(
     (input.actualWorkEndedAt !== undefined && workEndedAt === undefined) ||
     (workEndedAt !== undefined && workEndedAt < workStartedAt)
   ) {
-    return rejected("captured_time_invalid");
+    return rejected("captured_time_invalid", input);
   }
 
   for (const [key, reasonCode] of INVALID_REASON_BY_EVIDENCE) {
     const state: unknown = input[key];
     if (!isEvidenceStateV1(state) || state === "ambiguous") {
-      return rejected("event_time_evidence_ambiguous");
+      return rejected("event_time_evidence_ambiguous", input);
     }
     if (state === "invalid") {
-      return rejected(reasonCode);
+      return rejected(reasonCode, input);
     }
   }
 
   if (capturedAt < workStartedAt) {
-    return rejected("captured_before_work_start");
+    return rejected("captured_before_work_start", input);
   }
   if (workEndedAt !== undefined && capturedAt > workEndedAt) {
-    return rejected("captured_after_work_end");
+    return rejected("captured_after_work_end", input);
   }
   if (capturedAt > receivedAt + policy.maximumFutureClockSkewMs) {
-    return rejected("captured_time_future_skew");
+    return rejected("captured_time_future_skew", input);
   }
 
   const freshnessAgeMs = Math.max(0, receivedAt - capturedAt);
   const receivedAfterEnd =
     workEndedAt !== undefined && receivedAt > workEndedAt;
-  if (
-    !receivedAfterEnd &&
-    freshnessAgeMs <= policy.liveFreshnessWindowMs
-  ) {
+  if (!receivedAfterEnd && freshnessAgeMs <= policy.liveFreshnessWindowMs) {
     return {
       contractVersion: "1",
+      idempotencyIdentity: input.idempotencyIdentity,
+      clientEventId: input.clientEventId,
       disposition: "accepted_live",
       reasonCode: "inside_live_freshness_window",
       freshness: "live",
       offlineBackfill: false,
+      quality: "valid",
+      persistenceStatus: "not_attempted",
     };
   }
 
@@ -131,13 +148,17 @@ export function decideCaptureWindowV1(
   if (receivedAt <= backfillCutoff) {
     return {
       contractVersion: "1",
+      idempotencyIdentity: input.idempotencyIdentity,
+      clientEventId: input.clientEventId,
       disposition: "accepted_delayed",
       reasonCode: "inside_delayed_backfill_window",
       freshness: "degraded_freshness",
       delayed: true,
       offlineBackfill: true,
+      quality: "degraded",
+      persistenceStatus: "not_attempted",
     };
   }
 
-  return rejected("delayed_backfill_expired");
+  return rejected("delayed_backfill_expired", input);
 }

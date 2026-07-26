@@ -6,7 +6,19 @@ import {
 import type {
   CanonicalSensorObservationV1,
   CanonicalTelemetryEventV1,
+  IngressAcknowledgementV1,
+  IngressHostPolicyV1,
+  IngressMessageV1,
+  TelemetryProcessingResultV1,
 } from "./contracts";
+import {
+  validateEventTimeWorkResolutionRequestV1,
+  validateEventTimeWorkResolutionResultV1,
+  validateIngressAcknowledgementV1,
+  validateIngressHostPolicyV1,
+  validateIngressMessageV1,
+  validateTelemetryProcessingResultV1,
+} from "./boundaryValidation";
 import {
   canonicalizeIdentityMaterialV1,
   createCanonicalEventIdentityV1,
@@ -41,7 +53,9 @@ const validEvent: CanonicalTelemetryEventV1 = {
   canonicalEventId: "synthetic-canonical-contract",
   idempotencyIdentity: "synthetic-identity-contract",
   vendorEventId: "synthetic-vendor-contract",
+  clientEventId: "synthetic-client-contract",
   deviceExternalId: "synthetic-device-contract",
+  authenticatedDeviceExternalId: "synthetic-device-contract",
   adapter: { id: "deterministic_simulator", version: "1.0.0" },
   stream: { epoch: "synthetic-epoch-contract", sequence: 1 },
   capturedAt: "2030-01-01T08:00:00.000Z",
@@ -64,10 +78,12 @@ const validEvent: CanonicalTelemetryEventV1 = {
     gsmSignalDbm: -70,
   },
   observations: [observation],
+  quality: "valid",
   provenance: {
     source: "simulator",
     normalizationVersion: "1",
     synthetic: true,
+    rawPayloadHash: "synthetic-raw-payload-contract",
     canonicalPayloadHash: "synthetic-payload-contract",
   },
 };
@@ -253,6 +269,21 @@ describe("M20B identity and duplicate semantics", () => {
     expect(device).not.toEqual(original);
   });
 
+  it("uses client event identity when a vendor event ID is absent", () => {
+    const { vendorEventId: _omitted, ...withoutVendor } = baseIdentityInput;
+    const result = createCanonicalEventIdentityV1(
+      { ...withoutVendor, clientEventId: "client-event-a" },
+      digestProvider,
+    );
+    expect(result.ok && result.value.kind).toBe("client_event_id");
+    expect(result).toEqual(
+      createCanonicalEventIdentityV1(
+        { ...withoutVendor, clientEventId: "client-event-a" },
+        digestProvider,
+      ),
+    );
+  });
+
   it("uses deterministic fallback material without a vendor event ID", () => {
     const { vendorEventId: _omitted, ...fallbackInput } = baseIdentityInput;
     const result = createCanonicalEventIdentityV1(
@@ -331,6 +362,8 @@ describe("M20B identity and duplicate semantics", () => {
 });
 
 const evidence: EventTimeCaptureInputV1 = {
+  idempotencyIdentity: "synthetic-identity-contract",
+  clientEventId: "synthetic-client-contract",
   capturedAt: "2030-01-01T08:00:00.000Z",
   receivedAt: "2030-01-01T08:00:30.000Z",
   actualWorkStartedAt: "2030-01-01T08:00:00.000Z",
@@ -475,6 +508,234 @@ describe("M20B pure event-time decisions", () => {
     ).toMatchObject({
       disposition: "rejected",
       reasonCode: "event_time_evidence_ambiguous",
+    });
+  });
+});
+
+
+describe("M20B host and processing boundary validation", () => {
+  const policy: IngressHostPolicyV1 = {
+    contractVersion: "1",
+    hostKind: "serverless_http",
+    transport: "http",
+    maximumMessageBytes: 262_144,
+    maximumEventsPerMessage: 100,
+    correlationIdSemantics: "host_generated_or_validated",
+    hostReceivedAtSemantics: "assigned_at_ingress_acquisition",
+    acknowledgementBoundary: "transport_only_no_persistence_claim",
+  };
+  const receipt = {
+    contractVersion: "1" as const,
+    correlationId: "synthetic-correlation-contract",
+    hostReceivedAt: "2030-01-01T08:00:01.000Z",
+  };
+  const message: IngressMessageV1 = {
+    contractVersion: "1",
+    receipt,
+    transport: "http",
+    contentLengthBytes: 512,
+    payload: { synthetic: true },
+  };
+  const acknowledgement: IngressAcknowledgementV1 = {
+    contractVersion: "1",
+    receipt,
+    status: "accepted",
+    acceptedCount: 1,
+    rejectedCount: 0,
+    retryable: false,
+    reasonCode: "processed",
+  };
+
+  it("validates host-neutral limits and explicit receipt semantics", () => {
+    expect(validateIngressHostPolicyV1(policy)).toEqual({
+      ok: true,
+      value: policy,
+    });
+    expect(validateIngressMessageV1(message, policy)).toEqual({
+      ok: true,
+      value: message,
+    });
+    expect(validateIngressAcknowledgementV1(acknowledgement)).toEqual({
+      ok: true,
+      value: acknowledgement,
+    });
+  });
+
+  it("rejects a message over the host policy without inspecting its payload", () => {
+    expect(
+      validateIngressMessageV1(
+        { ...message, contentLengthBytes: policy.maximumMessageBytes + 1 },
+        policy,
+      ),
+    ).toMatchObject({
+      ok: false,
+      issues: expect.arrayContaining([
+        { path: "$.contentLengthBytes", code: "out_of_range" },
+      ]),
+    });
+  });
+
+  it("rejects acknowledgements that contradict their aggregate status", () => {
+    expect(
+      validateIngressAcknowledgementV1({
+        ...acknowledgement,
+        status: "accepted",
+        rejectedCount: 1,
+      }),
+    ).toMatchObject({
+      ok: false,
+      issues: expect.arrayContaining([
+        { path: "$.status", code: "invalid_value" },
+      ]),
+    });
+  });
+
+  it.each<TelemetryProcessingResultV1>([
+    {
+      contractVersion: "1",
+      idempotencyIdentity: "synthetic-result-live",
+      disposition: "accepted_live",
+      reasonCode: "inside_live_freshness_window",
+      freshness: "live",
+      offlineBackfill: false,
+      quality: "valid",
+      persistenceStatus: "not_attempted",
+    },
+    {
+      contractVersion: "1",
+      idempotencyIdentity: "synthetic-result-delayed",
+      disposition: "accepted_delayed",
+      reasonCode: "inside_delayed_backfill_window",
+      freshness: "degraded_freshness",
+      delayed: true,
+      offlineBackfill: true,
+      quality: "degraded",
+      persistenceStatus: "not_attempted",
+    },
+    {
+      contractVersion: "1",
+      idempotencyIdentity: "synthetic-result-conflict",
+      disposition: "duplicate_conflict",
+      reasonCode: "event_identity_conflict",
+      freshness: "not_applicable",
+      offlineBackfill: false,
+      quality: "rejected",
+      persistenceStatus: "not_attempted",
+    },
+  ])("accepts a coherent $disposition eligibility result", (processing) => {
+    expect(validateTelemetryProcessingResultV1(processing)).toEqual({
+      ok: true,
+      value: processing,
+    });
+    expect(processing.persistenceStatus).toBe("not_attempted");
+  });
+
+  it("rejects contradictory processing semantics", () => {
+    expect(
+      validateTelemetryProcessingResultV1({
+        contractVersion: "1",
+        idempotencyIdentity: "synthetic-result-contradiction",
+        disposition: "accepted_live",
+        reasonCode: "inside_live_freshness_window",
+        freshness: "degraded_freshness",
+        offlineBackfill: true,
+        quality: "valid",
+        persistenceStatus: "not_attempted",
+      }),
+    ).toMatchObject({
+      ok: false,
+      issues: expect.arrayContaining([
+        { path: "$.disposition", code: "invalid_value" },
+      ]),
+    });
+  });
+});
+
+describe("M20B EventTimeWorkResolverV1 boundary", () => {
+  const request = {
+    contractVersion: "1" as const,
+    authenticatedDeviceExternalId: "synthetic-device-resolver",
+    capturedAt: "2030-01-01T08:00:00.000Z",
+  };
+  const resolved = {
+    contractVersion: "1" as const,
+    outcome: "resolved" as const,
+    reasonCode: "unique_event_time_match" as const,
+    context: {
+      deviceId: "synthetic-device-row-resolver",
+      authenticatedDeviceExternalId: "synthetic-device-resolver",
+      deviceVehicleLinkId: "synthetic-link-resolver",
+      vehicleId: "synthetic-vehicle-resolver",
+      adWorkAssignmentId: "synthetic-assignment-resolver",
+      adWorkId: "synthetic-work-resolver",
+      driverId: "synthetic-driver-resolver",
+      driverAuthority: "ad_work_assignment" as const,
+      workReleaseId: "synthetic-release-resolver",
+      releasedAt: "2030-01-01T07:55:00.000Z",
+      workDayId: "synthetic-work-day-resolver",
+      actualWorkStartedAt: "2030-01-01T08:00:00.000Z",
+      actualWorkEndedAt: "2030-01-01T09:00:00.000Z",
+      physicalTrackingSessionId: "synthetic-session-resolver",
+    },
+  };
+
+  it("accepts an authenticated-device-only request and unique server context", () => {
+    expect(validateEventTimeWorkResolutionRequestV1(request)).toEqual({
+      ok: true,
+      value: request,
+    });
+    expect(validateEventTimeWorkResolutionResultV1(resolved)).toEqual({
+      ok: true,
+      value: resolved,
+    });
+    expect(resolved.context.driverAuthority).toBe("ad_work_assignment");
+  });
+
+  it.each([
+    ["vehicleId", "synthetic-vehicle-payload"],
+    ["driverId", "synthetic-driver-payload"],
+    ["adWorkId", "synthetic-work-payload"],
+    ["adWorkAssignmentId", "synthetic-assignment-payload"],
+    ["physicalTrackingSessionId", "synthetic-session-payload"],
+  ])("rejects payload-provided non-authoritative %s", (key, value) => {
+    expect(
+      validateEventTimeWorkResolutionRequestV1({ ...request, [key]: value }),
+    ).toMatchObject({
+      ok: false,
+      issues: expect.arrayContaining([
+        { path: `$.${key}`, code: "unexpected_field" },
+      ]),
+    });
+  });
+
+  it("accepts stable no-match and ambiguous outcomes", () => {
+    expect(
+      validateEventTimeWorkResolutionResultV1({
+        contractVersion: "1",
+        outcome: "no_match",
+        reasonCode: "device_vehicle_link_not_resolved",
+      }).ok,
+    ).toBe(true);
+    expect(
+      validateEventTimeWorkResolutionResultV1({
+        contractVersion: "1",
+        outcome: "ambiguous",
+        reasonCode: "ad_work_assignment_ambiguous",
+      }).ok,
+    ).toBe(true);
+  });
+
+  it("rejects a resolved context that does not use assignment driver authority", () => {
+    expect(
+      validateEventTimeWorkResolutionResultV1({
+        ...resolved,
+        context: { ...resolved.context, driverAuthority: "device_registry" },
+      }),
+    ).toMatchObject({
+      ok: false,
+      issues: expect.arrayContaining([
+        { path: "$.context.driverAuthority", code: "invalid_value" },
+      ]),
     });
   });
 });

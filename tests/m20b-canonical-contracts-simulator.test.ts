@@ -49,8 +49,10 @@ const requiredScenarioIds = [
   "missing-heartbeat",
   "duplicate-retry",
   "changed-content-duplicate",
+  "sequence-gap",
   "out-of-order-event",
   "delayed-offline-backfill",
+  "expired-delayed-backfill",
   "invalid-coordinate",
   "impossible-speed",
   "low-battery",
@@ -113,6 +115,9 @@ test("M20B exports the approved host-neutral contract surface", () => {
     "decideCaptureWindowV1",
     "VirtualTelemetryClockV1",
     "DeterministicTelemetrySimulatorV1",
+    "SyntheticTelemetryScenarioContextV1",
+    "SyntheticPhonePointV1",
+    "TelemetryScenarioExpectationsV1",
     "requiredTelemetryScenarioIdsV1",
     "createRequiredTelemetryScenariosV1",
   ]) {
@@ -133,6 +138,23 @@ test.each(requiredScenarioIds)(
     );
   },
 );
+
+test("M20B catalog declares bounded expectations and source-separated fixtures", () => {
+  const scenarios = read(join(sharedRoot, "scenarios.ts"));
+  for (const symbol of [
+    "ExpectedCanonicalValidationV1",
+    "ExpectedCaptureWindowV1",
+    "ExpectedDuplicateClassificationV1",
+    "ExpectedPhoneDeviceRelationshipV1",
+    "FutureRuleSignalIdV1",
+  ]) {
+    assert.match(scenarios, new RegExp(`\\b${symbol}\\b`), `missing ${symbol}`);
+  }
+  assert.match(scenarios, /source:\s*"phone"/);
+  assert.match(scenarios, /source:\s*"physical_device"/);
+  assert.match(scenarios, /synthetic-phone-device-/);
+  assert.doesNotMatch(scenarios, /expectedSignals:\s*readonly string\[\]/);
+});
 
 test.each(["M20B-T001", "M20B-T002", "M20B-T003", "M20B-T004"])(
   "M20B task ledger retains %s individually",

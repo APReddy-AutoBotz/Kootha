@@ -32,7 +32,9 @@ const EVENT_FIELDS = new Set([
   "canonicalEventId",
   "idempotencyIdentity",
   "vendorEventId",
+  "clientEventId",
   "deviceExternalId",
+  "authenticatedDeviceExternalId",
   "adapter",
   "stream",
   "capturedAt",
@@ -42,6 +44,7 @@ const EVENT_FIELDS = new Set([
   "position",
   "health",
   "observations",
+  "quality",
   "provenance",
 ]);
 
@@ -438,7 +441,19 @@ function validateEventRecord(
   if (value.vendorEventId !== undefined) {
     validateText(value.vendorEventId, "$.vendorEventId", 128, issues);
   }
+  if (value.clientEventId !== undefined) {
+    validateText(value.clientEventId, "$.clientEventId", 128, issues);
+  }
   validateText(value.deviceExternalId, "$.deviceExternalId", 128, issues);
+  validateText(
+    value.authenticatedDeviceExternalId,
+    "$.authenticatedDeviceExternalId",
+    128,
+    issues,
+  );
+  if (value.authenticatedDeviceExternalId !== value.deviceExternalId) {
+    issue(issues, "$.authenticatedDeviceExternalId", "invalid_value");
+  }
 
   if (!isPlainRecord(value.adapter)) {
     issue(issues, "$.adapter", "invalid_type");
@@ -512,6 +527,14 @@ function validateEventRecord(
     }
   }
 
+  if (
+    value.quality !== "valid" &&
+    value.quality !== "degraded" &&
+    value.quality !== "suspect"
+  ) {
+    issue(issues, "$.quality", "unsupported");
+  }
+
   if (!isPlainRecord(value.provenance)) {
     issue(issues, "$.provenance", "invalid_type");
   } else {
@@ -521,6 +544,7 @@ function validateEventRecord(
         "source",
         "normalizationVersion",
         "synthetic",
+        "rawPayloadHash",
         "canonicalPayloadHash",
       ]),
       "$.provenance",
@@ -540,6 +564,12 @@ function validateEventRecord(
       issues,
     );
 
+    validateText(
+      value.provenance.rawPayloadHash,
+      "$.provenance.rawPayloadHash",
+      256,
+      issues,
+    );
     validateText(
       value.provenance.canonicalPayloadHash,
       "$.provenance.canonicalPayloadHash",

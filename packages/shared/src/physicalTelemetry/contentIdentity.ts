@@ -35,7 +35,9 @@ export function createCanonicalEventContentIdentityV1(
     contentIdentityVersion: "1",
     contractVersion: event.contractVersion,
     vendorEventId: event.vendorEventId ?? null,
+    clientEventId: event.clientEventId ?? null,
     deviceExternalId: event.deviceExternalId,
+    authenticatedDeviceExternalId: event.authenticatedDeviceExternalId,
     adapter: event.adapter,
     stream: event.stream ?? null,
     capturedAt: event.capturedAt,
@@ -43,6 +45,7 @@ export function createCanonicalEventContentIdentityV1(
     position: event.position ?? null,
     health: event.health ?? null,
     observations: event.observations ?? [],
+    quality: event.quality,
     provenance: event.provenance,
   });
   if (!canonical.ok) {

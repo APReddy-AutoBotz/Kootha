@@ -218,6 +218,7 @@ export class DeterministicTelemetrySimulatorV1 {
       vendorEventId: `synthetic-vendor-${stableSuffix}`,
       idempotencyIdentity: `synthetic-idempotency-${stableSuffix}`,
       deviceExternalId: this.deviceExternalId,
+      authenticatedDeviceExternalId: this.deviceExternalId,
       adapter: { id: "deterministic_simulator", version: "1.0.0" },
       stream: { epoch: `synthetic-epoch-${this.seed}`, sequence },
       capturedAt: new Date(capturedAtMs).toISOString(),
@@ -239,10 +240,12 @@ export class DeterministicTelemetrySimulatorV1 {
         gsmSignalDbm: -72,
         gpsFix: "three_dimensional",
       },
+      quality: "valid",
       provenance: {
         source: "simulator",
         normalizationVersion: "1",
         synthetic: true,
+        rawPayloadHash: `synthetic-raw-payload-${stableSuffix}`,
         canonicalPayloadHash: `synthetic-payload-${stableSuffix}`,
       },
     };

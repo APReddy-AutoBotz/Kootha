@@ -12,32 +12,54 @@ export type TelemetryTransportV1 =
   | "udp"
   | "simulator";
 
-export interface IngressMessageV1 {
+export type IngressHostKindV1 =
+  | "serverless_http"
+  | "always_on_http"
+  | "vendor_integration"
+  | "protocol_gateway"
+  | "simulator";
+
+export interface IngressHostPolicyV1 {
+  readonly contractVersion: TelemetryContractVersionV1;
+  readonly hostKind: IngressHostKindV1;
+  readonly transport: TelemetryTransportV1;
+  readonly maximumMessageBytes: number;
+  readonly maximumEventsPerMessage: number;
+  readonly correlationIdSemantics: "host_generated_or_validated";
+  readonly hostReceivedAtSemantics: "assigned_at_ingress_acquisition";
+  readonly acknowledgementBoundary: "transport_only_no_persistence_claim";
+}
+
+export interface IngressReceiptContextV1 {
   readonly contractVersion: TelemetryContractVersionV1;
   readonly correlationId: string;
+  readonly hostReceivedAt: string;
+}
+export interface IngressMessageV1 {
+  readonly contractVersion: TelemetryContractVersionV1;
+  readonly receipt: IngressReceiptContextV1;
   readonly transport: TelemetryTransportV1;
-  readonly receivedAt: string;
   readonly contentLengthBytes: number;
   readonly payload: unknown;
 }
 
 export interface IngressAcknowledgementV1 {
   readonly contractVersion: TelemetryContractVersionV1;
-  readonly correlationId: string;
+  readonly receipt: IngressReceiptContextV1;
   readonly status: "accepted" | "partially_accepted" | "rejected";
   readonly acceptedCount: number;
   readonly rejectedCount: number;
   readonly retryable: boolean;
+  readonly reasonCode?:
+    | "processed"
+    | "partial_rejection"
+    | "request_rejected"
+    | "temporarily_unavailable";
 }
 
 export interface IngressHostV1 {
   readonly contractVersion: TelemetryContractVersionV1;
-  readonly hostKind:
-    | "serverless_http"
-    | "always_on_http"
-    | "vendor_integration"
-    | "protocol_gateway"
-    | "simulator";
+  readonly policy: IngressHostPolicyV1;
   acquire(): Promise<IngressMessageV1 | undefined>;
   acknowledge(acknowledgement: IngressAcknowledgementV1): Promise<void>;
 }
@@ -104,7 +126,7 @@ export interface TelemetryAdapterV1 {
   ): AdapterNormalizationResultV1;
   acknowledge(
     results: readonly TelemetryProcessingResultV1[],
-    correlationId: string,
+    receipt: IngressReceiptContextV1,
   ): IngressAcknowledgementV1;
 }
 
@@ -175,7 +197,9 @@ export interface CanonicalTelemetryEventV1 {
   readonly canonicalEventId: string;
   readonly idempotencyIdentity: string;
   readonly vendorEventId?: string;
+  readonly clientEventId?: string;
   readonly deviceExternalId: string;
+  readonly authenticatedDeviceExternalId: string;
   readonly adapter: {
     readonly id: string;
     readonly version: string;
@@ -191,10 +215,12 @@ export interface CanonicalTelemetryEventV1 {
   readonly position?: CanonicalPositionV1;
   readonly health?: CanonicalDeviceHealthV1;
   readonly observations?: readonly CanonicalSensorObservationV1[];
+  readonly quality: "valid" | "degraded" | "suspect";
   readonly provenance: {
     readonly source: "physical_device" | "simulator";
     readonly normalizationVersion: string;
     readonly synthetic: boolean;
+    readonly rawPayloadHash: string;
     readonly canonicalPayloadHash: string;
   };
 }
@@ -217,44 +243,77 @@ export type TelemetryRejectionReasonCodeV1 =
   | "event_time_evidence_ambiguous"
   | "delayed_backfill_expired";
 
+export type TelemetryFreshnessV1 =
+  | "live"
+  | "delayed"
+  | "degraded_freshness"
+  | "not_applicable";
+
+export type TelemetryProcessingQualityV1 =
+  | "valid"
+  | "degraded"
+  | "suspect"
+  | "rejected";
+
+interface TelemetryProcessingResultBaseV1 {
+  readonly contractVersion: TelemetryContractVersionV1;
+  readonly idempotencyIdentity: string;
+  readonly clientEventId?: string;
+  readonly freshness: TelemetryFreshnessV1;
+  readonly offlineBackfill: boolean;
+  readonly quality: TelemetryProcessingQualityV1;
+  /** M20B decides eligibility; it never claims that persistence occurred. */
+  readonly persistenceStatus: "not_attempted";
+}
+
 export type TelemetryProcessingResultV1 =
-  | {
-      readonly contractVersion: TelemetryContractVersionV1;
+  | (TelemetryProcessingResultBaseV1 & {
       readonly disposition: "canonicalized";
       readonly reasonCode: "canonical_validation_passed";
-      readonly eligible: true;
-    }
-  | {      readonly contractVersion: TelemetryContractVersionV1;
+      readonly freshness: "not_applicable";
+      readonly offlineBackfill: false;
+      readonly quality: "valid" | "degraded" | "suspect";
+    })
+  | (TelemetryProcessingResultBaseV1 & {
       readonly disposition: "accepted_live";
       readonly reasonCode: "inside_live_freshness_window";
       readonly freshness: "live";
       readonly offlineBackfill: false;
-    }
-  | {
-      readonly contractVersion: TelemetryContractVersionV1;
+      readonly quality: "valid" | "degraded";
+    })
+  | (TelemetryProcessingResultBaseV1 & {
       readonly disposition: "accepted_delayed";
       readonly reasonCode: "inside_delayed_backfill_window";
       readonly freshness: "degraded_freshness";
+      readonly quality: "degraded";
       readonly delayed: true;
       readonly offlineBackfill: true;
-    }
-  | {
-      readonly contractVersion: TelemetryContractVersionV1;
+    })
+  | (TelemetryProcessingResultBaseV1 & {
       readonly disposition: "health_only";
       readonly reasonCode: "outside_active_work_location_discarded";
-    }
-  | {
-      readonly contractVersion: TelemetryContractVersionV1;
+      readonly freshness: "not_applicable";
+      readonly offlineBackfill: false;
+      readonly quality: "degraded" | "suspect";
+    })
+  | (TelemetryProcessingResultBaseV1 & {
       readonly disposition: "duplicate";
       readonly reasonCode: "duplicate_identical_content";
-    }
-  | {
-      readonly contractVersion: TelemetryContractVersionV1;
+      readonly freshness: "not_applicable";
+      readonly offlineBackfill: false;
+      readonly quality: "valid" | "degraded" | "suspect";
+    })
+  | (TelemetryProcessingResultBaseV1 & {
       readonly disposition: "duplicate_conflict";
       readonly reasonCode: "event_identity_conflict";
-    }
-  | {
-      readonly contractVersion: TelemetryContractVersionV1;
+      readonly freshness: "not_applicable";
+      readonly offlineBackfill: false;
+      readonly quality: "rejected";
+    })
+  | (TelemetryProcessingResultBaseV1 & {
       readonly disposition: "rejected";
       readonly reasonCode: TelemetryRejectionReasonCodeV1;
-    };
+      readonly freshness: "not_applicable";
+      readonly offlineBackfill: false;
+      readonly quality: "rejected";
+    });

@@ -1,3 +1,4 @@
+export * from "./boundaryValidation";
 export * from "./contracts";
 export * from "./contentIdentity";
 export * from "./eventTime";
@@ -6,3 +7,4 @@ export * from "./scenarios";
 export * from "./simulator";
 export * from "./timestamp";
 export * from "./validation";
+export * from "./workResolver";

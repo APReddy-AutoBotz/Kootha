@@ -10,6 +10,7 @@ export interface CanonicalEventIdentityInputV1 {
   readonly adapterVersion: string;
   readonly deviceExternalId: string;
   readonly vendorEventId?: string;
+  readonly clientEventId?: string;
   readonly capturedAt: string;
   readonly streamEpoch?: string;
   readonly sequence?: number;
@@ -18,7 +19,7 @@ export interface CanonicalEventIdentityInputV1 {
 
 export interface CanonicalEventIdentityV1 {
   readonly identityVersion: "1";
-  readonly kind: "vendor_event_id" | "derived_payload";
+  readonly kind: "vendor_event_id" | "client_event_id" | "derived_payload";
   readonly identity: string;
   readonly canonicalMaterial: string;
 }
@@ -170,6 +171,7 @@ export function createCanonicalEventIdentityV1(
     isBoundedText(input.adapterVersion, 64) &&
     isBoundedText(input.deviceExternalId, 128) &&
     isBoundedText(input.vendorEventId, 128) &&
+    isBoundedText(input.clientEventId, 128) &&
     isBoundedText(input.capturedAt, 40) &&
     isBoundedText(input.streamEpoch, 128) &&
     isBoundedText(input.canonicalPayloadHash, 256) &&
@@ -185,9 +187,13 @@ export function createCanonicalEventIdentityV1(
   }
 
   const kind =
-    input.vendorEventId === undefined ? "derived_payload" : "vendor_event_id";
+    input.vendorEventId !== undefined
+      ? "vendor_event_id"
+      : input.clientEventId !== undefined
+        ? "client_event_id"
+        : "derived_payload";
   const material =
-    kind === "vendor_event_id"
+    kind === "vendor_event_id" || kind === "client_event_id"
       ? {
           identityVersion: "1",
           kind,
@@ -196,7 +202,10 @@ export function createCanonicalEventIdentityV1(
             adapterVersion: input.adapterVersion,
             deviceExternalId: input.deviceExternalId,
           },
-          vendorEventId: input.vendorEventId,
+          sourceEventId:
+            kind === "vendor_event_id"
+              ? input.vendorEventId
+              : input.clientEventId,
         }
       : {
           identityVersion: "1",
