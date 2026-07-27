@@ -40,34 +40,34 @@ M19 is a planning-only stream. M18 real-device Phone Location Proof evidence rem
 
 ## M20B — Contracts and Simulator
 
-[~] M20B is in progress in a draft pull request and is not complete until merge and post-merge verification.
+[x] M20B is completed following merge and post-merge baseline verification.
 
-- [~] M20B-T001 Add host-independent ingress, adapter, canonical event, sensor-observation extension, processing-result, and resolver contracts.
+- [x] M20B-T001 Add host-independent ingress, adapter, canonical event, sensor-observation extension, processing-result, and resolver contracts.
   - Requirements: ING-SEC-001, TEL-NORM-001, TEL-NORM-003, ADAPTER-001
-- [~] M20B-T002 Build deterministic synthetic device, route, clock, sequence, and delay generators.
+- [x] M20B-T002 Build deterministic synthetic device, route, clock, sequence, and delay generators.
   - Requirements: SIM-001
-- [~] M20B-T003 Implement every healthy, fault, backfill, privacy, and comparison scenario.
+- [x] M20B-T003 Implement every healthy, fault, backfill, privacy, and comparison scenario.
   - Requirements: SIM-002
-- [~] M20B-T004 Prove synthetic marking and absence of real routes, people, and production credentials.
+- [x] M20B-T004 Prove synthetic marking and absence of real routes, people, and production credentials.
   - Requirements: SIM-001, PRIVACY-004
 
-M18 remains incomplete and in progress. M20A is complete. M21 through M26 remain Not Started.
+M18 remains incomplete and in progress. M20A and M20B are complete. M21 is In Progress. M22 through M26 remain Not Started.
 
 ## M21 — Generic Secure HTTP Ingestion
 
-- [ ] M21-T001 Implement portable generic HTTP authentication, parsing, normalization, safe acknowledgement, limits, and throttling.
+- [~] M21-T001 Implement portable generic HTTP authentication, parsing, normalization, safe acknowledgement, limits, and throttling.
   - Requirements: ING-SEC-001, ING-SEC-002, ING-SEC-005, ADAPTER-001
-- [ ] M21-T002 Implement event identity, replay, sequence, and duplicate controls.
+- [~] M21-T002 Implement event identity, replay, sequence, and duplicate controls.
   - Requirements: ING-SEC-004
-- [ ] M21-T002A Measure constant-time token/digest verification cost at sustained and burst telemetry frequency.
+- [~] M21-T002A Measure constant-time token/digest verification cost at sustained and burst telemetry frequency.
   - Requirements: ING-SEC-002, SCALE-001
-- [ ] M21-T003 Implement event-time work resolution, live freshness, delayed backfill, and End Work race handling.
+- [~] M21-T003 Implement event-time work resolution, live freshness, delayed backfill, and End Work race handling.
   - Requirements: PRIVACY-001 through PRIVACY-004, WORK-LINK-001
-- [ ] M21-T004 Reuse physical tracking sessions and location points without changing phone behavior.
+- [~] M21-T004 Reuse physical tracking sessions and location points without changing phone behavior.
   - Requirements: WORK-LINK-002
-- [ ] M21-T005 Run 60,000-event, sustained, ten-times burst, reconnect, and three-retry duplicate evidence.
+- [~] M21-T005 Run 60,000-event, sustained, ten-times burst, reconnect, and three-retry duplicate evidence.
   - Requirements: SCALE-001
-- [ ] M21-T006 Record request/compute cost, batching comparison, Netlify suitability decision, and portable migration path.
+- [~] M21-T006 Record request/compute cost, batching comparison, Netlify suitability decision, and portable migration path.
   - Requirements: ING-SEC-001, COST-001, SCALE-001
 
 ## M22 — Tracking Health and Alerts
