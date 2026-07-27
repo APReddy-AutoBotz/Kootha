@@ -11,7 +11,7 @@ select ok(
   not exists (
     select 1 from pg_policies
     where schemaname = 'public'
-      and tablename in ('audit_logs', 'ad_works', 'ad_work_assignments', 'drivers', 'vehicles', 'gps_devices', 'gps_device_vehicle_links', 'gps_device_lifecycle_events', 'gps_device_credential_metadata', 'tracking_sessions', 'location_points', 'location_proof_reviews', 'final_proof_summaries')
+      and tablename in ('audit_logs', 'ad_works', 'ad_work_assignments', 'drivers', 'vehicles', 'gps_devices', 'gps_device_vehicle_links', 'gps_device_lifecycle_events', 'gps_device_credential_metadata', 'tracking_sessions', 'location_points', 'location_proof_reviews', 'final_proof_summaries', 'telemetry_receipts', 'telemetry_stream_state', 'telemetry_identity_conflicts', 'telemetry_sensor_observations', 'm21_rate_limit_buckets', 'm21_assignment_history', 'm21_release_history', 'm21_execution_history')
       and roles::text like '%anon%'
   ),
   'admin and tracking tables have no anonymous policies'
@@ -21,7 +21,7 @@ select ok(
   not exists (
     select 1 from pg_policies
     where schemaname = 'public'
-      and tablename in ('audit_logs', 'gps_devices', 'gps_device_vehicle_links', 'gps_device_lifecycle_events', 'gps_device_credential_metadata', 'tracking_sessions', 'location_points', 'location_proof_reviews', 'final_proof_summaries')
+      and tablename in ('audit_logs', 'gps_devices', 'gps_device_vehicle_links', 'gps_device_lifecycle_events', 'gps_device_credential_metadata', 'tracking_sessions', 'location_points', 'location_proof_reviews', 'final_proof_summaries', 'telemetry_receipts', 'telemetry_stream_state', 'telemetry_identity_conflicts', 'telemetry_sensor_observations', 'm21_rate_limit_buckets', 'm21_assignment_history', 'm21_release_history', 'm21_execution_history')
       and roles::text like '%authenticated%'
       and coalesce(qual, with_check, '') not like '%is_admin%'
   ),
