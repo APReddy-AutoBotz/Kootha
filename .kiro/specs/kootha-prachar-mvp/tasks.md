@@ -117,3 +117,14 @@ Status values:
   - Split the next implementation work into reviewable M20A registry/history and M20B canonical-contract/simulator pull requests.
   - Added no migration, endpoint, runtime adapter, credential, device connection, map, or physical-device runtime feature.
   - M18 real-device evidence remains incomplete and in progress; M19 does not change that conclusion.
+
+## Milestone M20A - Physical Device Registry and History
+
+- [x] Completed.
+
+## Milestone M20B - Canonical Contracts and Deterministic Simulator
+
+- [~] In progress in a draft pull request; not completed until merge and post-merge verification.
+  - Host-neutral contracts, pure helpers, and deterministic synthetic scenarios only.
+  - No production telemetry endpoint, persistence, device connection, vendor integration, maps, live tracking, alert, comparison, or AI runtime.
+  - M18 remains incomplete and in progress. M21 through M26 remain Not Started.
