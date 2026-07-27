@@ -111,6 +111,35 @@ create table public.m21_rate_limit_buckets (
 create index m21_rate_limit_buckets_retention_idx
   on public.m21_rate_limit_buckets (last_seen_at);
 
+create table public.m21_rate_limit_reservations (
+  id uuid primary key default gen_random_uuid(),
+  scope text not null default 'unauthenticated',
+  key_fingerprint text not null,
+  window_started_at timestamptz not null,
+  policy_version text not null,
+  created_at timestamptz not null,
+  expires_at timestamptz not null,
+  refunded_at timestamptz,
+  foreign key (scope, key_fingerprint, window_started_at)
+    references public.m21_rate_limit_buckets(
+      scope, key_fingerprint, window_started_at
+    ) on delete cascade,
+  foreign key (policy_version, scope)
+    references public.m21_rate_limit_policies(policy_version, scope)
+    on delete restrict,
+  constraint m21_rate_limit_reservations_scope_check
+    check (scope = 'unauthenticated'),
+  constraint m21_rate_limit_reservations_fingerprint_check
+    check (key_fingerprint ~ '^[0-9a-f]{64}$'),
+  constraint m21_rate_limit_reservations_time_check check (
+    expires_at > created_at
+    and (refunded_at is null or refunded_at >= created_at)
+  )
+);
+
+create index m21_rate_limit_reservations_expiry_idx
+  on public.m21_rate_limit_reservations (expires_at);
+
 create table public.m21_assignment_history (
   id uuid primary key default gen_random_uuid(),
   assignment_id uuid not null references public.ad_work_assignments(id) on delete restrict,
@@ -596,17 +625,16 @@ create trigger telemetry_sensor_observations_immutable
 before update or delete on public.telemetry_sensor_observations
 for each row execute function public.m21_protect_immutable_evidence();
 
-create or replace function public.m21_consume_rate_limit(
-  p_scope text,
+create or replace function public.m21_reserve_unauthenticated_rate_limit(
   p_key_fingerprint text,
-  p_event_count integer,
   p_observed_at timestamptz default clock_timestamp()
 )
 returns table(
   allowed boolean,
   retry_after_seconds integer,
   reason_code text,
-  policy_version text
+  policy_version text,
+  reservation_id uuid
 )
 language plpgsql
 security definer
@@ -616,16 +644,15 @@ declare
   v_policy public.m21_rate_limit_policies%rowtype;
   v_window timestamptz;
   v_bucket public.m21_rate_limit_buckets%rowtype;
+  v_reservation_id uuid;
 begin
-  if p_scope not in ('unauthenticated', 'device', 'global')
-     or p_key_fingerprint !~ '^[0-9a-f]{64}$'
-     or p_event_count < 0 or p_event_count > 100 then
+  if p_key_fingerprint !~ '^[0-9a-f]{64}$' then
     raise exception 'Invalid rate-limit input' using errcode = '22023';
   end if;
 
   select * into strict v_policy
   from public.m21_rate_limit_policies
-  where scope = p_scope and active
+  where scope = 'unauthenticated' and active
   order by created_at desc
   limit 1;
 
@@ -638,13 +665,12 @@ begin
     scope, key_fingerprint, window_started_at, policy_version,
     request_count, event_count, last_seen_at
   ) values (
-    p_scope, p_key_fingerprint, v_window, v_policy.policy_version,
-    1, p_event_count, p_observed_at
+    'unauthenticated', p_key_fingerprint, v_window, v_policy.policy_version,
+    1, 0, p_observed_at
   )
   on conflict (scope, key_fingerprint, window_started_at)
   do update set
     request_count = public.m21_rate_limit_buckets.request_count + 1,
-    event_count = public.m21_rate_limit_buckets.event_count + excluded.event_count,
     last_seen_at = greatest(public.m21_rate_limit_buckets.last_seen_at, excluded.last_seen_at)
   returning * into v_bucket;
 
@@ -661,8 +687,33 @@ begin
     limit 1000
   );
 
+  delete from public.m21_rate_limit_reservations r
+  where r.ctid in (
+    select old_r.ctid
+    from public.m21_rate_limit_reservations old_r
+    where old_r.expires_at < p_observed_at - interval '1 day'
+    order by old_r.expires_at
+    limit 1000
+  );
+
   allowed := v_bucket.request_count <= v_policy.request_limit
              and v_bucket.event_count <= v_policy.event_limit;
+  if allowed then
+    insert into public.m21_rate_limit_reservations (
+      scope, key_fingerprint, window_started_at, policy_version,
+      created_at, expires_at
+    ) values (
+      'unauthenticated', p_key_fingerprint, v_window, v_bucket.policy_version,
+      p_observed_at,
+      v_window + make_interval(secs => (
+        select old_policy.window_seconds
+        from public.m21_rate_limit_policies old_policy
+        where old_policy.scope = 'unauthenticated'
+          and old_policy.policy_version = v_bucket.policy_version
+      ))
+    )
+    returning id into v_reservation_id;
+  end if;
   retry_after_seconds := case when allowed then 0 else greatest(
     1, least(v_policy.window_seconds,
       ceil(extract(epoch from
@@ -671,6 +722,125 @@ begin
   ) end;
   reason_code := case when allowed then 'rate_limit_ok' else 'rate_limited' end;
   policy_version := v_policy.policy_version;
+  reservation_id := v_reservation_id;
+  return next;
+end;
+$$;
+
+create or replace function public.m21_consume_authenticated_rate_limits(
+  p_device_fingerprint text,
+  p_global_fingerprint text,
+  p_request_count integer,
+  p_event_count integer,
+  p_observed_at timestamptz default clock_timestamp()
+)
+returns table(
+  allowed boolean,
+  retry_after_seconds integer,
+  reason_code text,
+  policy_version text
+)
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_device_policy public.m21_rate_limit_policies%rowtype;
+  v_global_policy public.m21_rate_limit_policies%rowtype;
+  v_device_window timestamptz;
+  v_global_window timestamptz;
+  v_device_bucket public.m21_rate_limit_buckets%rowtype;
+  v_global_bucket public.m21_rate_limit_buckets%rowtype;
+  v_device_retry integer;
+  v_global_retry integer;
+begin
+  if p_device_fingerprint !~ '^[0-9a-f]{64}$'
+     or p_global_fingerprint !~ '^[0-9a-f]{64}$'
+     or p_request_count not between 0 and 1
+     or p_event_count not between 0 and 100
+     or p_request_count + p_event_count < 1 then
+    raise exception 'Invalid rate-limit input' using errcode = '22023';
+  end if;
+
+  select * into strict v_device_policy
+  from public.m21_rate_limit_policies
+  where scope = 'device' and active
+  order by created_at desc limit 1;
+  select * into strict v_global_policy
+  from public.m21_rate_limit_policies
+  where scope = 'global' and active
+  order by created_at desc limit 1;
+
+  v_device_window := to_timestamp(
+    floor(extract(epoch from p_observed_at) / v_device_policy.window_seconds)
+      * v_device_policy.window_seconds
+  );
+  v_global_window := to_timestamp(
+    floor(extract(epoch from p_observed_at) / v_global_policy.window_seconds)
+      * v_global_policy.window_seconds
+  );
+
+  insert into public.m21_rate_limit_buckets (
+    scope, key_fingerprint, window_started_at, policy_version,
+    request_count, event_count, last_seen_at
+  ) values (
+    'device', p_device_fingerprint, v_device_window,
+    v_device_policy.policy_version, p_request_count, p_event_count, p_observed_at
+  )
+  on conflict (scope, key_fingerprint, window_started_at)
+  do update set
+    request_count = public.m21_rate_limit_buckets.request_count
+      + excluded.request_count,
+    event_count = public.m21_rate_limit_buckets.event_count
+      + excluded.event_count,
+    last_seen_at = greatest(
+      public.m21_rate_limit_buckets.last_seen_at, excluded.last_seen_at
+    )
+  returning * into v_device_bucket;
+
+  insert into public.m21_rate_limit_buckets (
+    scope, key_fingerprint, window_started_at, policy_version,
+    request_count, event_count, last_seen_at
+  ) values (
+    'global', p_global_fingerprint, v_global_window,
+    v_global_policy.policy_version, p_request_count, p_event_count, p_observed_at
+  )
+  on conflict (scope, key_fingerprint, window_started_at)
+  do update set
+    request_count = public.m21_rate_limit_buckets.request_count
+      + excluded.request_count,
+    event_count = public.m21_rate_limit_buckets.event_count
+      + excluded.event_count,
+    last_seen_at = greatest(
+      public.m21_rate_limit_buckets.last_seen_at, excluded.last_seen_at
+    )
+  returning * into v_global_bucket;
+
+  allowed :=
+    v_device_bucket.request_count <= v_device_policy.request_limit
+    and v_device_bucket.event_count <= v_device_policy.event_limit
+    and v_global_bucket.request_count <= v_global_policy.request_limit
+    and v_global_bucket.event_count <= v_global_policy.event_limit;
+  v_device_retry := greatest(
+    1, least(v_device_policy.window_seconds,
+      ceil(extract(epoch from (
+        v_device_window
+        + make_interval(secs => v_device_policy.window_seconds)
+        - p_observed_at
+      )))::integer)
+  );
+  v_global_retry := greatest(
+    1, least(v_global_policy.window_seconds,
+      ceil(extract(epoch from (
+        v_global_window
+        + make_interval(secs => v_global_policy.window_seconds)
+        - p_observed_at
+      )))::integer)
+  );
+  retry_after_seconds := case when allowed then 0
+    else greatest(v_device_retry, v_global_retry) end;
+  reason_code := case when allowed then 'rate_limit_ok' else 'rate_limited' end;
+  policy_version := v_device_policy.policy_version;
   return next;
 end;
 $$;
@@ -722,7 +892,8 @@ $$;
 
 create or replace function public.m21_mark_credential_verified(
   p_credential_id uuid,
-  p_received_at timestamptz
+  p_received_at timestamptz,
+  p_reservation_id uuid
 )
 returns boolean
 language plpgsql
@@ -731,7 +902,20 @@ set search_path = pg_catalog, public
 as $$
 declare
   v_updated integer;
+  v_reservation public.m21_rate_limit_reservations%rowtype;
 begin
+  select * into v_reservation
+  from public.m21_rate_limit_reservations
+  where id = p_reservation_id
+    and scope = 'unauthenticated'
+    and refunded_at is null
+    and created_at <= p_received_at
+    and expires_at >= p_received_at
+  for update;
+  if not found then
+    return false;
+  end if;
+
   update public.gps_device_credential_metadata c
   set last_verified_at = greatest(coalesce(c.last_verified_at, p_received_at), p_received_at)
   from public.gps_devices d
@@ -744,7 +928,28 @@ begin
     and (c.revoked_at is null or c.revoked_at > p_received_at)
     and c.status in ('active', 'rotating');
   get diagnostics v_updated = row_count;
-  return v_updated = 1;
+  if v_updated <> 1 then
+    return false;
+  end if;
+
+  update public.m21_rate_limit_buckets
+  set request_count = greatest(request_count - 1, 0),
+      last_seen_at = greatest(last_seen_at, p_received_at)
+  where scope = v_reservation.scope
+    and key_fingerprint = v_reservation.key_fingerprint
+    and window_started_at = v_reservation.window_started_at
+    and policy_version = v_reservation.policy_version;
+  if not found then
+    raise exception 'Authentication reservation invalid' using errcode = '55000';
+  end if;
+
+  update public.m21_rate_limit_reservations
+  set refunded_at = p_received_at
+  where id = v_reservation.id and refunded_at is null;
+  if not found then
+    raise exception 'Authentication reservation already used' using errcode = '55000';
+  end if;
+  return true;
 end;
 $$;
 
@@ -997,6 +1202,11 @@ begin
     end if;
   end if;
 
+  -- Serialize authority resolution with every statement that can transition
+  -- device/vehicle, assignment, release, or execution history.
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('m21-authority-global', 2100)
+  );
   if v_reason is null then
     select count(*), min(l.id::text)::uuid into v_link_count, v_link.id
     from public.gps_device_vehicle_links l
@@ -1309,6 +1519,7 @@ $$;
 alter table public.m21_ingestion_policies enable row level security;
 alter table public.m21_rate_limit_policies enable row level security;
 alter table public.m21_rate_limit_buckets enable row level security;
+alter table public.m21_rate_limit_reservations enable row level security;
 alter table public.m21_assignment_history enable row level security;
 alter table public.m21_release_history enable row level security;
 alter table public.m21_execution_history enable row level security;
@@ -1339,6 +1550,7 @@ create policy "Admins can view telemetry sensor observations"
 revoke all on public.m21_ingestion_policies from public, anon, authenticated;
 revoke all on public.m21_rate_limit_policies from public, anon, authenticated;
 revoke all on public.m21_rate_limit_buckets from public, anon, authenticated;
+revoke all on public.m21_rate_limit_reservations from public, anon, authenticated;
 revoke all on public.m21_assignment_history from public, anon, authenticated;
 revoke all on public.m21_release_history from public, anon, authenticated;
 revoke all on public.m21_execution_history from public, anon, authenticated;
@@ -1354,11 +1566,15 @@ grant select on public.telemetry_receipts to authenticated;
 grant select on public.telemetry_identity_conflicts to authenticated;
 grant select on public.telemetry_sensor_observations to authenticated;
 
-revoke all on function public.m21_consume_rate_limit(text, text, integer, timestamptz)
+revoke all on function public.m21_reserve_unauthenticated_rate_limit(text, timestamptz)
+  from public, anon, authenticated;
+revoke all on function public.m21_consume_authenticated_rate_limits(
+  text, text, integer, integer, timestamptz
+)
   from public, anon, authenticated;
 revoke all on function public.m21_lookup_device_credential(text, text, timestamptz)
   from public, anon, authenticated;
-revoke all on function public.m21_mark_credential_verified(uuid, timestamptz)
+revoke all on function public.m21_mark_credential_verified(uuid, timestamptz, uuid)
   from public, anon, authenticated;
 revoke all on function public.m21_persist_telemetry_event(
   uuid, text, text, text, text, text, text, text, bigint,
@@ -1368,11 +1584,15 @@ revoke all on function public.m21_persist_telemetry_event(
   text, text, boolean, text
 ) from public, anon, authenticated;
 
-grant execute on function public.m21_consume_rate_limit(text, text, integer, timestamptz)
+grant execute on function public.m21_reserve_unauthenticated_rate_limit(text, timestamptz)
+  to service_role;
+grant execute on function public.m21_consume_authenticated_rate_limits(
+  text, text, integer, integer, timestamptz
+)
   to service_role;
 grant execute on function public.m21_lookup_device_credential(text, text, timestamptz)
   to service_role;
-grant execute on function public.m21_mark_credential_verified(uuid, timestamptz)
+grant execute on function public.m21_mark_credential_verified(uuid, timestamptz, uuid)
   to service_role;
 grant execute on function public.m21_persist_telemetry_event(
   uuid, text, text, text, text, text, text, text, bigint,
@@ -1592,3 +1812,36 @@ begin
   end if;
   return new;
 end; $$;
+
+-- Statement-level BEFORE triggers acquire the authority lock before PostgreSQL
+-- takes target tuple locks. A single provisional-pilot lock deliberately
+-- serializes authority transitions with telemetry resolution and avoids the
+-- row-trigger lock-order deadlock possible with per-entity AFTER/row locks.
+create or replace function public.m21_lock_authority_transition()
+returns trigger
+language plpgsql
+set search_path = pg_catalog, public
+as $$
+begin
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('m21-authority-global', 2100)
+  );
+  return null;
+end;
+$$;
+
+create trigger m21_lock_device_vehicle_authority
+before insert or update or delete on public.gps_device_vehicle_links
+for each statement execute function public.m21_lock_authority_transition();
+
+create trigger m21_lock_assignment_authority
+before insert or update or delete on public.ad_work_assignments
+for each statement execute function public.m21_lock_authority_transition();
+
+create trigger m21_lock_release_authority
+before insert or update or delete on public.ad_works
+for each statement execute function public.m21_lock_authority_transition();
+
+create trigger m21_lock_execution_authority
+before insert or update or delete on public.ad_work_days
+for each statement execute function public.m21_lock_authority_transition();

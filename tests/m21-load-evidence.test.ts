@@ -137,7 +137,7 @@ function runProfile(
     requestCount,
     modeledDatabaseOperationOrRpcCount:
       totalAttempts +
-      (requestCount - profile.throttledRequests) * 4,
+      (requestCount - profile.throttledRequests) * 5,
     errors: 0,
     throttleOutcomes: profile.throttledRequests,
     duplicateInflation: finalPointRows - receipts.size,

@@ -7,7 +7,10 @@ import {
   type TelemetryCredentialRecordV1,
   type TelemetryCredentialStoreV1,
 } from "./credential-verifier";
-import type { RateLimitResultV1 } from "./http-host-v2";
+import type {
+  RateLimitResultV1,
+  UnauthenticatedRateLimitReservationV1,
+} from "./http-host-v2";
 import { keyedRequestFingerprintV1 } from "./server-crypto";
 
 type JsonRecord = Record<string, unknown>;
@@ -53,15 +56,18 @@ class SupabaseTelemetryCredentialStoreV1
 {
   readonly #runtime: SupabaseServerRuntimeV1;
   readonly #receivedAt: string;
+  readonly #unauthenticatedReservationId: string;
   readonly #signal: AbortSignal;
 
   constructor(
     runtime: SupabaseServerRuntimeV1,
     receivedAt: string,
+    unauthenticatedReservationId: string,
     signal: AbortSignal,
   ) {
     this.#runtime = runtime;
     this.#receivedAt = receivedAt;
+    this.#unauthenticatedReservationId = unauthenticatedReservationId;
     this.#signal = signal;
   }
 
@@ -101,6 +107,7 @@ class SupabaseTelemetryCredentialStoreV1
       {
         p_credential_id: credentialId,
         p_received_at: verifiedAt,
+        p_reservation_id: this.#unauthenticatedReservationId,
       },
       this.#signal,
     );
@@ -115,6 +122,7 @@ export function authenticateWithSupabaseV1(
   receivedAt: Date,
   runtime: SupabaseServerRuntimeV1,
   pepper: string,
+  unauthenticatedReservationId: string,
   signal: AbortSignal,
 ): Promise<ServerAuthenticationResultV1> {
   return authenticateTelemetryCredentialV1(
@@ -122,6 +130,7 @@ export function authenticateWithSupabaseV1(
     new SupabaseTelemetryCredentialStoreV1(
       runtime,
       receivedAt.toISOString(),
+      unauthenticatedReservationId,
       signal,
     ),
     pepper,
@@ -134,10 +143,44 @@ export function trustedNetlifyClientAddressV1(request: Request): string {
   return value.length <= 45 && isIP(value) !== 0 ? value : "unknown";
 }
 
-export async function consumeSupabaseRateLimitV1(
-  scope: "unauthenticated" | "device" | "global",
+export async function reserveSupabaseUnauthenticatedRateLimitV1(
   request: Request,
-  authentication: AdapterAuthenticationContextV1 | undefined,
+  receivedAt: Date,
+  runtime: SupabaseServerRuntimeV1,
+  fingerprintKey: string,
+  signal: AbortSignal,
+): Promise<UnauthenticatedRateLimitReservationV1> {
+  const material = `netlify-http-v1\0${trustedNetlifyClientAddressV1(request)}`;
+  const row = firstRecord(
+    await runtime.rpc(
+      "m21_reserve_unauthenticated_rate_limit",
+      {
+        p_key_fingerprint: keyedRequestFingerprintV1(material, fingerprintKey),
+        p_observed_at: receivedAt.toISOString(),
+      },
+      signal,
+    ),
+  );
+  if (
+    row === undefined ||
+    typeof row.allowed !== "boolean" ||
+    (row.reservation_id !== null && typeof row.reservation_id !== "string")
+  ) {
+    throw new Error("rate_limit_failed");
+  }
+  return {
+    allowed: row.allowed,
+    retryAfterSeconds:
+      typeof row.retry_after_seconds === "number" ? row.retry_after_seconds : 60,
+    ...(typeof row.reservation_id === "string"
+      ? { reservationId: row.reservation_id }
+      : {}),
+  };
+}
+
+export async function consumeSupabaseAuthenticatedRateLimitsV1(
+  authentication: AdapterAuthenticationContextV1,
+  requestCount: number,
   eventCount: number,
   receivedAt: Date,
   runtime: SupabaseServerRuntimeV1,
@@ -145,20 +188,24 @@ export async function consumeSupabaseRateLimitV1(
   signal: AbortSignal,
 ): Promise<RateLimitResultV1> {
   const internalDeviceId = (
-    authentication as { authenticatedDeviceId?: unknown } | undefined
-  )?.authenticatedDeviceId;
-  const material =
-    scope === "unauthenticated"
-      ? `netlify-http-v1\0${trustedNetlifyClientAddressV1(request)}`
-      : scope === "device" && typeof internalDeviceId === "string"
-        ? `device-v1\0${internalDeviceId}`
-        : "global-v1";
+    authentication as { authenticatedDeviceId?: unknown }
+  ).authenticatedDeviceId;
+  if (typeof internalDeviceId !== "string") {
+    throw new Error("authentication_context_invalid");
+  }
   const row = firstRecord(
     await runtime.rpc(
-      "m21_consume_rate_limit",
+      "m21_consume_authenticated_rate_limits",
       {
-        p_scope: scope,
-        p_key_fingerprint: keyedRequestFingerprintV1(material, fingerprintKey),
+        p_device_fingerprint: keyedRequestFingerprintV1(
+          `device-v1\0${internalDeviceId}`,
+          fingerprintKey,
+        ),
+        p_global_fingerprint: keyedRequestFingerprintV1(
+          "global-v1",
+          fingerprintKey,
+        ),
+        p_request_count: requestCount,
         p_event_count: eventCount,
         p_observed_at: receivedAt.toISOString(),
       },
@@ -171,9 +218,7 @@ export async function consumeSupabaseRateLimitV1(
   return {
     allowed: row.allowed,
     retryAfterSeconds:
-      typeof row.retry_after_seconds === "number"
-        ? row.retry_after_seconds
-        : 60,
+      typeof row.retry_after_seconds === "number" ? row.retry_after_seconds : 60,
     reasonCode:
       typeof row.reason_code === "string" ? row.reason_code : "limit_exceeded",
     policyVersion:

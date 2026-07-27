@@ -1,12 +1,13 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(26);
+select plan(41);
 
 select has_table('public', 'telemetry_receipts', 'receipt table exists');
 select has_table('public', 'telemetry_stream_state', 'stream state exists');
 select has_table('public', 'telemetry_identity_conflicts', 'safe conflict evidence exists');
 select has_table('public', 'telemetry_sensor_observations', 'typed observations exist');
 select has_table('public', 'm21_rate_limit_buckets', 'database rate buckets exist');
+select has_table('public', 'm21_rate_limit_reservations', 'exact pre-auth reservations exist');
 select has_table('public', 'm21_assignment_history', 'assignment history exists');
 select has_table('public', 'm21_release_history', 'release history exists');
 select has_table('public', 'm21_execution_history', 'execution history exists');
@@ -19,6 +20,7 @@ select ok(
         'telemetry_receipts', 'telemetry_stream_state',
         'telemetry_identity_conflicts', 'telemetry_sensor_observations',
         'm21_rate_limit_buckets', 'm21_assignment_history',
+        'm21_rate_limit_reservations',
         'm21_release_history', 'm21_execution_history'
       )
       and not c.relrowsecurity
@@ -29,15 +31,35 @@ select ok(
 select ok(
   not has_function_privilege(
     'anon',
-    'public.m21_consume_rate_limit(text,text,integer,timestamptz)',
+    'public.m21_reserve_unauthenticated_rate_limit(text,timestamptz)',
     'EXECUTE'
   )
   and not has_function_privilege(
     'authenticated',
-    'public.m21_consume_rate_limit(text,text,integer,timestamptz)',
+    'public.m21_reserve_unauthenticated_rate_limit(text,timestamptz)',
+    'EXECUTE'
+  )
+  and not has_function_privilege(
+    'anon',
+    'public.m21_consume_authenticated_rate_limits(text,text,integer,integer,timestamptz)',
+    'EXECUTE'
+  )
+  and not has_function_privilege(
+    'authenticated',
+    'public.m21_consume_authenticated_rate_limits(text,text,integer,integer,timestamptz)',
+    'EXECUTE'
+  )
+  and not has_function_privilege(
+    'anon',
+    'public.m21_mark_credential_verified(uuid,timestamptz,uuid)',
+    'EXECUTE'
+  )
+  and not has_function_privilege(
+    'authenticated',
+    'public.m21_mark_credential_verified(uuid,timestamptz,uuid)',
     'EXECUTE'
   ),
-  'clients cannot call rate-limit RPC'
+  'clients cannot call rate-limit or reservation-refund RPCs'
 );
 select ok(
   not has_function_privilege(
@@ -80,26 +102,59 @@ select is(
 );
 
 select is(
-  (select allowed from public.m21_consume_rate_limit(
-    'device', repeat('a', 64), 100, '2030-01-01T00:00:00Z'
+  (select allowed from public.m21_consume_authenticated_rate_limits(
+    repeat('a', 64), repeat('b', 64), 1, 100, '2030-01-01T00:00:00Z'
   )),
   true,
   'first bounded device batch is allowed'
 );
 select is(
-  (select allowed from public.m21_consume_rate_limit(
-    'device', repeat('a', 64), 100, '2030-01-01T00:00:00Z'
+  (select allowed from public.m21_consume_authenticated_rate_limits(
+    repeat('a', 64), repeat('b', 64), 1, 100, '2030-01-01T00:00:00Z'
   )),
   true,
-  'rate bucket update is deterministic'
+  'authenticated device/global bucket update is deterministic'
 );
 select throws_ok(
-  $$select * from public.m21_consume_rate_limit(
-    'device', 'raw-ip-is-not-allowed', 1, clock_timestamp()
+  $$select * from public.m21_consume_authenticated_rate_limits(
+    'raw-id-is-not-allowed', repeat('b', 64), 1, 0, clock_timestamp()
   )$$,
   '22023',
   'Invalid rate-limit input',
   'raw identifiers cannot enter rate-limit storage'
+);
+select is(
+  to_regprocedure('public.m21_consume_rate_limit(text,text,integer,timestamptz)'),
+  null::regprocedure,
+  'obsolete post-work limiter RPC no longer exists'
+);
+select ok(
+  (
+    select count(*) = 4 from pg_trigger
+    where tgname in (
+      'm21_lock_device_vehicle_authority', 'm21_lock_assignment_authority',
+      'm21_lock_release_authority', 'm21_lock_execution_authority'
+    )
+      and not tgisinternal
+      and (tgtype::integer & 1) = 0
+      and (tgtype::integer & 2) = 2
+  ),
+  'all authority transitions acquire a BEFORE STATEMENT serialization lock'
+);
+select ok(
+  position(
+    'hashtextextended(''m21-authority-global'', 2100)'
+    in pg_get_functiondef(
+      'public.m21_lock_authority_transition()'::regprocedure
+    )
+  ) > 0
+  and position(
+    'hashtextextended(''m21-authority-global'', 2100)'
+    in pg_get_functiondef(
+      'public.m21_persist_telemetry_event(uuid,text,text,text,text,text,text,text,bigint,timestamptz,timestamptz,timestamptz,numeric,numeric,numeric,numeric,numeric,numeric,integer,boolean,numeric,boolean,text,text,numeric,jsonb,text,text,boolean,text)'::regprocedure
+    )
+  ) > 0,
+  'transition and ingestion paths use the identical authority lock namespace'
 );
 
 insert into public.drivers (
@@ -172,6 +227,108 @@ set execution_status = 'running',
     execution_started_at = clock_timestamp(),
     execution_updated_at = clock_timestamp()
 where id = '21000000-0000-0000-0000-000000000008';
+
+create temp table m21_admitted_reservation as
+select *
+from public.m21_reserve_unauthenticated_rate_limit(
+  repeat('c', 64), clock_timestamp()
+);
+
+select ok(
+  (select allowed and reservation_id is not null
+   from m21_admitted_reservation),
+  'admitted pre-auth request receives an exact one-shot reservation'
+);
+select is(
+  public.m21_mark_credential_verified(
+    '21000000-0000-0000-0000-000000000099',
+    clock_timestamp(),
+    (select reservation_id from m21_admitted_reservation)
+  ),
+  false,
+  'unknown credential cannot refund an admitted reservation'
+);
+select ok(
+  (select request_count = 1
+   from public.m21_rate_limit_buckets
+   where scope = 'unauthenticated' and key_fingerprint = repeat('c', 64))
+  and (select refunded_at is null
+       from public.m21_rate_limit_reservations
+       where id = (select reservation_id from m21_admitted_reservation)),
+  'failed verification retains the request charge and unused reservation'
+);
+select is(
+  public.m21_mark_credential_verified(
+    '21000000-0000-0000-0000-000000000005',
+    clock_timestamp(),
+    (select reservation_id from m21_admitted_reservation)
+  ),
+  true,
+  'eligible credential atomically consumes and refunds its exact reservation'
+);
+select ok(
+  (select request_count = 0
+   from public.m21_rate_limit_buckets
+   where scope = 'unauthenticated' and key_fingerprint = repeat('c', 64))
+  and (select refunded_at is not null
+       from public.m21_rate_limit_reservations
+       where id = (select reservation_id from m21_admitted_reservation)),
+  'successful verification refunds exactly one request and seals reservation'
+);
+select is(
+  public.m21_mark_credential_verified(
+    '21000000-0000-0000-0000-000000000005',
+    clock_timestamp(),
+    (select reservation_id from m21_admitted_reservation)
+  ),
+  false,
+  'replayed reservation cannot refund twice'
+);
+select is(
+  (select request_count from public.m21_rate_limit_buckets
+   where scope = 'unauthenticated' and key_fingerprint = repeat('c', 64)),
+  0,
+  'replayed refund cannot underflow the bucket'
+);
+
+create temp table m21_denied_reservations as
+select attempt, result.*
+from generate_series(1, 61) attempt
+cross join lateral public.m21_reserve_unauthenticated_rate_limit(
+  repeat('d', 64),
+  date_trunc('minute', clock_timestamp()) + attempt * interval '1 microsecond'
+) result;
+select ok(
+  (select not allowed and reservation_id is null
+   from m21_denied_reservations where attempt = 61),
+  'denied pre-auth request receives no reusable reservation'
+);
+select is(
+  (select request_count from public.m21_rate_limit_buckets
+   where scope = 'unauthenticated' and key_fingerprint = repeat('d', 64)),
+  61,
+  'denied pre-auth attempts remain charged'
+);
+
+create temp table m21_authenticated_denial as
+select attempt, result.*
+from generate_series(1, 121) attempt
+cross join lateral public.m21_consume_authenticated_rate_limits(
+  repeat('e', 64), repeat('f', 64), 1, 0,
+  '2030-01-01T00:00:00Z'::timestamptz + attempt * interval '1 microsecond'
+) result;
+select is(
+  (select allowed from m21_authenticated_denial where attempt = 121),
+  false,
+  'authenticated request reservation fails closed at the device limit'
+);
+select ok(
+  (select request_count = 121 from public.m21_rate_limit_buckets
+   where scope = 'device' and key_fingerprint = repeat('e', 64))
+  and (select request_count = 121 from public.m21_rate_limit_buckets
+       where scope = 'global' and key_fingerprint = repeat('f', 64)),
+  'device and global charges commit together on aggregate denial'
+);
 
 select is(
   (select count(*)::integer from public.m21_assignment_history

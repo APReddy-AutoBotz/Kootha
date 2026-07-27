@@ -18,7 +18,7 @@ Identity and sequence state are scoped to authenticated device and adapter/versi
 
 Eligible physical positions reuse the existing tracking-session and location-point platform with an explicit physical source; phone rows, IDs, source labels, counts, and customer-live defaults are unchanged. Outside active work, coordinates, speed, heading, movement, ignition, odometer, and raw payload are discarded; only approved bounded health may be retained. Sensor observations use the approved typed metric/unit registry and the same authority/retention boundary.
 
-Database-backed fixed 60-second windows cover a keyed unauthenticated fingerprint (60 requests/60 events), authenticated device (120 requests/6,000 events), and global scope (300 requests/12,000 events). Buckets retain for 86,400 seconds. These `m21-pilot-v1` thresholds are configurable provisional pilot assumptions, not AP-approved production policy. Throttled work is acknowledged explicitly with bounded `Retry-After`; no raw IP, token, or failed device hint is retained.
+Database-backed fixed 60-second windows cover a keyed unauthenticated fingerprint (60 preauthentication request reservations), authenticated device (120 requests/6,000 events), and global scope (300 requests/12,000 events). Successful authentication atomically refunds its exact one-shot unauthenticated reservation; failed authentication retains it. Device/global request charges occur before body reads, and event charges occur only after a bounded body parses successfully. Buckets retain for 86,400 seconds. These `m21-pilot-v1` thresholds are configurable provisional pilot assumptions, not AP-approved production policy. Throttled work is acknowledged explicitly with bounded `Retry-After`; no raw IP, token, or failed device hint is retained.
 
 ## Local-only verification evidence
 
@@ -34,22 +34,22 @@ The deterministic load command uses M20B’s virtual-time simulator, seed 21000,
 
 | Profile | Requests | Modeled DB operations/RPCs | Live | Delayed | Identical duplicates | Conflicts | Points | Sessions |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Single event / sustained equivalent | 60,000 | 300,000 | 60,000 | 0 | 0 | 0 | 60,000 | 25 |
-| 10× burst, batch 10 | 6,000 | 84,000 | 60,000 | 0 | 0 | 0 | 60,000 | 25 |
-| Reconnect, batch 100 | 600 | 62,400 | 57,500 | 2,500 | 0 | 0 | 60,000 | 25 |
-| Three-attempt duplicate storm | 1,800 | 187,200 | 60,000 | 0 | 120,000 | 0 | 60,000 | 25 |
-| Changed-content attempts | 601 | 62,429 | 60,000 | 0 | 0 | 25 | 60,000 | 25 |
-| Out-of-order/backfill, batch 25 | 2,400 | 69,600 | 57,500 | 2,500 | 0 | 0 | 60,000 | 25 |
+| Single event / sustained equivalent | 60,000 | 360,000 | 60,000 | 0 | 0 | 0 | 60,000 | 25 |
+| 10× burst, batch 10 | 6,000 | 90,000 | 60,000 | 0 | 0 | 0 | 60,000 | 25 |
+| Reconnect, batch 100 | 600 | 63,000 | 57,500 | 2,500 | 0 | 0 | 60,000 | 25 |
+| Three-attempt duplicate storm | 1,800 | 189,000 | 60,000 | 0 | 120,000 | 0 | 60,000 | 25 |
+| Changed-content attempts | 601 | 63,030 | 60,000 | 0 | 0 | 25 | 60,000 | 25 |
+| Out-of-order/backfill, batch 25 | 2,400 | 72,000 | 57,500 | 2,500 | 0 | 0 | 60,000 | 25 |
 
-Every profile reported zero errors, zero point inflation, 60,000 final receipt/point rows, 25 physical sessions, and unchanged synthetic phone-row count (7 before and after). A same-seed/configuration rerun is asserted equal. Database counts are explicitly modeled as one per-event persistence RPC plus four successful-request operations (credential lookup, verification update, device limit, global limit); batching reduces only request overhead, not per-event persistence. Unauthenticated-failure throttling, hosted latency, and concurrency remain covered outside this in-memory harness.
+Every profile reported zero errors, zero point inflation, 60,000 final receipt/point rows, 25 physical sessions, and unchanged synthetic phone-row count (7 before and after). A same-seed/configuration rerun is asserted equal. Database counts are explicitly modeled as one per-event persistence RPC plus five successful-request operations: one unauthenticated reservation, one credential lookup, one combined verification/reservation-refund, one atomic authenticated device/global request charge, and one atomic authenticated device/global event charge. Batching reduces only request overhead, not per-event persistence. Unauthenticated-failure throttling, hosted latency, and concurrency remain covered outside this in-memory harness.
 
-The final controller auth-cost benchmark ran on Node 22.18.0/Windows x64. Domain-separated HMAC-SHA-256 derivation plus constant-time comparison averaged 46.181 µs across 60,000 sustained samples (p50 26.1, p95 53.6, p99 200.7 µs) and 46.780 µs across 12,000 10×-burst samples. Constant-time valid/invalid comparisons averaged 16.616/15.919 µs across 20,000 samples each. The in-memory DB-eligible active and rotating lookup fixtures averaged 120.461/138.843 µs across 5,000 samples each. One cold single sample was 2,074.1 µs. This supports the selected mechanism’s provisional pilot CPU cost; it intentionally omits secret, pepper, hash, token, and real-device values and makes no hosted-latency claim.
+A recorded dedicated controller auth-cost benchmark ran on Node 22.18.0/Windows x64. Domain-separated HMAC-SHA-256 derivation plus constant-time comparison averaged 46.181 µs across 60,000 sustained samples (p50 26.1, p95 53.6, p99 200.7 µs) and 46.780 µs across 12,000 10×-burst samples. Constant-time valid/invalid comparisons averaged 16.616/15.919 µs across 20,000 samples each. The in-memory DB-eligible active and rotating lookup fixtures averaged 120.461/138.843 µs across 5,000 samples each. One cold single sample was 2,074.1 µs. This supports the selected mechanism’s provisional pilot CPU cost; it intentionally omits secret, pepper, hash, token, and real-device values and makes no hosted-latency claim.
 
 ## Hosting suitability — 27 July 2026
 
 Decision: **suitable with conditions** for a bounded synthetic/pilot HTTP evaluation. This is not deployment approval.
 
-The 25-device model produces 60,000 events/day: 60,000 daily requests at one event/request, 6,000 at batch 10, or 600 at batch 100. At 30 days the corresponding formulas are 1,800,000, 180,000, and 18,000 requests/month. With one atomic RPC per accepted request, Supabase RPC counts follow the same shape; reconnect traffic favors bounded batches but never exceeds 100 events or 256 KiB.
+The 25-device model produces 60,000 events/day: 60,000 daily requests at one event/request, 6,000 at batch 10, or 600 at batch 100. At 30 days the corresponding formulas are 1,800,000, 180,000, and 18,000 requests/month. The database model is one persistence RPC per event plus five successful-request operations, so batching reduces request overhead while preserving per-event persistence; reconnect traffic favors bounded batches but never exceeds 100 events or 256 KiB.
 
 Current official pricing was not verified for this implementation, so no quote, plan purchase, or hosted cost claim is made. Evaluate cost by multiplying these request counts by the then-current Netlify invocation/compute terms and Supabase request/database terms, plus logs and egress. Batching reduces cold starts, authentication/database round trips, and compute overhead, but larger retries amplify duplicate work and approach function timeouts. Devices must use stable identities, bounded exponential backoff/jitter, server `Retry-After`, and split reconnect queues into bounded batches.
 

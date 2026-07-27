@@ -33,18 +33,29 @@ export interface RateLimitResultV1 {
   readonly policyVersion: string;
 }
 
+export interface UnauthenticatedRateLimitReservationV1 {
+  readonly allowed: boolean;
+  readonly retryAfterSeconds: number;
+  readonly reservationId?: string;
+}
+
 export interface TelemetryHttpHostDependenciesV1 {
   readonly now: () => Date;
   readonly correlationId: () => string;
   readonly authenticate: (
     request: Request,
     receivedAt: Date,
+    unauthenticatedReservationId: string,
     signal: AbortSignal,
   ) => Promise<ServerAuthenticationResultV1>;
-  readonly consumeRateLimit: (
-    scope: "unauthenticated" | "device" | "global",
+  readonly reserveUnauthenticated: (
     request: Request,
-    authentication: AdapterAuthenticationContextV1 | undefined,
+    receivedAt: Date,
+    signal: AbortSignal,
+  ) => Promise<UnauthenticatedRateLimitReservationV1>;
+  readonly consumeAuthenticatedRateLimits: (
+    authentication: AdapterAuthenticationContextV1,
+    requestCount: number,
     eventCount: number,
     receivedAt: Date,
     signal: AbortSignal,
@@ -249,53 +260,45 @@ export function createTelemetryHttpHandlerV1(
           return error(413, correlationId, "request_too_large");
         }
       }
-      const authentication = await dependencies.authenticate(
-        request,
-        receivedAt,
-        controller.signal,
-      );
-      if (!authentication.ok) {
-        const unauthenticatedLimit = await dependencies.consumeRateLimit(
-          "unauthenticated",
+      const unauthenticatedReservation =
+        await dependencies.reserveUnauthenticated(
           request,
-          undefined,
-          1,
           receivedAt,
           controller.signal,
         );
-        if (!unauthenticatedLimit.allowed) {
-          return error(429, correlationId, "rate_limited", true, {
-            "retry-after": retryAfter(unauthenticatedLimit.retryAfterSeconds),
-          });
-        }
-        return error(401, correlationId, "authentication_failed");
-      }
-      const body = await readJsonBody(request, controller.signal);
-      const eventEstimate = body.ok ? estimatedEventCount(body.value) : 1;
-      const limits = await Promise.all([
-        dependencies.consumeRateLimit(
-          "device",
-          request,
-          authentication.context,
-          eventEstimate,
-          receivedAt,
-          controller.signal,
-        ),
-        dependencies.consumeRateLimit(
-          "global",
-          request,
-          authentication.context,
-          eventEstimate,
-          receivedAt,
-          controller.signal,
-        ),
-      ]);
-      const denied = limits.find((limit) => !limit.allowed);
-      if (denied !== undefined) {
+      if (!unauthenticatedReservation.allowed) {
         return error(429, correlationId, "rate_limited", true, {
-          "retry-after": retryAfter(denied.retryAfterSeconds),
+          "retry-after": retryAfter(
+            unauthenticatedReservation.retryAfterSeconds,
+          ),
         });
       }
+      if (unauthenticatedReservation.reservationId === undefined) {
+        throw new Error("unauthenticated_reservation_missing");
+      }
+      const authentication = await dependencies.authenticate(
+        request,
+        receivedAt,
+        unauthenticatedReservation.reservationId,
+        controller.signal,
+      );
+      if (!authentication.ok) {
+        return error(401, correlationId, "authentication_failed");
+      }
+      const requestLimit =
+        await dependencies.consumeAuthenticatedRateLimits(
+          authentication.context,
+          1,
+          0,
+          receivedAt,
+          controller.signal,
+        );
+      if (!requestLimit.allowed) {
+        return error(429, correlationId, "rate_limited", true, {
+          "retry-after": retryAfter(requestLimit.retryAfterSeconds),
+        });
+      }
+      const body = await readJsonBody(request, controller.signal);
       if (!body.ok) {
         return error(
           body.reason === "too_large" ? 413 : 400,
@@ -304,6 +307,19 @@ export function createTelemetryHttpHandlerV1(
             ? "request_too_large"
             : "request_malformed",
         );
+      }
+      const eventLimit =
+        await dependencies.consumeAuthenticatedRateLimits(
+          authentication.context,
+          0,
+          estimatedEventCount(body.value),
+          receivedAt,
+          controller.signal,
+        );
+      if (!eventLimit.allowed) {
+        return error(429, correlationId, "rate_limited", true, {
+          "retry-after": retryAfter(eventLimit.retryAfterSeconds),
+        });
       }
       const receipt = {
         contractVersion: "1" as const,

@@ -10,7 +10,12 @@ import {
   MAX_HTTP_BODY_BYTES,
   type TelemetryHttpHostDependenciesV1,
 } from "../netlify/functions/_telemetry/http-host-v2";
-import { trustedNetlifyClientAddressV1 } from "../netlify/functions/_telemetry/supabase-runtime-v2";
+import {
+  authenticateWithSupabaseV1,
+  consumeSupabaseAuthenticatedRateLimitsV1,
+  SupabaseServerRuntimeV1,
+  trustedNetlifyClientAddressV1,
+} from "../netlify/functions/_telemetry/supabase-runtime-v2";
 import { deriveCredentialVerificationHashV1 } from "../netlify/functions/_telemetry/server-crypto";
 
 const NOW = new Date("2026-07-27T10:00:00.000Z");
@@ -43,7 +48,12 @@ function dependencies(
         credentialId: "00000000-0000-4000-8000-000000000023",
       },
     })),
-    consumeRateLimit: vi.fn(async () => ({
+    reserveUnauthenticated: vi.fn(async () => ({
+      allowed: true,
+      retryAfterSeconds: 0,
+      reservationId: "00000000-0000-4000-8000-000000000024",
+    })),
+    consumeAuthenticatedRateLimits: vi.fn(async () => ({
       allowed: true,
       retryAfterSeconds: 0,
       reasonCode: "allowed",
@@ -65,6 +75,20 @@ function request(payload: unknown, headers: HeadersInit = {}): Request {
     headers: { "content-type": "application/json", ...headers },
     body: typeof payload === "string" ? payload : JSON.stringify(payload),
   });
+}
+
+function requestWithBodyProbe(payload: unknown): {
+  readonly incoming: Request;
+  readonly bodyAccess: ReturnType<typeof vi.fn>;
+} {
+  const incoming = request(payload);
+  const body = incoming.body;
+  const bodyAccess = vi.fn(() => body);
+  Object.defineProperty(incoming, "body", {
+    configurable: true,
+    get: bodyAccess,
+  });
+  return { incoming, bodyAccess };
 }
 
 afterEach(() => {
@@ -112,6 +136,77 @@ describe("M21 DB-authoritative credential verification", () => {
     ).toBe(false);
   });
 
+  it("passes the exact one-shot reservation to the verification/refund RPC", async () => {
+    const rpc = vi.fn(async (name: string) => {
+      if (name === "m21_lookup_device_credential") {
+        return [{
+          gps_device_id: "00000000-0000-4000-8000-000000000022",
+          credential_id: "00000000-0000-4000-8000-000000000023",
+          verification_material_hash: deriveCredentialVerificationHashV1(
+            PEPPER, DEVICE, KEY, SECRET,
+          ),
+          eligible: true,
+        }];
+      }
+      if (name === "m21_mark_credential_verified") return true;
+      throw new Error(`unexpected RPC: ${name}`);
+    });
+    const runtime = { rpc } as unknown as SupabaseServerRuntimeV1;
+    const result = await authenticateWithSupabaseV1(
+      request({}, { authorization: HEADER }), NOW, runtime, PEPPER,
+      "00000000-0000-4000-8000-000000000024",
+      new AbortController().signal,
+    );
+    expect(result.ok).toBe(true);
+    expect(rpc).toHaveBeenNthCalledWith(
+      2,
+      "m21_mark_credential_verified",
+      {
+        p_credential_id: "00000000-0000-4000-8000-000000000023",
+        p_received_at: NOW.toISOString(),
+        p_reservation_id: "00000000-0000-4000-8000-000000000024",
+      },
+      expect.any(AbortSignal),
+    );
+  });
+  it("sends one atomic device/global limiter RPC with exact staged counts", async () => {
+    const rpc = vi.fn(async () => [{
+      allowed: true,
+      retry_after_seconds: 0,
+      reason_code: "rate_limit_ok",
+      policy_version: "m21-pilot-v1",
+    }]);
+    const runtime = { rpc } as unknown as SupabaseServerRuntimeV1;
+    await consumeSupabaseAuthenticatedRateLimitsV1(
+      {
+        authenticatedDeviceId: "00000000-0000-4000-8000-000000000022",
+        authenticatedDeviceExternalId: DEVICE,
+        authenticationMethod: "bearer_digest",
+        credentialKeyId: KEY,
+      },
+      1,
+      0,
+      NOW,
+      runtime,
+      "synthetic-rate-limit-key-at-least-32-characters",
+      new AbortController().signal,
+    );
+    expect(rpc).toHaveBeenCalledWith(
+      "m21_consume_authenticated_rate_limits",
+      {
+        p_device_fingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
+        p_global_fingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
+        p_request_count: 1,
+        p_event_count: 0,
+        p_observed_at: NOW.toISOString(),
+      },
+      expect.any(AbortSignal),
+    );
+    const parameters = rpc.mock.calls[0][1] as Record<string, unknown>;
+    expect(parameters.p_device_fingerprint).not.toBe(
+      parameters.p_global_fingerprint,
+    );
+  });
   it("returns one external failure for missing, unknown, and invalid secrets", async () => {
     const unknown: TelemetryCredentialStoreV1 = {
       lookup: vi.fn(async () => undefined),
@@ -180,19 +275,116 @@ describe("M21 bounded HTTP runtime", () => {
     expect(fixture.persist).toHaveBeenCalledOnce();
   });
 
-  it("charges authenticated malformed requests to device and global limits", async () => {
-    const fixture = dependencies();
+  it("retains invalid-auth reservations and never reaches authenticated limits", async () => {
+    const fixture = dependencies({
+      authenticate: vi.fn(async () => ({
+        ok: false as const,
+        externalReasonCode: "authentication_failed" as const,
+        internalReasonCode: "credential_unknown" as const,
+      })),
+    });
+    const response = await createTelemetryHttpHandlerV1(fixture)(request({}));
+    expect(response.status).toBe(401);
+    expect(fixture.reserveUnauthenticated).toHaveBeenCalledOnce();
+    expect(fixture.authenticate).toHaveBeenCalledWith(
+      expect.any(Request), NOW,
+      "00000000-0000-4000-8000-000000000024",
+      expect.any(AbortSignal),
+    );
+    expect(fixture.consumeAuthenticatedRateLimits).not.toHaveBeenCalled();
+  });
+
+  it("denies a preauth reservation before authentication or body access", async () => {
+    const probed = requestWithBodyProbe({ contractVersion: "1", events: [validEvent] });
+    const fixture = dependencies({
+      reserveUnauthenticated: vi.fn(async () => ({
+        allowed: false,
+        retryAfterSeconds: 30,
+      })),
+    });
+    const response = await createTelemetryHttpHandlerV1(fixture)(probed.incoming);
+    expect(response.status).toBe(429);
+    expect(fixture.authenticate).not.toHaveBeenCalled();
+    expect(probed.bodyAccess).not.toHaveBeenCalled();
+  });
+
+  it("denies authenticated request limits before body access", async () => {
+    const probed = requestWithBodyProbe({ contractVersion: "1", events: [validEvent] });
+    const fixture = dependencies({
+      consumeAuthenticatedRateLimits: vi.fn(async () => ({
+        allowed: false,
+        retryAfterSeconds: 15,
+        reasonCode: "rate_limited",
+        policyVersion: "m21-provisional-v1",
+      })),
+    });
+    const response = await createTelemetryHttpHandlerV1(fixture)(probed.incoming);
+    expect(response.status).toBe(429);
+    expect(fixture.consumeAuthenticatedRateLimits).toHaveBeenCalledWith(
+      expect.any(Object), 1, 0, NOW, expect.any(AbortSignal),
+    );
+    expect(probed.bodyAccess).not.toHaveBeenCalled();
+  });
+
+  it("charges request and event counts in exact staged order", async () => {
+    const timeline: string[] = [];
+    const fixture = dependencies({
+      reserveUnauthenticated: vi.fn(async () => {
+        timeline.push("reserve:unauthenticated:1:0");
+        return {
+          allowed: true,
+          retryAfterSeconds: 0,
+          reservationId: "00000000-0000-4000-8000-000000000024",
+        };
+      }),
+      authenticate: vi.fn(async (_request, _receivedAt, reservationId) => {
+        timeline.push(`authenticate:${reservationId}`);
+        return {
+          ok: true as const,
+          context: {
+            authenticatedDeviceId: "00000000-0000-4000-8000-000000000022",
+            authenticatedDeviceExternalId: DEVICE,
+            authenticationMethod: "bearer_digest" as const,
+            credentialKeyId: KEY,
+            credentialId: "00000000-0000-4000-8000-000000000023",
+          },
+        };
+      }),
+      consumeAuthenticatedRateLimits: vi.fn(
+        async (_authentication, requestCount, eventCount) => {
+          timeline.push(`authenticated:${requestCount}:${eventCount}`);
+          return {
+            allowed: true,
+            retryAfterSeconds: 0,
+            reasonCode: "allowed",
+            policyVersion: "m21-provisional-v1",
+          };
+        },
+      ),
+    });
     const response = await createTelemetryHttpHandlerV1(fixture)(
       request({
         contractVersion: "1",
-        events: [{ ...validEvent, vehicleId: "spoofed" }],
+        events: [validEvent, { ...validEvent, sequence: 2 }],
       }),
     );
+    expect(response.status).toBe(202);
+    expect(timeline).toEqual([
+      "reserve:unauthenticated:1:0",
+      "authenticate:00000000-0000-4000-8000-000000000024",
+      "authenticated:1:0",
+      "authenticated:0:2",
+    ]);
+  });
+
+  it("request-charges malformed bodies without event charging", async () => {
+    const fixture = dependencies();
+    const response = await createTelemetryHttpHandlerV1(fixture)(request("{"));
     expect(response.status).toBe(400);
-    const scopes = vi
-      .mocked(fixture.consumeRateLimit)
-      .mock.calls.map((call) => call[0]);
-    expect(scopes).toEqual(["device", "global"]);
+    expect(fixture.consumeAuthenticatedRateLimits).toHaveBeenCalledTimes(1);
+    expect(fixture.consumeAuthenticatedRateLimits).toHaveBeenCalledWith(
+      expect.any(Object), 1, 0, NOW, expect.any(AbortSignal),
+    );
   });
 
   it("bounds a slow multi-event request by the total processing deadline", async () => {

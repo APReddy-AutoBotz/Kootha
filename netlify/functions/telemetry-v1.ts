@@ -5,7 +5,8 @@ import {
 import { persistWithSupabaseV1 } from "./_telemetry/supabase-persistence-v2";
 import {
   authenticateWithSupabaseV1,
-  consumeSupabaseRateLimitV1,
+  consumeSupabaseAuthenticatedRateLimitsV1,
+  reserveSupabaseUnauthenticatedRateLimitV1,
   SupabaseServerRuntimeV1,
 } from "./_telemetry/supabase-runtime-v2";
 import { createCorrelationId } from "./_telemetry/server-crypto";
@@ -68,26 +69,38 @@ export default async function handler(request: Request): Promise<Response> {
   const dependencies: TelemetryHttpHostDependenciesV1 = {
     now: () => new Date(),
     correlationId: createCorrelationId,
-    authenticate: (incoming, receivedAt, signal) =>
+    authenticate: (
+      incoming,
+      receivedAt,
+      unauthenticatedReservationId,
+      signal,
+    ) =>
       authenticateWithSupabaseV1(
         incoming,
         receivedAt,
         server.runtime,
         server.credentialPepper,
+        unauthenticatedReservationId,
         signal,
       ),
-    consumeRateLimit: (
-      scope,
-      incoming,
+    reserveUnauthenticated: (incoming, receivedAt, signal) =>
+      reserveSupabaseUnauthenticatedRateLimitV1(
+        incoming,
+        receivedAt,
+        server.runtime,
+        server.rateLimitKey,
+        signal,
+      ),
+    consumeAuthenticatedRateLimits: (
       authentication,
+      requestCount,
       eventCount,
       receivedAt,
       signal,
     ) =>
-      consumeSupabaseRateLimitV1(
-        scope,
-        incoming,
+      consumeSupabaseAuthenticatedRateLimitsV1(
         authentication,
+        requestCount,
         eventCount,
         receivedAt,
         server.runtime,
