@@ -1,6 +1,6 @@
 # Kootha
 
-Kootha is a field advertisement planning and proof platform. The repository currently includes M0 foundation, M1 public website and enquiries, M2 admin lead management, M3 campaign planning and scheduling, M4 driver and vehicle onboarding, M5 driver and vehicle assignment to ad work, M6 ad work execution without GPS, M7 proof upload and customer update sharing, M8 final proof summary and campaign closure, M9 mobile GPS tracking foundation, M10 mobile GPS reliability and offline buffer, M11 admin tracking review without maps, M12 location proof in final summary, M13 pilot readiness and deployment preparation, M14 controlled pilot dry run preparation, M15 real device pilot setup and deployment preparation, M16 real device pilot execution evidence, M17 real device pilot blocker remediation, and M18 real-device pilot evidence retry preflight.
+Kootha is a field advertisement planning and proof platform. The repository currently includes M0 foundation, M1 public website and enquiries, M2 admin lead management, M3 campaign planning and scheduling, M4 driver and vehicle onboarding, M5 driver and vehicle assignment to ad work, M6 ad work execution without GPS, M7 proof upload and customer update sharing, M8 final proof summary and campaign closure, M9 mobile GPS tracking foundation, M10 mobile GPS reliability and offline buffer, M11 admin tracking review without maps, M12 location proof in final summary, M13 pilot readiness and deployment preparation, M14 controlled pilot dry run preparation, M15 real device pilot setup and deployment preparation, M16 real device pilot execution evidence, M17 real device pilot blocker remediation, and M18 real-device pilot evidence retry preflight. M18 remains incomplete/in progress; M20A and M20B are completed; M21 generic secure HTTP telemetry ingestion is in progress.
 
 ## Current Scope
 
@@ -96,6 +96,12 @@ Copy .env.example and fill local values outside Git. Keep committed files placeh
     EXPO_PUBLIC_SUPABASE_ANON_KEY=replace-with-public-anon-key
 
 Only public anon keys belong in Vite or Expo environment values. Do not put privileged Supabase keys in browser or mobile environment variables.
+
+## M21 Generic Secure HTTP Telemetry Ingestion
+
+M21 adds the server-only `POST /api/telemetry/v1` boundary for bounded generic HTTP telemetry. Device credentials, the telemetry pepper/keyed-digest secret, service-role access, and throttling keys belong only in the Netlify server environment; never copy them into Vite, Expo, browser, or mobile variables.
+
+See [the concise M21 guide](docs/planning/m21-generic-secure-http-telemetry-ingestion.md) for the request/authentication contract, event-time and replay semantics, local test commands, deterministic 60,000-event evidence, hosting suitability decision, and explicit non-goals. M21 is not deployed and remains In Progress pending merge and post-merge verification.
 
 ## Run Web And Admin
 
@@ -428,9 +434,9 @@ M20A extends the existing `gps_devices` master with an admin-only Device Registr
 
 ## M20B Canonical Contracts and Deterministic Simulator
 
-M20B is in progress in a draft pull request and is not yet complete. It adds host-neutral, versioned TypeScript telemetry contracts, deterministic identity and event-time decision helpers, runtime validation, and a manual-clock synthetic simulator with a typed scenario catalog. See the [concise M20B guide](docs/planning/m20b-canonical-contracts-deterministic-simulator.md).
+M20B is completed after merge and post-merge baseline verification. It adds host-neutral, versioned TypeScript telemetry contracts, deterministic identity and event-time decision helpers, runtime validation, and a manual-clock synthetic simulator with a typed scenario catalog. See the [concise M20B guide](docs/planning/m20b-canonical-contracts-deterministic-simulator.md).
 
-M20B adds no migration, endpoint, persistence, real credential, vendor or physical-device connection, maps, customer live tracking, operational alert runtime, production phone/device comparison, or AI/ML runtime. Existing Phone Location Proof is unchanged; M18 remains incomplete and in progress, M20A is complete, and M21 through M26 remain Not Started.
+M20B itself added no migration, endpoint, persistence, real credential, vendor or physical-device connection, maps, customer live tracking, operational alert runtime, production phone/device comparison, or AI/ML runtime. M21 adds the separate generic secure HTTP ingestion runtime described above. Existing Phone Location Proof is unchanged; M18 remains incomplete and in progress, M20A and M20B are complete, M21 is In Progress, and M22 through M26 remain Not Started.
 
 ## Run Driver
 
