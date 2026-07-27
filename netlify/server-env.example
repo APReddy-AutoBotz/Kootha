@@ -5,3 +5,7 @@ TURNSTILE_SECRET_KEY=replace-with-turnstile-secret-key
 ENQUIRY_RATE_LIMIT_SALT=replace-with-random-server-only-salt
 ENQUIRY_INTAKE_ENABLED=false
 RETENTION_DELETION_ENABLED=false
+# M21 server-only telemetry ingestion. Thresholds remain database-owned and provisional.
+TELEMETRY_INGEST_ENABLED=false
+TELEMETRY_CREDENTIAL_PEPPER=replace-with-random-server-only-credential-pepper
+TELEMETRY_RATE_LIMIT_KEY=replace-with-random-server-only-rate-limit-key
