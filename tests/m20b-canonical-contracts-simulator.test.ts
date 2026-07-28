@@ -163,7 +163,7 @@ test.each(["M20B-T001", "M20B-T002", "M20B-T003", "M20B-T004"])(
   },
 );
 
-test("milestone status is honest while the M20B PR is a draft", () => {
+test("milestone status reflects merged M20B and in-progress M21", () => {
   const physicalTasks = read(physicalGpsTasks);
   const mvpLedger = read(mvpTasks);
   const guide = read(planningGuide);
@@ -171,9 +171,9 @@ test("milestone status is honest while the M20B PR is a draft", () => {
 
   assert.match(statusText, /M18[\s\S]{0,300}(incomplete|in progress)/i);
   assert.match(statusText, /M20A[\s\S]{0,100}(complete|completed)/i);
-  assert.match(statusText, /M20B[\s\S]{0,200}in progress/i);
-  assert.match(statusText, /M20B[\s\S]{0,250}(not complete|not completed)/i);
-  assert.match(statusText, /M21 through M26 remain Not Started/i);
+  assert.match(statusText, /M20B[\s\S]{0,200}(complete|completed)/i);
+  assert.match(statusText, /M21[\s\S]{0,200}in progress/i);
+  assert.match(statusText, /M22 through M26 remain Not Started/i);
   assert.doesNotMatch(mvpLedger, /## Milestone M18[\s\S]{0,200}- \[x\]/i);
 });
 
@@ -190,7 +190,7 @@ test("host-neutral shared modules do not import host, framework, or database run
   assert.doesNotMatch(source, /\b(?:eval|Function)\s*\(/);
 });
 
-test("M20B adds no endpoint, migration, persistence, vendor, map, alert, comparison, or AI runtime", () => {
+test("M20B remains host-neutral while later milestones add runtime", () => {
   const repositoryFiles = listFiles(repositoryRoot)
     .map((path) => relative(repositoryRoot, path).replaceAll("\\", "/"))
     .filter((path) => !path.startsWith(".git/"));
@@ -198,8 +198,8 @@ test("M20B adds no endpoint, migration, persistence, vendor, map, alert, compari
   assert.equal(
     repositoryFiles.some(
       (path) =>
-        /^supabase\/migrations\/.*(?:m20b|telemetry)/i.test(path) ||
-        /^(?:netlify\/functions|supabase\/functions)\/.*telemetr/i.test(path),
+        /^supabase\/migrations\/.*m20b/i.test(path) ||
+        /^(?:netlify\/functions|supabase\/functions)\/.*m20b/i.test(path),
     ),
     false,
   );

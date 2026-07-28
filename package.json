@@ -15,7 +15,10 @@
                     "check:pilot-env":  "node scripts/check-pilot-env.mjs",
                     "check:pilot-readiness":  "node scripts/check-pilot-readiness.mjs",
                     "security:scan":  "node scripts/security-scan.mjs",
-                    "migrations:check":  "node scripts/check-migrations.mjs"
+                    "migrations:check":  "node scripts/check-migrations.mjs",
+                    "evidence:m21-load":  "vitest run tests/m21-load-evidence.test.ts --reporter=verbose",
+                    "benchmark:m21-auth":  "vitest run tests/m21-auth-cost-benchmark.test.ts --reporter=verbose",
+                    "test:m21-scope":  "vitest run tests/m21-scope-guardrails.test.ts --reporter=verbose"
                 },
     "devDependencies":  {
                             "@types/node":  "^20.17.19",

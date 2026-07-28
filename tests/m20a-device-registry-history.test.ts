@@ -446,11 +446,28 @@ describe("M20A physical device registry and history", () => {
         new RegExp(`- \\[x\\] M20A-${taskId}\\b`),
       );
     }
-    const laterTasks = physicalTasks.match(/## M20B[\s\S]*$/)?.[0];
-    expect(laterTasks).toBeTruthy();
-    expect(laterTasks).not.toMatch(/- \[x\]/);
-    expect(laterTasks).toMatch(
-      /M21[\s\S]*M22[\s\S]*M23[\s\S]*M24[\s\S]*M25[\s\S]*M26/,
+    const m20bTasks = physicalTasks.match(
+      /## M20B[\s\S]*?(?=\n## M21)/,
+    )?.[0];
+    expect(m20bTasks).toBeTruthy();
+    for (const taskId of ["T001", "T002", "T003", "T004"]) {
+      expect(m20bTasks).toMatch(
+        new RegExp(`- \\[x\\] M20B-${taskId}\\b`),
+      );
+    }
+
+    const m21Tasks = physicalTasks.match(
+      /## M21[\s\S]*?(?=\n## M22)/,
+    )?.[0];
+    expect(m21Tasks).toBeTruthy();
+    expect(m21Tasks).toMatch(/- \[~\] M21-T001\b/);
+    expect(m21Tasks).not.toMatch(/- \[x\]/);
+
+    const futureTasks = physicalTasks.match(/## M22[\s\S]*$/)?.[0];
+    expect(futureTasks).toBeTruthy();
+    expect(futureTasks).not.toMatch(/- \[x\]/);
+    expect(futureTasks).toMatch(
+      /M22[\s\S]*M23[\s\S]*M24[\s\S]*M25[\s\S]*M26/,
     );
   });
 });
