@@ -38,6 +38,7 @@ create table public.m21_ingestion_policies (
   delayed_backfill_seconds integer not null,
   future_clock_skew_seconds integer not null,
   reorder_window_sequences integer not null,
+  credential_rotation_overlap_seconds integer not null default 3600,
   active boolean not null default false,
   created_at timestamptz not null default clock_timestamp(),
   constraint m21_ingestion_policies_bounds_check check (
@@ -46,6 +47,7 @@ create table public.m21_ingestion_policies (
     and delayed_backfill_seconds between 60 and 604800
     and future_clock_skew_seconds between 0 and 600
     and reorder_window_sequences between 1 and 10000
+    and credential_rotation_overlap_seconds between 1 and 86400
     and (effective_until is null or effective_until > effective_from)
   )
 );
@@ -66,6 +68,8 @@ create table public.m21_rate_limit_policies (
   request_limit integer not null,
   event_limit integer not null,
   retention_seconds integer not null,
+  effective_from timestamptz not null default clock_timestamp(),
+  effective_until timestamptz,
   active boolean not null default true,
   created_at timestamptz not null default clock_timestamp(),
   primary key (policy_version, scope),
@@ -77,8 +81,12 @@ create table public.m21_rate_limit_policies (
     and request_limit between 1 and 100000
     and event_limit between 1 and 1000000
     and retention_seconds between window_seconds and 604800
+    and (effective_until is null or effective_until > effective_from)
   )
 );
+
+create unique index m21_rate_limit_policies_one_active_per_scope
+  on public.m21_rate_limit_policies (scope) where active;
 
 -- Provisional pilot controls. They are configurable and are not an approved
 -- production policy.
@@ -218,6 +226,31 @@ alter table public.m21_execution_history
     ad_work_day_id with =,
     tstzrange(effective_from, coalesce(effective_until, 'infinity'::timestamptz), '[)') with &&
   );
+
+drop index if exists public.tracking_sessions_m21_physical_unique;
+alter table public.tracking_sessions
+  add column gps_device_vehicle_link_id uuid references public.gps_device_vehicle_links(id) on delete restrict,
+  add column assignment_history_id uuid references public.m21_assignment_history(id) on delete restrict,
+  add column execution_history_id uuid references public.m21_execution_history(id) on delete restrict,
+  add constraint tracking_sessions_m21_physical_authority_check check (
+    (tracking_mode = 'physical_device'
+      and gps_device_id is not null
+      and gps_device_vehicle_link_id is not null
+      and assignment_history_id is not null
+      and execution_history_id is not null
+      and source_type = 'device')
+    or
+    (tracking_mode = 'phone_location'
+      and gps_device_id is null
+      and gps_device_vehicle_link_id is null
+      and assignment_history_id is null
+      and execution_history_id is null)
+  );
+create unique index tracking_sessions_m21_physical_unique
+  on public.tracking_sessions (
+    ad_work_day_id, gps_device_id, gps_device_vehicle_link_id,
+    assignment_history_id, execution_history_id, tracking_mode
+  ) where tracking_mode = 'physical_device';
 
 -- Existing current rows receive a conservative boundary only. M21 never
 -- fabricates their earlier assignment, release, or execution history.
@@ -449,6 +482,9 @@ create table public.telemetry_receipts (
   assignment_id uuid references public.ad_work_assignments(id) on delete restrict,
   driver_id uuid references public.drivers(id) on delete restrict,
   vehicle_id uuid references public.vehicles(id) on delete restrict,
+  gps_device_vehicle_link_id uuid references public.gps_device_vehicle_links(id) on delete restrict,
+  assignment_history_id uuid references public.m21_assignment_history(id) on delete restrict,
+  execution_history_id uuid references public.m21_execution_history(id) on delete restrict,
   tracking_session_id uuid references public.tracking_sessions(id) on delete restrict,
   created_at timestamptz not null default clock_timestamp(),
   constraint telemetry_receipts_text_bounds_check check (
@@ -469,7 +505,17 @@ create table public.telemetry_receipts (
   constraint telemetry_receipts_freshness_check
     check (freshness in ('live', 'delayed', 'degraded_freshness', 'not_applicable')),
   constraint telemetry_receipts_quality_check
-    check (quality in ('valid', 'degraded', 'suspect', 'rejected'))
+    check (quality in ('valid', 'degraded', 'suspect', 'rejected')),
+  constraint telemetry_receipts_authority_check check (
+    (disposition in ('accepted_live', 'accepted_delayed')
+      and gps_device_vehicle_link_id is not null
+      and assignment_history_id is not null
+      and execution_history_id is not null
+      and tracking_session_id is not null)
+    or
+    (disposition not in ('accepted_live', 'accepted_delayed')
+      and tracking_session_id is null)
+  )
 );
 
 create unique index telemetry_receipts_identity_unique
@@ -585,7 +631,10 @@ alter table public.location_points
   add column if not exists satellite_count integer,
   add column if not exists freshness text,
   add column if not exists offline_backfill boolean not null default false,
-  add column if not exists synthetic boolean not null default false;
+  add column if not exists synthetic boolean not null default false,
+  add column gps_device_vehicle_link_id uuid references public.gps_device_vehicle_links(id) on delete restrict,
+  add column assignment_history_id uuid references public.m21_assignment_history(id) on delete restrict,
+  add column execution_history_id uuid references public.m21_execution_history(id) on delete restrict;
 
 create unique index location_points_telemetry_receipt_unique
   on public.location_points (telemetry_receipt_id)
@@ -601,6 +650,51 @@ alter table public.location_points
       and (satellite_count is null or satellite_count between 0 and 256)
     )
   );
+
+alter table public.location_points
+  add constraint location_points_m21_authority_refs_check check (
+    telemetry_receipt_id is null
+    or (gps_device_vehicle_link_id is not null
+      and assignment_history_id is not null
+      and execution_history_id is not null)
+  );
+
+create function public.m21_enforce_physical_point_authority()
+returns trigger language plpgsql set search_path = pg_catalog, public as $$
+declare
+  v_receipt public.telemetry_receipts%rowtype;
+  v_session public.tracking_sessions%rowtype;
+begin
+  if new.telemetry_receipt_id is null then return new; end if;
+  select * into strict v_receipt from public.telemetry_receipts where id = new.telemetry_receipt_id;
+  select * into strict v_session from public.tracking_sessions where id = new.tracking_session_id;
+  if row(new.device_id, new.ad_work_id, new.ad_work_day_id, new.assignment_id,
+         new.driver_id, new.vehicle_id, new.gps_device_vehicle_link_id,
+         new.assignment_history_id, new.execution_history_id)
+     is distinct from
+     row(v_receipt.gps_device_id, v_receipt.ad_work_id,
+         v_receipt.ad_work_day_id, v_receipt.assignment_id,
+         v_receipt.driver_id, v_receipt.vehicle_id,
+         v_receipt.gps_device_vehicle_link_id, v_receipt.assignment_history_id,
+         v_receipt.execution_history_id)
+     or row(new.device_id, new.ad_work_id, new.ad_work_day_id,
+            new.assignment_id, new.driver_id, new.vehicle_id,
+            new.gps_device_vehicle_link_id, new.assignment_history_id,
+            new.execution_history_id)
+        is distinct from
+        row(v_session.gps_device_id, v_session.ad_work_id,
+            v_session.ad_work_day_id, v_session.assignment_id,
+            v_session.driver_id, v_session.vehicle_id,
+            v_session.gps_device_vehicle_link_id,
+            v_session.assignment_history_id, v_session.execution_history_id)
+  then
+    raise exception 'Physical point authority mismatch' using errcode = '23514';
+  end if;
+  return new;
+end; $$;
+create trigger location_points_m21_authority_guard
+before insert or update on public.location_points
+for each row execute function public.m21_enforce_physical_point_authority();
 
 create or replace function public.m21_protect_immutable_evidence()
 returns trigger
@@ -653,8 +747,8 @@ begin
   select * into strict v_policy
   from public.m21_rate_limit_policies
   where scope = 'unauthenticated' and active
-  order by created_at desc
-  limit 1;
+    and effective_from <= p_observed_at
+    and (effective_until is null or p_observed_at < effective_until);
 
   v_window := to_timestamp(
     floor(extract(epoch from p_observed_at) / v_policy.window_seconds)
@@ -765,11 +859,13 @@ begin
   select * into strict v_device_policy
   from public.m21_rate_limit_policies
   where scope = 'device' and active
-  order by created_at desc limit 1;
+    and effective_from <= p_observed_at
+    and (effective_until is null or p_observed_at < effective_until);
   select * into strict v_global_policy
   from public.m21_rate_limit_policies
   where scope = 'global' and active
-  order by created_at desc limit 1;
+    and effective_from <= p_observed_at
+    and (effective_until is null or p_observed_at < effective_until);
 
   v_device_window := to_timestamp(
     floor(extract(epoch from p_observed_at) / v_device_policy.window_seconds)
@@ -845,6 +941,56 @@ begin
 end;
 $$;
 
+create function public.m21_credential_is_eligible(
+  p_credential_id uuid,
+  p_received_at timestamptz
+) returns boolean
+language sql
+stable
+security definer
+set search_path = pg_catalog, public
+as $$
+  select coalesce((
+    select
+      c.verification_material_hash ~ '^[0-9a-f]{64}$'
+      and c.issued_at is not null
+      and c.issued_at <= p_received_at
+      and (c.revoked_at is null or c.revoked_at > p_received_at)
+      and (
+        (c.status = 'active'
+          and (c.expires_at is null or c.expires_at > p_received_at))
+        or
+        (c.status = 'rotating'
+          and c.rotated_at is not null
+          and c.expires_at is not null
+          and c.expires_at > c.rotated_at
+          and p_received_at < c.expires_at
+          and c.expires_at - c.rotated_at <= make_interval(secs => (
+            select p.credential_rotation_overlap_seconds
+            from public.m21_ingestion_policies p
+            where p.active
+              and p.effective_from <= p_received_at
+              and (p.effective_until is null or p_received_at < p.effective_until)
+          ))
+          and exists (
+            select 1
+            from public.gps_device_credential_metadata successor
+            where successor.rotated_from_credential_id = c.id
+              and successor.gps_device_id = c.gps_device_id
+              and successor.status = 'active'
+              and successor.issued_at is not null
+              and successor.issued_at <= p_received_at
+              and (successor.expires_at is null or successor.expires_at > p_received_at)
+              and (successor.revoked_at is null or successor.revoked_at > p_received_at)
+          ))
+      )
+    from public.gps_device_credential_metadata c
+    where c.id = p_credential_id
+  ), false);
+$$;
+revoke all on function public.m21_credential_is_eligible(uuid, timestamptz)
+  from public, anon, authenticated;
+
 create or replace function public.m21_lookup_device_credential(
   p_claimed_device_code text,
   p_credential_key_id text,
@@ -864,22 +1010,9 @@ as $$
     (
       d.status = 'active'::public.gps_device_status
       and d.installation_state = 'installed'
-      and c.verification_material_hash ~ '^[0-9a-f]{64}$'
-      and c.issued_at is not null and c.issued_at <= p_received_at
-      and (c.expires_at is null or c.expires_at > p_received_at)
-      and (c.revoked_at is null or c.revoked_at > p_received_at)
-      and (
-        c.status in ('active', 'rotating')
-        or (c.status = 'revoked' and c.revoked_at > p_received_at)
-      )
+      and public.m21_credential_is_eligible(c.id, p_received_at)
       and d.gps_readiness = 'ready'
       and d.gsm_readiness in ('ready', 'degraded')
-      and exists (
-        select 1 from public.gps_device_vehicle_links link
-        where link.gps_device_id = d.id and link.is_primary
-          and link.effective_from <= p_received_at
-          and (link.effective_until is null or link.effective_until > p_received_at)
-      )
     )
   from public.gps_devices d
   join public.gps_device_credential_metadata c on c.gps_device_id = d.id
@@ -923,10 +1056,7 @@ begin
     and d.id = c.gps_device_id
     and d.status = 'active'::public.gps_device_status
     and d.installation_state = 'installed'
-    and c.issued_at <= p_received_at
-    and (c.expires_at is null or c.expires_at > p_received_at)
-    and (c.revoked_at is null or c.revoked_at > p_received_at)
-    and c.status in ('active', 'rotating');
+    and public.m21_credential_is_eligible(c.id, p_received_at);
   get diagnostics v_updated = row_count;
   if v_updated <> 1 then
     return false;
@@ -1013,6 +1143,8 @@ declare
   v_day public.ad_work_days%rowtype;
   v_execution public.m21_execution_history%rowtype;
   v_actual_end timestamptz;
+  v_current_execution_status text;
+  v_current_execution_boundary timestamptz;
   v_receipt_id uuid := gen_random_uuid();
   v_session_id uuid;
   v_location boolean;
@@ -1093,12 +1225,7 @@ begin
      or v_device.protocol_type <> 'https'
      or v_device.gps_readiness <> 'ready'
      or v_device.gsm_readiness not in ('ready', 'degraded')
-     or coalesce(v_credential.verification_material_hash, '') !~ '^[0-9a-f]{64}$'
-     or v_credential.issued_at is null
-     or v_credential.issued_at > p_received_at
-     or (v_credential.expires_at is not null and v_credential.expires_at <= p_received_at)
-     or (v_credential.revoked_at is not null and v_credential.revoked_at <= p_received_at)
-     or v_credential.status not in ('active', 'rotating')
+     or not public.m21_credential_is_eligible(v_credential.id, p_received_at)
   then
     raise exception 'Authentication context invalid' using errcode = '42501';
   end if;
@@ -1129,14 +1256,15 @@ begin
                               excluded.last_seen_at),
       attempt_count = least(public.telemetry_identity_conflicts.attempt_count + 1,
                             1000000000);
-    return query select 'rejected', 'not_applicable', false,
+    return query select 'duplicate_conflict', 'not_applicable', false,
       'rejected', 'event_identity_conflict', false;
     return;
   end if;
 
-  select * into v_policy
+  select * into strict v_policy
   from public.m21_ingestion_policies where active
-  order by effective_from desc limit 1;
+    and effective_from <= p_received_at
+    and (effective_until is null or p_received_at < effective_until);
 
   if p_captured_at > p_received_at
        + make_interval(secs => v_policy.future_clock_skew_seconds) then
@@ -1176,7 +1304,7 @@ begin
                                   excluded.last_seen_at),
           attempt_count = least(public.telemetry_identity_conflicts.attempt_count + 1,
                                 1000000000);
-        return query select 'rejected', 'not_applicable', false,
+        return query select 'duplicate_conflict', 'not_applicable', false,
           'rejected', 'sequence_replay_invalid', false;
       end if;
       return;
@@ -1292,6 +1420,17 @@ begin
     end if;
   end if;
 
+  if v_work_valid then
+    select e.execution_status, e.effective_from
+    into v_current_execution_status, v_current_execution_boundary
+    from public.m21_execution_history e
+    where e.ad_work_day_id = v_day.id
+      and e.effective_from <= p_received_at
+      and (e.effective_until is null or p_received_at < e.effective_until)
+    order by e.effective_from desc
+    limit 1;
+  end if;
+
   if v_work_valid and v_location then
     if (v_execution.effective_until is null
         or p_received_at <= v_execution.effective_until)
@@ -1357,27 +1496,62 @@ begin
   if v_disposition in ('accepted_live', 'accepted_delayed') then
     perform pg_catalog.pg_advisory_xact_lock(
       pg_catalog.hashtextextended(
-        v_device.id::text || ':' || v_day.id::text || ':physical-session', 23
+        v_device.id::text || ':' || v_day.id::text || ':'
+        || v_link.id::text || ':' || v_assignment.id::text || ':'
+        || v_execution.id::text || ':physical-session', 23
       )
     );
     select id into v_session_id
     from public.tracking_sessions
     where ad_work_day_id = v_day.id
       and gps_device_id = v_device.id
+      and gps_device_vehicle_link_id = v_link.id
+      and assignment_history_id = v_assignment.id
+      and execution_history_id = v_execution.id
       and tracking_mode = 'physical_device'
     for update;
     if not found then
       insert into public.tracking_sessions (
         ad_work_id, ad_work_day_id, assignment_id, driver_id, vehicle_id,
-        gps_device_id, source_type, tracking_mode, status, started_at,
-        last_update_at, point_count, quality_status, tracking_health_status,
-        synthetic, updated_at
+        gps_device_id, gps_device_vehicle_link_id, assignment_history_id,
+        execution_history_id, source_type, tracking_mode, status, started_at,
+        ended_at, stopped_by, stop_reason, last_update_at, point_count,
+        quality_status, tracking_health_status, synthetic, updated_at
       ) values (
         v_assignment.ad_work_id, v_day.id, v_assignment.assignment_id,
         v_assignment.driver_id, v_assignment.vehicle_id, v_device.id,
-        'device', 'physical_device', 'running', p_captured_at,
-        p_captured_at, 0, 'unknown', 'healthy', p_synthetic, p_received_at
+        v_link.id, v_assignment.id, v_execution.id,
+        'device', 'physical_device',
+        case
+          when v_actual_end is not null and p_received_at >= v_actual_end
+            then 'completed'::public.tracking_session_status
+          when v_disposition = 'accepted_delayed'
+               and v_current_execution_status = 'on_break'
+            then 'paused'::public.tracking_session_status
+          when v_disposition = 'accepted_delayed'
+            then 'stopped'::public.tracking_session_status
+          else 'running'::public.tracking_session_status
+        end,
+        least(p_captured_at, v_execution.effective_from),
+        case when v_actual_end is not null and p_received_at >= v_actual_end
+          then v_actual_end end,
+        case when v_actual_end is not null and p_received_at >= v_actual_end
+          then 'system'::public.stopped_by_type end,
+        case
+          when v_actual_end is not null and p_received_at >= v_actual_end
+            then 'work_ended'
+          when v_disposition = 'accepted_delayed'
+               and v_current_execution_status = 'on_break'
+            then 'break_started'
+        end,
+        p_captured_at, 0, 'unknown',
+        case when v_disposition = 'accepted_live' then 'healthy' else 'stopped' end,
+        p_synthetic, p_received_at
       ) returning id into v_session_id;
+    else
+      update public.tracking_sessions
+      set started_at = least(started_at, p_captured_at, v_execution.effective_from)
+      where id = v_session_id;
     end if;
   end if;
 
@@ -1387,7 +1561,8 @@ begin
     stream_epoch, sequence, captured_at, received_at, normalized_at,
     disposition, reason_code, freshness, offline_backfill, quality, synthetic,
     processing_version, ad_work_id, ad_work_day_id, assignment_id, driver_id,
-    vehicle_id, tracking_session_id
+    vehicle_id, gps_device_vehicle_link_id, assignment_history_id,
+    execution_history_id, tracking_session_id
   ) values (
     v_receipt_id, v_device.id, v_credential.id, p_adapter_id, p_adapter_version,
     p_idempotency_identity, p_content_hash, p_raw_payload_hash, p_client_event_id,
@@ -1399,6 +1574,9 @@ begin
     case when v_work_valid then v_assignment.assignment_id end,
     case when v_work_valid then v_assignment.driver_id end,
     case when v_work_valid then v_assignment.vehicle_id end,
+    case when v_work_valid then v_link.id end,
+    case when v_work_valid then v_assignment.id end,
+    case when v_work_valid then v_execution.id end,
     v_session_id
   );
 
@@ -1408,7 +1586,8 @@ begin
       driver_id, vehicle_id, device_id, source, recorded_at, received_at,
       lat, lng, altitude_meters, accuracy_meters, speed, heading,
       satellite_count, offline_synced, offline_backfill, freshness, quality,
-      synthetic, telemetry_receipt_id
+      synthetic, telemetry_receipt_id, gps_device_vehicle_link_id,
+      assignment_history_id, execution_history_id
     ) values (
       v_session_id, v_assignment.ad_work_id, v_day.id,
       v_assignment.assignment_id, v_assignment.driver_id,
@@ -1420,10 +1599,18 @@ begin
       case when v_quality = 'valid' then 'good'::public.location_quality
            when v_quality = 'degraded' then 'weak'::public.location_quality
            else 'unknown'::public.location_quality end,
-      p_synthetic, v_receipt_id
+      p_synthetic, v_receipt_id, v_link.id, v_assignment.id, v_execution.id
     );
     update public.tracking_sessions
     set point_count = point_count + 1,
+        status = case
+          when v_disposition = 'accepted_live' and status <> 'completed'
+               and v_actual_end is null
+            then 'running'::public.tracking_session_status else status end,
+        tracking_health_status = case
+          when v_disposition = 'accepted_live' and status <> 'completed'
+               and v_actual_end is null
+            then 'healthy' else tracking_health_status end,
         last_update_at = greatest(coalesce(last_update_at, p_captured_at),
                                   p_captured_at),
         quality_status = case when v_quality = 'valid'
@@ -1478,7 +1665,13 @@ begin
     end loop;
   end if;
 
-  if v_disposition in ('accepted_live', 'accepted_delayed', 'health_only') and (
+  if (
+    v_disposition = 'accepted_live'
+    or (v_disposition = 'health_only'
+      and p_captured_at <= p_received_at
+      and p_received_at - p_captured_at
+        <= make_interval(secs => v_policy.live_freshness_seconds))
+  ) and (
     p_heartbeat is not null or p_battery_percent is not null
      or p_external_power is not null or p_firmware_version is not null
      or p_gps_fix is not null or p_gsm_signal_dbm is not null) then
@@ -1662,7 +1855,17 @@ begin
     insert into public.m21_execution_history
       (ad_work_day_id, execution_status, effective_from, history_origin)
     values (new.id, new.execution_status, v_effective, 'observed');
-    if new.execution_status = 'completed' then
+    if new.execution_status = 'on_break' then
+      update public.tracking_sessions
+      set status = 'paused', stop_reason = 'break_started',
+          tracking_health_status = 'stopped', updated_at = v_at
+      where ad_work_day_id = new.id and tracking_mode = 'physical_device'
+        and execution_history_id = (
+          select id from public.m21_execution_history
+          where ad_work_day_id = new.id and execution_status = 'running'
+          order by effective_from desc limit 1
+        );
+    elsif new.execution_status = 'completed' then
       update public.tracking_sessions
       set status = 'completed', ended_at = v_effective, stopped_by = 'system',
           stop_reason = 'work_ended', tracking_health_status = 'stopped',
@@ -1701,19 +1904,10 @@ as $$
         and successor.revoked_at is null),
     (d.status = 'active'::public.gps_device_status
       and d.installation_state = 'installed'
-      and c.verification_material_hash ~ '^[0-9a-f]{64}$'
-      and c.issued_at is not null and c.issued_at <= p_received_at
-      and (c.expires_at is null or c.expires_at > p_received_at)
-      and (c.revoked_at is null or c.revoked_at > p_received_at)
-      and c.status in ('active', 'rotating')
+      and public.m21_credential_is_eligible(c.id, p_received_at)
       and d.gps_readiness = 'ready'
       and d.gsm_readiness in ('ready', 'degraded')
-      and exists (
-        select 1 from public.gps_device_vehicle_links link
-        where link.gps_device_id = d.id and link.is_primary
-          and link.effective_from <= p_received_at
-          and (link.effective_until is null or link.effective_until > p_received_at)
-      ))
+    )
   from public.gps_devices d
   join public.gps_device_credential_metadata c on c.gps_device_id = d.id
   where lower(trim(d.device_code)) = lower(trim(p_claimed_device_code))
@@ -1782,7 +1976,17 @@ begin
     insert into public.m21_execution_history
       (ad_work_day_id, execution_status, effective_from, history_origin)
     values (new.id, new.execution_status, v_effective, 'observed');
-    if new.execution_status = 'completed' then
+    if new.execution_status = 'on_break' then
+      update public.tracking_sessions
+      set status = 'paused', stop_reason = 'break_started',
+          tracking_health_status = 'stopped', updated_at = v_at
+      where ad_work_day_id = new.id and tracking_mode = 'physical_device'
+        and execution_history_id = (
+          select id from public.m21_execution_history
+          where ad_work_day_id = new.id and execution_status = 'running'
+          order by effective_from desc limit 1
+        );
+    elsif new.execution_status = 'completed' then
       update public.tracking_sessions
       set status = 'completed', ended_at = v_effective, stopped_by = 'system',
           stop_reason = 'work_ended', tracking_health_status = 'stopped',

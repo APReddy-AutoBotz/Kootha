@@ -16,7 +16,9 @@ import {
   SupabaseServerRuntimeV1,
   trustedNetlifyClientAddressV1,
 } from "../netlify/functions/_telemetry/supabase-runtime-v2";
+import { persistWithSupabaseV1 } from "../netlify/functions/_telemetry/supabase-persistence-v2";
 import { deriveCredentialVerificationHashV1 } from "../netlify/functions/_telemetry/server-crypto";
+import telemetryV1Handler from "../netlify/functions/telemetry-v1";
 
 const NOW = new Date("2026-07-27T10:00:00.000Z");
 const DEVICE = "SYNTH_DEVICE_01";
@@ -93,6 +95,7 @@ function requestWithBodyProbe(payload: unknown): {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllEnvs();
 });
 
 describe("M21 DB-authoritative credential verification", () => {
@@ -232,6 +235,44 @@ describe("M21 DB-authoritative credential verification", () => {
 });
 
 describe("M21 bounded HTTP runtime", () => {
+  it.each(["GET", "PUT", "PATCH", "DELETE"])(
+    "returns 405 for %s before disabled or missing server environment checks",
+    async (method) => {
+      vi.stubEnv("TELEMETRY_INGEST_ENABLED", "false");
+      vi.stubEnv("SUPABASE_URL", "");
+      vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "");
+      vi.stubEnv("TELEMETRY_CREDENTIAL_PEPPER", "");
+      vi.stubEnv("TELEMETRY_RATE_LIMIT_KEY", "");
+      const response = await telemetryV1Handler(
+        new Request("https://example.test/api/telemetry/v1", { method }),
+      );
+      expect(response.status).toBe(405);
+      expect(response.headers.get("allow")).toBe("POST");
+      expect(await response.json()).toMatchObject({
+        status: "rejected",
+        reasonCode: "method_not_allowed",
+        retryable: false,
+      });
+    },
+  );
+
+  it("keeps unavailable POST responses safe when ingestion is disabled", async () => {
+    vi.stubEnv("TELEMETRY_INGEST_ENABLED", "false");
+    vi.stubEnv("SUPABASE_URL", "should-not-be-returned.example");
+    vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "should-not-be-returned");
+    vi.stubEnv("TELEMETRY_CREDENTIAL_PEPPER", "should-not-be-returned");
+    vi.stubEnv("TELEMETRY_RATE_LIMIT_KEY", "should-not-be-returned");
+    const response = await telemetryV1Handler(request({}));
+    const body = await response.text();
+    expect(response.status).toBe(503);
+    expect(JSON.parse(body)).toMatchObject({
+      status: "rejected",
+      reasonCode: "temporarily_unavailable",
+      retryable: true,
+    });
+    expect(body).not.toContain("should-not-be-returned");
+  });
+
   it("stops reading once the actual body exceeds 256 KiB", async () => {
     const response = await createTelemetryHttpHandlerV1(dependencies())(
       request("x".repeat(MAX_HTTP_BODY_BYTES + 1)),
@@ -273,6 +314,82 @@ describe("M21 bounded HTTP runtime", () => {
       ],
     });
     expect(fixture.persist).toHaveBeenCalledOnce();
+  });
+
+  it("preserves a typed duplicate_conflict acknowledgement without unsafe fields", async () => {
+    const fixture = dependencies({
+      persist: vi.fn(async (event) => ({
+        clientEventId: event.clientEventId,
+        disposition: "duplicate_conflict" as const,
+        reasonCode: "event_identity_conflict",
+        retryable: false,
+      })),
+    });
+    const response = await createTelemetryHttpHandlerV1(fixture)(
+      request({ contractVersion: "1", events: [validEvent] }),
+    );
+    const body = await response.json();
+    expect(response.status).toBe(202);
+    expect(body).toMatchObject({
+      status: "rejected",
+      acceptedCount: 0,
+      rejectedCount: 1,
+      results: [{
+        clientEventId: "client-001",
+        disposition: "duplicate_conflict",
+        reasonCode: "event_identity_conflict",
+        retryable: false,
+      }],
+    });
+    expect(JSON.stringify(body)).not.toMatch(
+      /(?:content_hash|raw_payload|latitude|longitude|receipt_id|credential_id|database_error)/i,
+    );
+  });
+
+  it("decodes duplicate_conflict persistence results through the safe public type", async () => {
+    const rpc = vi.fn(async () => [{
+      disposition: "duplicate_conflict",
+      reason_code: "event_identity_conflict",
+      retryable: false,
+      receipt_id: "00000000-0000-4000-8000-000000000099",
+      content_hash: "must-not-escape",
+      latitude: 17.385,
+      database_error: "must-not-escape",
+    }]);
+    const runtime = { rpc } as unknown as SupabaseServerRuntimeV1;
+    const result = await persistWithSupabaseV1(
+      {
+        adapter: { id: "generic-http", version: "1" },
+        idempotencyIdentity: "synthetic-idempotency-identity",
+        clientEventId: "client-001",
+        capturedAt: "2026-07-27T09:59:45.000Z",
+        receivedAt: "2026-07-27T10:00:00.000Z",
+        normalizedAt: "2026-07-27T10:00:00.000Z",
+        quality: "reported",
+        provenance: {
+          source: "physical_device",
+          synthetic: true,
+          normalizationVersion: "generic-http-v1",
+          canonicalPayloadHash: "a".repeat(64),
+          rawPayloadHash: "b".repeat(64),
+        },
+      },
+      {
+        authenticatedDeviceId: "00000000-0000-4000-8000-000000000022",
+        authenticatedDeviceExternalId: DEVICE,
+        authenticationMethod: "bearer_digest",
+        credentialKeyId: KEY,
+        credentialId: "00000000-0000-4000-8000-000000000023",
+      },
+      runtime,
+      new AbortController().signal,
+    );
+    expect(result).toEqual({
+      clientEventId: "client-001",
+      disposition: "duplicate_conflict",
+      reasonCode: "event_identity_conflict",
+      retryable: false,
+    });
   });
 
   it("retains invalid-auth reservations and never reaches authenticated limits", async () => {

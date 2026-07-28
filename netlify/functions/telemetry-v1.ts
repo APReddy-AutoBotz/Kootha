@@ -11,6 +11,29 @@ import {
 } from "./_telemetry/supabase-runtime-v2";
 import { createCorrelationId } from "./_telemetry/server-crypto";
 
+function methodNotAllowed(correlationId: string): Response {
+  return new Response(
+    JSON.stringify({
+      contractVersion: "1",
+      correlationId,
+      status: "rejected",
+      acceptedCount: 0,
+      rejectedCount: 0,
+      retryable: false,
+      reasonCode: "method_not_allowed",
+    }),
+    {
+      status: 405,
+      headers: {
+        allow: "POST",
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": "no-store",
+        "x-content-type-options": "nosniff",
+      },
+    },
+  );
+}
+
 function unavailable(correlationId: string): Response {
   return new Response(
     JSON.stringify({
@@ -64,6 +87,9 @@ function environment():
 
 export default async function handler(request: Request): Promise<Response> {
   const correlationId = createCorrelationId();
+  if (request.method !== "POST") {
+    return methodNotAllowed(correlationId);
+  }
   const server = environment();
   if (server === undefined) return unavailable(correlationId);
   const dependencies: TelemetryHttpHostDependenciesV1 = {

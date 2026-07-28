@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(41);
+select plan(57);
 
 select has_table('public', 'telemetry_receipts', 'receipt table exists');
 select has_table('public', 'telemetry_stream_state', 'stream state exists');
@@ -228,10 +228,13 @@ set execution_status = 'running',
     execution_updated_at = clock_timestamp()
 where id = '21000000-0000-0000-0000-000000000008';
 
+create temp table m21_rate_limit_test_clock as
+select clock_timestamp() as observed_at;
+
 create temp table m21_admitted_reservation as
 select *
 from public.m21_reserve_unauthenticated_rate_limit(
-  repeat('c', 64), clock_timestamp()
+  repeat('c', 64), (select observed_at from m21_rate_limit_test_clock)
 );
 
 select ok(
@@ -296,7 +299,8 @@ select attempt, result.*
 from generate_series(1, 61) attempt
 cross join lateral public.m21_reserve_unauthenticated_rate_limit(
   repeat('d', 64),
-  date_trunc('minute', clock_timestamp()) + attempt * interval '1 microsecond'
+  (select observed_at from m21_rate_limit_test_clock)
+    + attempt * interval '1 microsecond'
 ) result;
 select ok(
   (select not allowed and reservation_id is null
@@ -410,5 +414,189 @@ select ok(
   'M21 history transitions do not mutate phone sessions'
 );
 
+
+update public.gps_device_vehicle_links
+set effective_until = clock_timestamp(), closed_at = clock_timestamp(),
+    closed_by_admin = '21000000-0000-0000-0000-000000000003'
+where gps_device_id = '21000000-0000-0000-0000-000000000004'
+  and effective_until is null;
+select ok(
+  (select eligible from public.m21_lookup_device_credential(
+    'M21-SYNTHETIC-DEVICE', 'm21-synthetic-key', clock_timestamp()
+  )),
+  'receipt-time credential eligibility does not require a current vehicle link'
+);
+
+create temp table m21_rotation_clock as
+select clock_timestamp() as rotated_at;
+update public.gps_device_credential_metadata
+set status = 'rotating',
+    rotated_at = (select rotated_at from m21_rotation_clock),
+    expires_at = (select rotated_at + interval '30 minutes' from m21_rotation_clock)
+where id = '21000000-0000-0000-0000-000000000005';
+insert into public.gps_device_credential_metadata (
+  id, gps_device_id, credential_key_id, status, verification_material_hash,
+  issued_at, expires_at, rotated_from_credential_id, created_by_admin
+) values (
+  '21000000-0000-0000-0000-000000000015',
+  '21000000-0000-0000-0000-000000000004',
+  'm21-successor-key', 'active', repeat('c', 64),
+  (select rotated_at from m21_rotation_clock), null,
+  '21000000-0000-0000-0000-000000000005',
+  '21000000-0000-0000-0000-000000000003'
+);
+select ok(
+  public.m21_credential_is_eligible(
+    '21000000-0000-0000-0000-000000000005',
+    (select rotated_at + interval '10 minutes' from m21_rotation_clock)
+  ),
+  'rotating source is eligible strictly during bounded overlap'
+);
+select is(
+  public.m21_credential_is_eligible(
+    '21000000-0000-0000-0000-000000000005',
+    (select rotated_at + interval '30 minutes' from m21_rotation_clock)
+  ),
+  false,
+  'rotating source fails closed at the exact overlap cutoff'
+);
+select is(
+  public.m21_credential_is_eligible(
+    '21000000-0000-0000-0000-000000000005',
+    (select rotated_at + interval '30 minutes 0.000001 seconds'
+     from m21_rotation_clock)
+  ),
+  false,
+  'rotating source fails closed one microsecond after overlap cutoff'
+);
+select ok(
+  public.m21_credential_is_eligible(
+    '21000000-0000-0000-0000-000000000015',
+    (select rotated_at + interval '10 minutes' from m21_rotation_clock)
+  ),
+  'active successor is independently eligible'
+);
+
+update public.gps_device_credential_metadata
+set rotated_from_credential_id = null
+where id = '21000000-0000-0000-0000-000000000015';
+select is(
+  public.m21_credential_is_eligible(
+    '21000000-0000-0000-0000-000000000005',
+    (select rotated_at + interval '10 minutes' from m21_rotation_clock)
+  ),
+  false,
+  'rotating source without a valid successor fails closed'
+);
+update public.gps_device_credential_metadata
+set rotated_from_credential_id = '21000000-0000-0000-0000-000000000005'
+where id = '21000000-0000-0000-0000-000000000015';
+update public.gps_device_credential_metadata
+set expires_at = null
+where id = '21000000-0000-0000-0000-000000000005';
+select is(
+  public.m21_credential_is_eligible(
+    '21000000-0000-0000-0000-000000000005',
+    (select rotated_at + interval '10 minutes' from m21_rotation_clock)
+  ),
+  false,
+  'rotating source without finite expiry fails closed'
+);
+update public.gps_device_credential_metadata
+set expires_at = (select rotated_at + interval '30 minutes' from m21_rotation_clock)
+where id = '21000000-0000-0000-0000-000000000005';
+update public.gps_device_credential_metadata
+set status = 'expired',
+    expires_at = (select rotated_at + interval '5 minutes' from m21_rotation_clock)
+where id = '21000000-0000-0000-0000-000000000015';
+select is(
+  public.m21_credential_is_eligible(
+    '21000000-0000-0000-0000-000000000005',
+    (select rotated_at + interval '10 minutes' from m21_rotation_clock)
+  ),
+  false,
+  'rotating source with expired successor fails closed'
+);
+update public.gps_device_credential_metadata
+set status = 'revoked', revoked_at = (
+  select rotated_at + interval '5 minutes' from m21_rotation_clock
+)
+where id = '21000000-0000-0000-0000-000000000015';
+select is(
+  public.m21_credential_is_eligible(
+    '21000000-0000-0000-0000-000000000005',
+    (select rotated_at + interval '10 minutes' from m21_rotation_clock)
+  ),
+  false,
+  'rotating source with revoked successor fails closed'
+);
+update public.gps_device_credential_metadata
+set status = 'active', expires_at = null, revoked_at = null
+where id = '21000000-0000-0000-0000-000000000015';
+update public.gps_device_credential_metadata
+set rotated_at = null
+where id = '21000000-0000-0000-0000-000000000005';
+select is(
+  public.m21_credential_is_eligible(
+    '21000000-0000-0000-0000-000000000005',
+    (select rotated_at + interval '10 minutes' from m21_rotation_clock)
+  ),
+  false,
+  'rotating source without rotated-at boundary fails closed'
+);
+
+select throws_ok(
+  $$insert into public.m21_ingestion_policies (
+      policy_version, effective_from, live_freshness_seconds,
+      delayed_backfill_seconds, future_clock_skew_seconds,
+      reorder_window_sequences, active
+    ) values ('duplicate-active', clock_timestamp(), 120, 86400, 30, 128, true)$$,
+  '23505',
+  null,
+  'a second active ingestion policy is rejected'
+);
+select throws_ok(
+  $$insert into public.m21_rate_limit_policies
+    (policy_version, scope, window_seconds, request_limit, event_limit,
+     retention_seconds, active)
+    values ('duplicate-unauth', 'unauthenticated', 60, 1, 1, 60, true)$$,
+  '23505', null, 'a second active unauthenticated policy is rejected'
+);
+select throws_ok(
+  $$insert into public.m21_rate_limit_policies
+    (policy_version, scope, window_seconds, request_limit, event_limit,
+     retention_seconds, active)
+    values ('duplicate-device', 'device', 60, 1, 1, 60, true)$$,
+  '23505', null, 'a second active device policy is rejected'
+);
+select throws_ok(
+  $$insert into public.m21_rate_limit_policies
+    (policy_version, scope, window_seconds, request_limit, event_limit,
+     retention_seconds, active)
+    values ('duplicate-global', 'global', 60, 1, 1, 60, true)$$,
+  '23505', null, 'a second active global policy is rejected'
+);
+
+update public.gps_devices set status = 'suspended'
+where id = '21000000-0000-0000-0000-000000000004';
+select is(
+  (select eligible from public.m21_lookup_device_credential(
+    'M21-SYNTHETIC-DEVICE', 'm21-successor-key', clock_timestamp()
+  )),
+  false,
+  'receipt after device suspension fails closed'
+);
+update public.gps_devices set status = 'active'
+where id = '21000000-0000-0000-0000-000000000004';
+update public.gps_device_credential_metadata
+set status = 'revoked', revoked_at = clock_timestamp()
+where id = '21000000-0000-0000-0000-000000000015';
+select is(
+  (select eligible from public.m21_lookup_device_credential(
+    'M21-SYNTHETIC-DEVICE', 'm21-successor-key', clock_timestamp()
+  )),
+  false,
+  'receipt after credential revocation fails closed'
+);
 select * from finish();
 rollback;
