@@ -51,34 +51,34 @@ M19 is a planning-only stream. M18 real-device Phone Location Proof evidence rem
 - [x] M20B-T004 Prove synthetic marking and absence of real routes, people, and production credentials.
   - Requirements: SIM-001, PRIVACY-004
 
-M18 remains incomplete and in progress. M20A and M20B are complete. M21 is In Progress. M22 through M26 remain Not Started.
+M18 remains incomplete and in progress. M20A, M20B, and M21 are complete. M22 is In Progress. M23 through M26 remain Not Started.
 
 ## M21 — Generic Secure HTTP Ingestion
 
-- [~] M21-T001 Implement portable generic HTTP authentication, parsing, normalization, safe acknowledgement, limits, and throttling.
+- [x] M21-T001 Implement portable generic HTTP authentication, parsing, normalization, safe acknowledgement, limits, and throttling.
   - Requirements: ING-SEC-001, ING-SEC-002, ING-SEC-005, ADAPTER-001
-- [~] M21-T002 Implement event identity, replay, sequence, and duplicate controls.
+- [x] M21-T002 Implement event identity, replay, sequence, and duplicate controls.
   - Requirements: ING-SEC-004
-- [~] M21-T002A Measure constant-time token/digest verification cost at sustained and burst telemetry frequency.
+- [x] M21-T002A Measure constant-time token/digest verification cost at sustained and burst telemetry frequency.
   - Requirements: ING-SEC-002, SCALE-001
-- [~] M21-T003 Implement event-time work resolution, live freshness, delayed backfill, and End Work race handling.
+- [x] M21-T003 Implement event-time work resolution, live freshness, delayed backfill, and End Work race handling.
   - Requirements: PRIVACY-001 through PRIVACY-004, WORK-LINK-001
-- [~] M21-T004 Reuse physical tracking sessions and location points without changing phone behavior.
+- [x] M21-T004 Reuse physical tracking sessions and location points without changing phone behavior.
   - Requirements: WORK-LINK-002
-- [~] M21-T005 Run 60,000-event, sustained, ten-times burst, reconnect, and three-retry duplicate evidence.
+- [x] M21-T005 Run 60,000-event, sustained, ten-times burst, reconnect, and three-retry duplicate evidence.
   - Requirements: SCALE-001
-- [~] M21-T006 Record request/compute cost, batching comparison, Netlify suitability decision, and portable migration path.
+- [x] M21-T006 Record request/compute cost, batching comparison, Netlify suitability decision, and portable migration path.
   - Requirements: ING-SEC-001, COST-001, SCALE-001
 
 ## M22 — Tracking Health and Alerts
 
-- [ ] M22-T001 Add versioned deterministic device/data-quality rules.
+- [~] M22-T001 Add versioned deterministic device/data-quality rules.
   - Requirements: HEALTH-001
-- [ ] M22-T002 Extend alert deduplication, lifecycle, context, notes, and audit behavior.
+- [~] M22-T002 Extend alert deduplication, lifecycle, context, notes, and audit behavior.
   - Requirements: HEALTH-002
-- [ ] M22-T003 Add admin dual-source health, device status, and alert screens without maps.
+- [~] M22-T003 Add admin dual-source health, device status, and alert screens without maps.
   - Requirements: ADMIN-002
-- [ ] M22-T004 Test every rule, repeat episode, resolution, RLS, and customer-notification guardrail.
+- [~] M22-T004 Test every rule, repeat episode, resolution, RLS, and customer-notification guardrail.
   - Requirements: HEALTH-001, HEALTH-002
 
 ## M23 — Phone Versus Device Comparison
