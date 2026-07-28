@@ -66,6 +66,13 @@ export interface TelemetryHttpHostDependenciesV1 {
     correlationId: string,
     signal: AbortSignal,
   ) => Promise<SafeTelemetryEventResultV1>;
+  readonly recordSanitizedRejection?: (
+    rawEvent: unknown,
+    reasonCode: string,
+    authentication: AdapterAuthenticationContextV1,
+    occurredAt: string,
+    signal: AbortSignal,
+  ) => Promise<void>;
 }
 
 function json(
@@ -344,6 +351,7 @@ export function createTelemetryHttpHandlerV1(
         );
       }
       const results: SafeTelemetryEventResultV1[] = [];
+      const sanitizedSignalWrites: Promise<void>[] = [];
       for (const rawEvent of parsed.events) {
         controller.signal.throwIfAborted();
         const normalized = adapter.normalize(
@@ -352,6 +360,20 @@ export function createTelemetryHttpHandlerV1(
           receipt.hostReceivedAt,
         );
         if (normalized.ok === false) {
+          if (
+            dependencies.recordSanitizedRejection !== undefined &&
+            sanitizedSignalWrites.length < 10
+          ) {
+            sanitizedSignalWrites.push(
+              dependencies.recordSanitizedRejection(
+                rawEvent,
+                normalized.reasonCode,
+                authentication.context,
+                receipt.hostReceivedAt,
+                controller.signal,
+              ),
+            );
+          }
           results.push({
             ...(safeReference(rawEvent, "clientEventId") === undefined
               ? {}
@@ -376,6 +398,7 @@ export function createTelemetryHttpHandlerV1(
           ),
         );
       }
+      await Promise.allSettled(sanitizedSignalWrites);
       const rejectedCount = results.filter(
         (result) =>
           result.disposition === "rejected" ||

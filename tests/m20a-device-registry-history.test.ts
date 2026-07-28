@@ -460,11 +460,19 @@ describe("M20A physical device registry and history", () => {
       /## M21[\s\S]*?(?=\n## M22)/,
     )?.[0];
     expect(m21Tasks).toBeTruthy();
-    expect(m21Tasks).toMatch(/- \[~\] M21-T001\b/);
-    expect(m21Tasks).not.toMatch(/- \[x\]/);
+    for (const taskId of ["T001", "T002", "T002A", "T003", "T004", "T005", "T006"]) {
+      expect(m21Tasks).toMatch(
+        new RegExp(`- \\[x\\] M21-${taskId}\\b`),
+      );
+    }
 
     const futureTasks = physicalTasks.match(/## M22[\s\S]*$/)?.[0];
     expect(futureTasks).toBeTruthy();
+    for (const taskId of ["T001", "T002", "T003", "T004"]) {
+      expect(futureTasks).toMatch(
+        new RegExp(`- \\[~\\] M22-${taskId}\\b`),
+      );
+    }
     expect(futureTasks).not.toMatch(/- \[x\]/);
     expect(futureTasks).toMatch(
       /M22[\s\S]*M23[\s\S]*M24[\s\S]*M25[\s\S]*M26/,

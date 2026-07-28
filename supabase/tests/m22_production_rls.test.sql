@@ -1,0 +1,29 @@
+begin;
+create extension if not exists pgtap with schema extensions;
+select plan(18);
+
+select ok((select c.relrowsecurity from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='alerts'), 'alerts RLS is enabled');
+select ok((select c.relrowsecurity from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='alert_status_history'), 'alert_status_history RLS is enabled');
+select ok((select c.relrowsecurity from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='alert_notes'), 'alert_notes RLS is enabled');
+select ok((select c.relrowsecurity from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='m22_rule_policies'), 'm22_rule_policies RLS is enabled');
+select ok((select c.relrowsecurity from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='m22_rule_signals'), 'm22_rule_signals RLS is enabled');
+select ok((select c.relrowsecurity from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='m22_rule_evaluation_queue'), 'm22_rule_evaluation_queue RLS is enabled');
+select ok((select c.relrowsecurity from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='m22_auth_failure_aggregates'), 'm22_auth_failure_aggregates RLS is enabled');
+select ok((select c.relrowsecurity from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='m22_rule_state'), 'm22_rule_state RLS is enabled');
+select ok((select c.relrowsecurity from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname='m22_rule_assessments'), 'm22_rule_assessments RLS is enabled');
+
+select table_privs_are('public','m22_rule_signals','authenticated',array[]::text[]);
+select table_privs_are('public','m22_rule_evaluation_queue','authenticated',array[]::text[]);
+select table_privs_are('public','m22_auth_failure_aggregates','authenticated',array[]::text[]);
+select table_privs_are('public','m22_rule_state','authenticated',array[]::text[]);
+select table_privs_are('public','alert_status_history','anon',array[]::text[]);
+select table_privs_are('public','alert_notes','anon',array[]::text[]);
+select table_privs_are('public','alerts','anon',array[]::text[]);
+select function_privs_are('public','m22_process_rule_queue',
+  array['integer','timestamp with time zone'],'authenticated',array[]::text[]);
+select function_privs_are('public','m22_record_sanitized_signal',
+  array['text','text','text','timestamp with time zone','uuid','uuid','text'],
+  'authenticated',array[]::text[]);
+
+select * from finish();
+rollback;

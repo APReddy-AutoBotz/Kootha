@@ -9,7 +9,13 @@ import {
   reserveSupabaseUnauthenticatedRateLimitV1,
   SupabaseServerRuntimeV1,
 } from "./_telemetry/supabase-runtime-v2";
-import { createCorrelationId } from "./_telemetry/server-crypto";
+import { createCorrelationId } from "./_telemetry/server-crypto";import {
+  classifyM22AdapterRejection,
+  classifyM22AuthenticationFailure,
+  recordM22AdapterRejection,
+  recordM22AuthenticationFailure,
+  safeM22AuthenticationFingerprint,
+} from "./_m22/safe-signals";
 
 function methodNotAllowed(correlationId: string): Response {
   return new Response(
@@ -95,20 +101,41 @@ export default async function handler(request: Request): Promise<Response> {
   const dependencies: TelemetryHttpHostDependenciesV1 = {
     now: () => new Date(),
     correlationId: createCorrelationId,
-    authenticate: (
+    authenticate: async (
       incoming,
       receivedAt,
       unauthenticatedReservationId,
       signal,
-    ) =>
-      authenticateWithSupabaseV1(
+    ) => {
+      const result = await authenticateWithSupabaseV1(
         incoming,
         receivedAt,
         server.runtime,
         server.credentialPepper,
         unauthenticatedReservationId,
         signal,
-      ),
+      );
+      if (process.env.M22_RULE_ENGINE_ENABLED === "true" && !result.ok) {
+        const reason = classifyM22AuthenticationFailure(result);
+        if (reason !== undefined) {
+          try {
+            await recordM22AuthenticationFailure(
+              server.runtime,
+              reason,
+              safeM22AuthenticationFingerprint(
+                incoming.headers.get("authorization"),
+                server.rateLimitKey,
+              ),
+              receivedAt.toISOString(),
+              signal,
+            );
+          } catch {
+            // Rule-signal failure must not alter the generic authentication response.
+          }
+        }
+      }
+      return result;
+    },
     reserveUnauthenticated: (incoming, receivedAt, signal) =>
       reserveSupabaseUnauthenticatedRateLimitV1(
         incoming,
@@ -135,6 +162,16 @@ export default async function handler(request: Request): Promise<Response> {
       ),
     persist: (event, authentication, _correlationId, signal) =>
       persistWithSupabaseV1(event, authentication, server.runtime, signal),
+    ...(process.env.M22_RULE_ENGINE_ENABLED === "true"
+      ? {
+          recordSanitizedRejection: async (rawEvent, reasonCode, authentication, occurredAt, signal) => {
+            const classified = classifyM22AdapterRejection(rawEvent, reasonCode);
+            if (classified !== undefined) {
+              await recordM22AdapterRejection(server.runtime, authentication, classified, occurredAt, signal);
+            }
+          },
+        }
+      : {}),
   };
   return createTelemetryHttpHandlerV1(dependencies)(request);
 }
