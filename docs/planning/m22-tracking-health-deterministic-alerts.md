@@ -43,4 +43,15 @@ M22 does not write customer updates, reports, public tracking surfaces, notifica
 
 ## Local verification and limitations
 
-Focused tests cover worker disablement, bounded batches, safe status output, adapter-rejection classification, safe authentication aggregation, source-specific health labels, delayed/live labels, explicit technical access, lifecycle validation, Device Detail health, no-map scope, and customer-notification guardrails. M20B synthetic scenarios and the 60,000-event deterministic evidence command provide local correctness and scale-shape evidence only; they do not claim PostgreSQL throughput, hosted Netlify latency, or production concurrency.
+Focused tests cover worker disablement, bounded batches, safe status output, adapter-rejection classification, safe authentication aggregation, source-specific health labels, delayed/live labels, explicit technical access, lifecycle validation, Device Detail health, no-map scope, and customer-notification guardrails.
+
+The final local verification includes:
+
+- 32 focused rule-contract and M20B scenario tests plus 12 focused admin/worker tests;
+- 479 passing TypeScript tests;
+- 11 pgTAP files with 275 assertions, including 59 behavioral boundary/lifecycle assertions and 18 real `dblink` concurrency assertions;
+- a representative M21-to-M22 upgrade test preserving legacy open/resolved alerts, phone and physical tracking evidence, an M21 receipt/conflict, and active/terminal device states;
+- a fresh complete migration reset, production RLS checks, lint, typecheck, production build, migration guardrails, and repository security guardrails;
+- the 60,000-event deterministic evidence profile with zero unexpected healthy alerts, zero identical-duplicate occurrences, one 250-occurrence changed-content alert, one recovery clear, no errors, and deterministic rerun equality.
+
+The scale evidence is local correctness and scale-shape evidence only; it does not claim PostgreSQL throughput, hosted Netlify latency, hosted concurrency, or AP production-policy approval.

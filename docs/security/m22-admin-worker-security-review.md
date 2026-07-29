@@ -38,4 +38,4 @@ No M22 additive module sends customer content, mutates Phone Location Proof, int
 
 ## Result
 
-The additive admin/worker workstream has no validated reportable security finding in focused review. Focused automated coverage has 12 passing assertions groups. Final integrated current-head discovery, validation, attack-path receipts, changed-file closure, and scan seal remain required after the migration/rule workstreams are complete.
+The additive admin/worker workstream has no validated reportable security finding in focused review. Focused automated coverage has 12 passing assertion groups, the complete repository security guardrail script passes, and the database behavior/RLS suite passes. The optional Codex Deep Security Scan was explicitly waived for this task after its local worker could not start (`spawn EPERM`); therefore this implementation does not claim a sealed deep-scan ID or complete deep-scan coverage.

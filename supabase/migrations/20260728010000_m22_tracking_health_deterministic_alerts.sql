@@ -81,6 +81,14 @@ create table public.m22_rule_policies (
   ),
   constraint m22_rule_policies_timing_check
     check (evidence_timing in ('live_only','live_or_historical','historical_only')),
+  constraint m22_rule_policies_required_configuration_check check (
+    opening_threshold is not null and clearing_threshold is not null
+    and window_seconds is not null and value_unit is not null
+    and (rule_id<>'long_stop' or (duration_seconds is not null
+      and movement_radius_meters is not null and maximum_accuracy_meters is not null))
+    and (rule_id<>'impossible_speed' or (maximum_speed_kph is not null
+      and maximum_accuracy_meters is not null))
+  ),
   constraint m22_rule_policies_text_check check (
     (value_unit is null or value_unit in (
       'seconds','minutes','percentage','dbm','meters','kilometers_per_hour',
@@ -556,15 +564,21 @@ as $$
 declare
   v_policy public.m22_rule_policies%rowtype; v_receipt public.telemetry_receipts%rowtype;
   v_alert public.alerts%rowtype; v_alert_id uuid; v_episode integer; v_outcome text;
-  v_severity public.alert_severity;
+  v_severity public.alert_severity; v_previous_severity public.alert_severity;
   v_key text := public.m22_safe_digest(p_rule_id || '|' || p_source || '|' || p_dedupe_context);
 begin
-  v_policy := public.m22_policy_at(p_rule_id,p_detected_at);
-  if v_policy.rule_id is null then raise exception 'No effective M22 policy' using errcode='P0002'; end if;
-  v_severity := coalesce(p_severity,v_policy.default_severity);
   perform pg_advisory_xact_lock(hashtextextended(v_key,22));
   select * into v_alert from public.alerts where dedupe_key=v_key
     and status::text not in ('resolved','false_alarm','ignored') for update;
+  if v_alert.id is null then
+    v_policy := public.m22_policy_at(p_rule_id,p_detected_at);
+  else
+    select * into v_policy from public.m22_rule_policies
+      where rule_id=v_alert.rule_id and rule_version=v_alert.rule_version;
+  end if;
+  if v_policy.rule_id is null then raise exception 'No effective M22 policy' using errcode='P0002'; end if;
+  v_severity := coalesce(p_severity,v_policy.default_severity);
+  v_previous_severity := v_alert.severity;
   if p_receipt_id is not null then select * into v_receipt from public.telemetry_receipts where id=p_receipt_id; end if;
   if v_alert.id is null then
     select coalesce(max(episode_number),0)+1 into v_episode from public.alerts where dedupe_key=v_key;
@@ -593,7 +607,13 @@ begin
       'Deterministic rule condition opened.',p_detected_at,'rule_engine');
     v_outcome := 'opened';
   else
-    update public.alerts set condition_active=true,condition_cleared_at=null,
+    update public.alerts set
+      condition_active=case
+        when p_detected_at>=coalesce(condition_cleared_at,'-infinity'::timestamptz)
+        then true else condition_active end,
+      condition_cleared_at=case
+        when p_detected_at>=coalesce(condition_cleared_at,'-infinity'::timestamptz)
+        then null else condition_cleared_at end,
       last_detected_at=greatest(last_detected_at,p_detected_at),
       occurrence_count=least(occurrence_count+1,1000000000),
       severity=case when v_severity='critical' then v_severity else severity end,
@@ -607,8 +627,15 @@ begin
     last_observed_at,occurrence_count,last_signal_id
   ) values (v_key,p_rule_id,v_policy.rule_version,v_alert_id,true,p_detected_at,p_detected_at,1,p_signal_id)
   on conflict (dedupe_key) do update set rule_id=excluded.rule_id,
-    rule_version=excluded.rule_version,alert_id=excluded.alert_id,condition_active=true,
-    condition_cleared_at=null,
+    rule_version=excluded.rule_version,alert_id=excluded.alert_id,
+    condition_active=case
+      when excluded.last_observed_at>=coalesce(public.m22_rule_state.condition_cleared_at,
+        '-infinity'::timestamptz)
+      then true else public.m22_rule_state.condition_active end,
+    condition_cleared_at=case
+      when excluded.last_observed_at>=coalesce(public.m22_rule_state.condition_cleared_at,
+        '-infinity'::timestamptz)
+      then null else public.m22_rule_state.condition_cleared_at end,
     first_observed_at=coalesce(public.m22_rule_state.first_observed_at,excluded.first_observed_at),
     last_observed_at=greatest(public.m22_rule_state.last_observed_at,excluded.last_observed_at),
     occurrence_count=least(public.m22_rule_state.occurrence_count+1,1000000000),
@@ -624,7 +651,58 @@ begin
   insert into public.audit_logs(actor_type,action,entity_type,entity_id,safe_details)
   values ('system',case when v_outcome='opened' then 'alert_opened' else 'alert_occurrence_updated' end,
     'alert',v_alert_id,jsonb_build_object('rule_id',p_rule_id,'outcome',v_outcome));
+  if v_outcome='updated' and v_previous_severity is distinct from v_severity
+    and v_severity='critical'::public.alert_severity
+  then
+    insert into public.audit_logs(actor_type,action,entity_type,entity_id,safe_details)
+    values ('system','alert_severity_escalated','alert',v_alert_id,
+      jsonb_build_object('rule_id',p_rule_id,'severity','critical'));
+  end if;
   return v_alert_id;
+end;
+$$;
+
+create or replace function public.m22_condition_threshold_met(
+  p_signal_id uuid,p_rule_id text,p_source text,p_dedupe_context text,
+  p_observed_at timestamptz
+) returns boolean
+language plpgsql security definer set search_path = pg_catalog, public
+as $$
+declare
+  v_key text:=public.m22_safe_digest(p_rule_id||'|'||p_source||'|'||p_dedupe_context);
+  v_policy public.m22_rule_policies%rowtype; v_state public.m22_rule_state%rowtype;
+  v_count integer; v_first timestamptz;
+begin
+  v_policy:=public.m22_policy_at(p_rule_id,p_observed_at);
+  if v_policy.rule_id is null then return false; end if;
+  if v_policy.required_count=1 and v_policy.duration_seconds is null then return true; end if;
+  perform pg_advisory_xact_lock(hashtextextended(v_key,22));
+  select * into v_state from public.m22_rule_state where dedupe_key=v_key for update;
+  if v_state.alert_id is not null and v_state.condition_active then return true; end if;
+  if v_state.last_observed_at is null
+    or p_observed_at<v_state.last_observed_at
+    or (v_policy.window_seconds is not null
+      and p_observed_at-v_state.last_observed_at>make_interval(secs=>v_policy.window_seconds))
+    or v_state.rule_version is distinct from v_policy.rule_version
+  then
+    v_count:=1; v_first:=p_observed_at;
+  else
+    v_count:=least(v_state.occurrence_count+1,1000000000);
+    v_first:=coalesce(v_state.first_observed_at,p_observed_at);
+  end if;
+  insert into public.m22_rule_state(
+    dedupe_key,rule_id,rule_version,condition_active,first_observed_at,
+    last_observed_at,occurrence_count,last_signal_id
+  ) values(v_key,p_rule_id,v_policy.rule_version,false,v_first,p_observed_at,v_count,p_signal_id)
+  on conflict(dedupe_key) do update set rule_id=excluded.rule_id,
+    rule_version=excluded.rule_version,condition_active=false,
+    condition_cleared_at=null,first_observed_at=excluded.first_observed_at,
+    last_observed_at=excluded.last_observed_at,
+    occurrence_count=excluded.occurrence_count,last_signal_id=excluded.last_signal_id,
+    updated_at=clock_timestamp();
+  return v_count>=v_policy.required_count
+    and (v_policy.duration_seconds is null
+      or p_observed_at-v_first>=make_interval(secs=>v_policy.duration_seconds));
 end;
 $$;
 
@@ -640,10 +718,13 @@ begin
   update public.alerts set condition_active=false,condition_cleared_at=p_cleared_at,
     updated_at=clock_timestamp() where dedupe_key=v_key and condition_active
     and status::text not in ('resolved','false_alarm','ignored')
+    and p_cleared_at>=coalesce(last_detected_at,'-infinity'::timestamptz)
   returning id,rule_version into v_alert_id,v_version;
+  update public.m22_rule_state set condition_active=false,condition_cleared_at=p_cleared_at,
+    first_observed_at=null,last_observed_at=p_cleared_at,occurrence_count=0,
+    last_signal_id=p_signal_id,updated_at=clock_timestamp() where dedupe_key=v_key
+    and p_cleared_at>=coalesce(last_observed_at,'-infinity'::timestamptz);
   if v_alert_id is not null then
-    update public.m22_rule_state set condition_active=false,condition_cleared_at=p_cleared_at,
-      last_signal_id=p_signal_id,updated_at=clock_timestamp() where dedupe_key=v_key;
     insert into public.m22_rule_assessments(
       signal_id,rule_id,rule_version,outcome,reason_code,alert_id,evidence_timing
     ) values (p_signal_id,p_rule_id,v_version,'cleared','live_recovery',v_alert_id,'live')
@@ -657,13 +738,18 @@ $$;
 
 create or replace function public.m22_distance_m(
   p_lat1 numeric,p_lng1 numeric,p_lat2 numeric,p_lng2 numeric
-) returns numeric language sql immutable strict set search_path = pg_catalog
+) returns numeric language plpgsql immutable strict set search_path = pg_catalog
 as $$
-  select 6371000 * 2 * asin(sqrt(
+begin
+  if p_lat1 not between -90 and 90 or p_lat2 not between -90 and 90
+    or p_lng1 not between -180 and 180 or p_lng2 not between -180 and 180
+  then raise exception 'Invalid finite coordinate' using errcode='22023'; end if;
+  return 6371000 * 2 * asin(sqrt(
     power(sin(radians((p_lat2-p_lat1)::double precision)/2),2)
     + cos(radians(p_lat1::double precision))*cos(radians(p_lat2::double precision))
     * power(sin(radians((p_lng2-p_lng1)::double precision)/2),2)
-  ))::numeric
+  ))::numeric;
+end;
 $$;
 
 create or replace function public.m22_evaluate_signal(p_signal_id uuid,p_now timestamptz)
@@ -714,8 +800,21 @@ begin
       c.original_receipt_id,c.attempt_count,null);
     return;
   elsif s.signal_kind='health_sweep' then
+    if s.reason_code='location_update_missing' then
+      select concat_ws('|',t.gps_device_id::text,t.vehicle_id::text,
+        t.ad_work_day_id::text,t.execution_history_id::text)
+      into v_context
+      from public.tracking_sessions t
+      join public.ad_work_days wd on wd.id=t.ad_work_day_id
+      where t.gps_device_id=s.gps_device_id and t.tracking_mode='physical_device'
+        and t.status='running' and wd.status='running'
+      order by t.started_at desc limit 1;
+      if v_context is null then return; end if;
+    else
+      v_context:=s.gps_device_id::text;
+    end if;
     perform public.m22_apply_rule_observation(s.id,s.reason_code,s.occurred_at,
-      'health_sweep',s.gps_device_id::text,s.gps_device_id,null,null,null);
+      'health_sweep',v_context,s.gps_device_id,null,null,null);
     return;
   elsif s.signal_kind='recovery' then
     perform public.m22_clear_rule_condition(s.id,'heartbeat_missing','health_sweep',
@@ -751,31 +850,47 @@ begin
   if r.disposition='accepted_delayed' then return; end if;
   if r.disposition in ('accepted_live','health_only') then
     if d.battery_status in ('low','critical') then
-      perform public.m22_apply_rule_observation(s.id,'battery_low',r.received_at,
-        'physical_device_live',r.gps_device_id::text,r.gps_device_id,r.id,
-        case d.battery_status when 'critical' then 10 else 20 end,
-        case when d.battery_status='critical' then 'critical'::public.alert_severity else null end);
+      if public.m22_condition_threshold_met(s.id,'battery_low','physical_device_live',
+        r.gps_device_id::text,r.received_at)
+      then
+        perform public.m22_apply_rule_observation(s.id,'battery_low',r.received_at,
+          'physical_device_live',r.gps_device_id::text,r.gps_device_id,r.id,
+          case d.battery_status when 'critical' then 10 else 20 end,
+          case when d.battery_status='critical' then 'critical'::public.alert_severity else null end);
+      end if;
     else
       perform public.m22_clear_rule_condition(s.id,'battery_low','physical_device_live',
         r.gps_device_id::text,r.received_at);
     end if;
     if d.external_power_status='disconnected' then
-      perform public.m22_apply_rule_observation(s.id,'external_power_removed',r.received_at,
-        'physical_device_live',r.gps_device_id::text,r.gps_device_id,r.id,1,null);
+      if public.m22_condition_threshold_met(s.id,'external_power_removed',
+        'physical_device_live',r.gps_device_id::text,r.received_at)
+      then
+        perform public.m22_apply_rule_observation(s.id,'external_power_removed',r.received_at,
+          'physical_device_live',r.gps_device_id::text,r.gps_device_id,r.id,1,null);
+      end if;
     else
       perform public.m22_clear_rule_condition(s.id,'external_power_removed','physical_device_live',
         r.gps_device_id::text,r.received_at);
     end if;
     if d.gps_readiness='unavailable' then
-      perform public.m22_apply_rule_observation(s.id,'gps_fix_missing',r.received_at,
-        'physical_device_live',r.gps_device_id::text,r.gps_device_id,r.id,1,null);
+      if public.m22_condition_threshold_met(s.id,'gps_fix_missing','physical_device_live',
+        r.gps_device_id::text,r.received_at)
+      then
+        perform public.m22_apply_rule_observation(s.id,'gps_fix_missing',r.received_at,
+          'physical_device_live',r.gps_device_id::text,r.gps_device_id,r.id,1,null);
+      end if;
     else
       perform public.m22_clear_rule_condition(s.id,'gps_fix_missing','physical_device_live',
         r.gps_device_id::text,r.received_at);
     end if;
     if d.gsm_readiness in ('degraded','unavailable') then
-      perform public.m22_apply_rule_observation(s.id,'gsm_signal_weak',r.received_at,
-        'physical_device_live',r.gps_device_id::text,r.gps_device_id,r.id,110,null);
+      if public.m22_condition_threshold_met(s.id,'gsm_signal_weak','physical_device_live',
+        r.gps_device_id::text,r.received_at)
+      then
+        perform public.m22_apply_rule_observation(s.id,'gsm_signal_weak',r.received_at,
+          'physical_device_live',r.gps_device_id::text,r.gps_device_id,r.id,110,null);
+      end if;
     else
       perform public.m22_clear_rule_condition(s.id,'gsm_signal_weak','physical_device_live',
         r.gps_device_id::text,r.received_at);
@@ -784,7 +899,7 @@ begin
       perform public.m22_clear_rule_condition(s.id,'heartbeat_missing','health_sweep',
         r.gps_device_id::text,r.received_at);
       perform public.m22_clear_rule_condition(s.id,'location_update_missing','health_sweep',
-        r.gps_device_id::text,r.received_at);
+        v_context,r.received_at);
       perform public.m22_clear_rule_condition(s.id,'device_offline','health_sweep',
         r.gps_device_id::text,r.received_at);
     elsif r.disposition='health_only' then
@@ -865,6 +980,7 @@ create or replace function public.m22_run_health_sweep(
 ) returns jsonb language plpgsql security definer set search_path = pg_catalog, public
 as $$
 declare d public.gps_devices%rowtype; v_rule text; v_count integer:=0;
+  v_devices integer:=0; v_inserted integer:=0;
   v_age numeric; v_policy public.m22_rule_policies%rowtype; v_key text;
 begin
   if p_batch_size not between 1 and 500 or p_now is null then
@@ -874,6 +990,7 @@ begin
     where status='active' and installation_state='installed'
     order by id limit p_batch_size
   loop
+    v_devices:=v_devices+1;
     v_age:=extract(epoch from (p_now-coalesce(d.last_heartbeat_at,d.created_at)));
     v_policy:=public.m22_policy_at('device_offline',p_now);
     v_rule:=case when v_age>=v_policy.opening_threshold then 'device_offline'
@@ -885,7 +1002,8 @@ begin
       insert into public.m22_rule_signals(
         signal_key,signal_kind,reason_code,occurred_at,gps_device_id
       ) values(v_key,'health_sweep',v_rule,p_now,d.id) on conflict(signal_key) do nothing;
-      v_count:=v_count+1;
+      get diagnostics v_inserted = row_count;
+      v_count:=v_count+v_inserted;
     end if;
     if exists(select 1 from public.tracking_sessions t
       join public.ad_work_days wd on wd.id=t.ad_work_day_id
@@ -900,7 +1018,8 @@ begin
         signal_key,signal_kind,reason_code,occurred_at,gps_device_id
       ) values(v_key,'health_sweep','location_update_missing',p_now,d.id)
       on conflict(signal_key) do nothing;
-      v_count:=v_count+1;
+      get diagnostics v_inserted = row_count;
+      v_count:=v_count+v_inserted;
     end if;
     if d.last_heartbeat_at>=p_now-interval '30 seconds' then
       v_key:=public.m22_safe_digest('recovery|'||d.id::text||'|'||d.last_heartbeat_at::text);
@@ -908,9 +1027,11 @@ begin
         signal_key,signal_kind,reason_code,occurred_at,gps_device_id
       ) values(v_key,'recovery','reconnect_or_live_recovery',p_now,d.id)
       on conflict(signal_key) do nothing;
+      get diagnostics v_inserted = row_count;
+      v_count:=v_count+v_inserted;
     end if;
   end loop;
-  return jsonb_build_object('devices_considered',least(p_batch_size,v_count),'signals_enqueued',v_count);
+  return jsonb_build_object('devices_considered',v_devices,'signals_enqueued',v_count);
 end;
 $$;
 
@@ -927,15 +1048,36 @@ create trigger m22_rule_signals_immutable before update or delete on public.m22_
 for each row execute function public.m22_protect_immutable();
 create trigger m22_rule_assessments_immutable before update or delete on public.m22_rule_assessments
 for each row execute function public.m22_protect_immutable();
+create or replace function public.m22_protect_rule_policy_history()
+returns trigger language plpgsql set search_path = pg_catalog
+as $$
+begin
+  if tg_op='DELETE' then
+    raise exception 'M22 rule policy history cannot be deleted' using errcode='55000';
+  end if;
+  if old.effective_until is not null or new.effective_until is null
+    or new.effective_until<=old.effective_from
+    or (to_jsonb(new)-'effective_until') is distinct from
+       (to_jsonb(old)-'effective_until')
+  then
+    raise exception 'M22 rule policies are immutable except for one interval closure'
+      using errcode='55000';
+  end if;
+  return new;
+end;
+$$;
 create trigger m22_rule_policies_immutable before update or delete on public.m22_rule_policies
-for each row execute function public.m22_protect_immutable();
+for each row execute function public.m22_protect_rule_policy_history();
 
 create or replace function public.m22_protect_alert_lifecycle()
 returns trigger language plpgsql set search_path = pg_catalog
 as $$
 begin
   if new.status is distinct from old.status
-    and current_setting('app.m22_admin_lifecycle',true) is distinct from 'on'
+    and not (
+      current_setting('app.m22_admin_lifecycle',true)='on'
+      and current_user=pg_get_userbyid((select relowner from pg_class where oid=tg_relid))
+    )
   then raise exception 'Alert lifecycle requires the admin RPC' using errcode='42501'; end if;
   return new;
 end;
@@ -1243,6 +1385,8 @@ revoke all on function public.m22_rule_title(text) from public,anon,authenticate
 revoke all on function public.m22_apply_rule_observation(
   uuid,text,timestamptz,text,text,uuid,uuid,numeric,public.alert_severity
 ) from public,anon,authenticated;
+revoke all on function public.m22_condition_threshold_met(uuid,text,text,text,timestamptz)
+  from public,anon,authenticated;
 revoke all on function public.m22_clear_rule_condition(uuid,text,text,text,timestamptz)
   from public,anon,authenticated;
 revoke all on function public.m22_distance_m(numeric,numeric,numeric,numeric)
@@ -1252,5 +1396,6 @@ revoke all on function public.m22_evaluate_signal(uuid,timestamptz)
 revoke all on function public.m22_evaluate_long_stop(uuid)
   from public,anon,authenticated;
 revoke all on function public.m22_protect_immutable() from public,anon,authenticated;
+revoke all on function public.m22_protect_rule_policy_history() from public,anon,authenticated;
 revoke all on function public.m22_protect_alert_lifecycle() from public,anon,authenticated;
 
