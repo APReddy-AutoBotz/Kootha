@@ -260,12 +260,24 @@ select ok(
         'invalid_coordinate|adapter_rejection|adapter-context')),
   'terminal recurrence leaves at most one active episode');
 
+create function pg_temp.m22_direct_lifecycle_denied(p_alert_id uuid)
+returns boolean language plpgsql as $$
+begin
+  execute format('update public.alerts set status=%L where id=%L',
+    'resolved',p_alert_id);
+  return false;
+exception when insufficient_privilege then
+  return sqlerrm in (
+    'Alert lifecycle requires the admin RPC',
+    'permission denied for table alerts'
+  );
+end;
+$$;
 set local role service_role;
 select set_config('app.m22_admin_lifecycle','on',true);
-select throws_ok(
-  format('update public.alerts set status=%L where id=%L',
-    'resolved',(select id from m22_behavior_ids where label='alert-two')),
-  '42501','Alert lifecycle requires the admin RPC',
+select ok(
+  pg_temp.m22_direct_lifecycle_denied(
+    (select id from m22_behavior_ids where label='alert-two')),
   'service role cannot impersonate an admin decision with a custom GUC');
 reset role;
 

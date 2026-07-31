@@ -221,10 +221,10 @@ select dblink_connect_u('m22_c1','dbname=postgres');
 select dblink_connect_u('m22_c2','dbname=postgres');
 truncate m22_parallel_text;
 select dblink_send_query('m22_c1',$$
-  select public.m22_process_rule_queue(1,'2026-07-29 06:01:01+00')::text
+  select public.m22_process_rule_queue(1,clock_timestamp())::text
 $$);
 select dblink_send_query('m22_c2',$$
-  select public.m22_process_rule_queue(1,'2026-07-29 06:01:01+00')::text
+  select public.m22_process_rule_queue(1,clock_timestamp())::text
 $$);
 insert into m22_parallel_text
 select 'queue-1',result from dblink_get_result('m22_c1') as r(result text);
