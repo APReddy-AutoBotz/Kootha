@@ -6,6 +6,9 @@
 [functions."retention-cleanup"]
   schedule = "@daily"
 
+[functions."m22-rule-worker"]
+  schedule = "* * * * *"
+
 [dev]
   command = "pnpm --filter @kootha/web dev"
   port = 8888

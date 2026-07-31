@@ -316,6 +316,41 @@ describe("M21 bounded HTTP runtime", () => {
     expect(fixture.persist).toHaveBeenCalledOnce();
   });
 
+  it("persists valid siblings before one best-effort M22 rejection batch and preserves the response when it fails", async () => {
+    const order: string[] = [];
+    const recordSanitizedRejections = vi.fn(async () => {
+      order.push("m22");
+      throw new Error("synthetic_m22_failure");
+    });
+    const fixture = dependencies({
+      persist: vi.fn(async (event) => {
+        order.push("persist");
+        return {
+          clientEventId: event.clientEventId,
+          disposition: "accepted_live" as const,
+          reasonCode: "inside_live_freshness_window",
+          retryable: false,
+        };
+      }),
+      recordSanitizedRejections,
+    });
+    const response = await createTelemetryHttpHandlerV1(fixture)(request({
+      contractVersion: "1",
+      events: [
+        validEvent,
+        { ...validEvent, clientEventId: "bad-1", sequence: 2, position: { latitude: 999, longitude: 0 } },
+        { ...validEvent, clientEventId: "bad-2", sequence: 3, position: { latitude: -999, longitude: 0 } },
+      ],
+    }));
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({
+      status: "partially_accepted", acceptedCount: 1, rejectedCount: 2,
+    });
+    expect(order).toEqual(["persist", "m22"]);
+    expect(recordSanitizedRejections).toHaveBeenCalledOnce();
+    expect(recordSanitizedRejections.mock.calls[0]?.[0]).toHaveLength(2);
+  });
+
   it("preserves a typed duplicate_conflict acknowledgement without unsafe fields", async () => {
     const fixture = dependencies({
       persist: vi.fn(async (event) => ({

@@ -1,0 +1,29 @@
+.m22-admin-view { display: grid; gap: 1.25rem; }
+.m22-health-summary, .m22-alert-queues { display: grid; grid-template-columns: repeat(auto-fit,minmax(145px,1fr)); gap: .75rem; }
+.m22-health-summary article, .m22-alert-queues article { border: 1px solid var(--admin-border,#d9ded8); border-radius: 14px; padding: 1rem; background: #fff; display: grid; gap: .25rem; }
+.m22-health-summary strong, .m22-alert-queues strong { font-size: 1.45rem; }
+.m22-health-summary small { color: #62706a; }
+.m22-boundary { display: flex; gap: .5rem; align-items: center; color: #36544a; background: #eef7f1; border-radius: 12px; padding: .8rem 1rem; }
+.m22-source-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 1rem; }
+.m22-source-grid > section { min-width: 0; }
+.m22-health-row { background: #fff; border: 1px solid var(--admin-border,#d9ded8); border-radius: 14px; padding: 1rem; margin-bottom: .75rem; }
+.m22-health-row > div { display: flex; justify-content: space-between; gap: 1rem; }
+.m22-health-row dl { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .55rem; }
+.m22-health-row dt { color: #62706a; font-size: .8rem; }
+.m22-health-row dd { margin: .1rem 0 0; }
+.m22-alert-layout { display: grid; grid-template-columns: minmax(260px,.8fr) minmax(360px,1.2fr); gap: 1rem; align-items: start; }
+.m22-alert-list { display: grid; gap: .6rem; }
+.m22-alert-list > button { text-align: left; display: grid; gap: .4rem; border: 1px solid var(--admin-border,#d9ded8); border-radius: 12px; padding: .85rem; background: #fff; color: inherit; }
+.m22-alert-list > button.is-selected { border-color: #23734b; box-shadow: 0 0 0 2px #dcefe4; }
+.m22-alert-list > button > div { display: flex; gap: .45rem; align-items: center; }
+.m22-alert-list p, .m22-alert-list time { margin: 0; color: #62706a; font-size: .85rem; }
+.m22-severity { margin-left: auto; border-radius: 999px; padding: .15rem .5rem; font-size: .75rem; }
+.m22-severity.info { background: #eaf3fb; }.m22-severity.warning { background: #fff3cf; }.m22-severity.critical { background: #fde7e5; color: #942b22; }
+.m22-alert-detail { background: #fff; border: 1px solid var(--admin-border,#d9ded8); border-radius: 14px; padding: 1rem; display: grid; gap: 1rem; }
+.m22-alert-detail article { border-top: 1px solid #e5e8e5; padding-top: .65rem; display: grid; gap: .2rem; }
+.m22-alert-detail article span { color: #62706a; font-size: .85rem; }
+.m22-technical-values { background: #f6f8f6; border-radius: 10px; padding: .75rem; }
+.m22-device-health h3 { display: flex; align-items: center; gap: .45rem; }
+.m22-device-health article { display: flex; justify-content: space-between; gap: 1rem; border-top: 1px solid #e5e8e5; padding: .65rem 0; }
+.m22-device-health article span { color: #62706a; font-size: .85rem; }
+@media (max-width: 900px) { .m22-source-grid, .m22-alert-layout { grid-template-columns: 1fr; } }

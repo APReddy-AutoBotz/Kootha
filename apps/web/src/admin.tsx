@@ -81,6 +81,7 @@ import {
   yesNoNotSureLabels,
   yesNoNotSureOptions
 } from "@kootha/shared";
+import { AlertsView, DeviceM22HealthPanel, TrackingHealthView } from "./admin-m22";
 import type {
   AdWorkAssignmentStatus,
   AdWorkExecutionDayStatus,
@@ -287,7 +288,7 @@ type AreaRecord = {
   active: boolean;
 };
 
-type AdminView = "enquiries" | "adWorks" | "driverApplications" | "drivers" | "vehicles" | "devices" | "audit" | "dashboard";
+type AdminView = "enquiries" | "adWorks" | "driverApplications" | "drivers" | "vehicles" | "devices" | "trackingHealth" | "alerts" | "audit" | "dashboard";
 type AdWorkWorkflowStep = "plan" | "assign" | "release" | "proof" | "close";
 
 type AdminFilters = {
@@ -6195,6 +6196,7 @@ function DeviceRegistryView({ config, session }: { config: SupabaseConfig; sessi
             <div><dt>Last Update</dt><dd>{formatTime(selected.last_telemetry_at)}</dd></div>
             <div><dt>Updated</dt><dd>{formatTime(selected.updated_at)}</dd></div>
           </dl>
+          <DeviceM22HealthPanel connection={{ url: config.url, anonKey: config.anonKey, accessToken: session.accessToken }} deviceId={selected.id} />
           {selected.admin_note && <p className="quiet-note"><strong>Admin note:</strong> {selected.admin_note}</p>}
           <fieldset className="form-section device-actions" disabled={busy || selected.status === "retired"}><legend>Admin actions</legend>
             <div className="admin-filter-grid">
@@ -6294,6 +6296,8 @@ function AdminShell({
     { id: "drivers", label: businessLabels.admin.drivers, icon: Users },
     { id: "vehicles", label: businessLabels.admin.vehicles, icon: Truck },
     { id: "devices", label: businessLabels.admin.devices, icon: Cpu },
+    { id: "trackingHealth", label: "Tracking Health", icon: Cpu },
+    { id: "alerts", label: "Alerts", icon: FileClock },
     { id: "audit", label: "Activity", icon: FileClock }
   ];
 
@@ -6805,6 +6809,8 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
               {activeView === "drivers" && businessLabels.admin.drivers}
               {activeView === "vehicles" && businessLabels.admin.vehicles}
               {activeView === "devices" && businessLabels.admin.devices}
+              {activeView === "trackingHealth" && "Tracking Health"}
+              {activeView === "alerts" && "Alerts"}
               {activeView === "audit" && "Activity history"}
             </h1>
             <p>
@@ -6815,6 +6821,8 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
               {activeView === "drivers" && "Manage approved drivers and onboarding status."}
               {activeView === "vehicles" && "Manage vehicle approval, Speaker equipment details, and Vehicle GPS Device readiness."}
               {activeView === "devices" && "Manage physical device identity, vehicle links, installation, lifecycle, and safe credential metadata."}
+              {activeView === "trackingHealth" && "Review phone and physical-device health separately without maps or M23 comparison."}
+              {activeView === "alerts" && "Review deterministic operational alerts and lifecycle history."}
               {activeView === "audit" && "Review safe operational changes without exposing private values."}
             </p>
           </div>
@@ -6844,6 +6852,8 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
         {activeView === "drivers" && <DriversView config={config} session={session} />}
         {activeView === "vehicles" && <VehiclesView config={config} session={session} />}
         {activeView === "devices" && <DeviceRegistryView config={config} session={session} />}
+        {activeView === "trackingHealth" && <TrackingHealthView connection={{ url: config.url, anonKey: config.anonKey, accessToken: session.accessToken }} />}
+        {activeView === "alerts" && <AlertsView connection={{ url: config.url, anonKey: config.anonKey, accessToken: session.accessToken }} />}
         {activeView === "audit" && <AuditView config={config} session={session} />}
 
         {activeView === "enquiries" && (

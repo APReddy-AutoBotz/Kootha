@@ -9,3 +9,8 @@ RETENTION_DELETION_ENABLED=false
 TELEMETRY_INGEST_ENABLED=false
 TELEMETRY_CREDENTIAL_PEPPER=replace-with-random-server-only-credential-pepper
 TELEMETRY_RATE_LIMIT_KEY=replace-with-random-server-only-rate-limit-key
+
+# M22 server-only deterministic rule engine and scheduled health sweep. Disabled by default.
+M22_RULE_ENGINE_ENABLED=false
+M22_HEALTH_SWEEP_BATCH_SIZE=250
+M22_RETENTION_BATCH_SIZE=250

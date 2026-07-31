@@ -66,6 +66,12 @@ export interface TelemetryHttpHostDependenciesV1 {
     correlationId: string,
     signal: AbortSignal,
   ) => Promise<SafeTelemetryEventResultV1>;
+  readonly recordSanitizedRejections?: (
+    rejections: ReadonlyArray<{ rawEvent: unknown; reasonCode: string }>,
+    authentication: AdapterAuthenticationContextV1,
+    occurredAt: string,
+    signal: AbortSignal,
+  ) => Promise<void>;
 }
 
 function json(
@@ -344,6 +350,7 @@ export function createTelemetryHttpHandlerV1(
         );
       }
       const results: SafeTelemetryEventResultV1[] = [];
+      const sanitizedRejections: Array<{ rawEvent: unknown; reasonCode: string }> = [];
       for (const rawEvent of parsed.events) {
         controller.signal.throwIfAborted();
         const normalized = adapter.normalize(
@@ -352,6 +359,12 @@ export function createTelemetryHttpHandlerV1(
           receipt.hostReceivedAt,
         );
         if (normalized.ok === false) {
+          if (
+            dependencies.recordSanitizedRejections !== undefined &&
+            sanitizedRejections.length < 10
+          ) {
+            sanitizedRejections.push({ rawEvent, reasonCode: normalized.reasonCode });
+          }
           results.push({
             ...(safeReference(rawEvent, "clientEventId") === undefined
               ? {}
@@ -375,6 +388,18 @@ export function createTelemetryHttpHandlerV1(
             ),
           ),
         );
+      }
+      if (dependencies.recordSanitizedRejections !== undefined && sanitizedRejections.length > 0) {
+        try {
+          await dependencies.recordSanitizedRejections(
+            sanitizedRejections,
+            authentication.context,
+            receipt.hostReceivedAt,
+            controller.signal,
+          );
+        } catch {
+          // Best-effort signals cannot alter accepted telemetry persistence or its response.
+        }
       }
       const rejectedCount = results.filter(
         (result) =>

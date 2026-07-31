@@ -3,6 +3,8 @@ export * from "./contracts";
 export * from "./contentIdentity";
 export * from "./eventTime";
 export * from "./identity";
+export * from "./m22Contracts";
+export * from "./m22ScenarioSemantics";
 export * from "./scenarios";
 export * from "./simulator";
 export * from "./timestamp";
