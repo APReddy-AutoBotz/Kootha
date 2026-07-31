@@ -263,6 +263,10 @@ create table public.m22_rule_signals (
   identity_conflict_id uuid references public.telemetry_identity_conflicts(id) on delete restrict,
   adapter_id text,
   safe_fingerprint text,
+  ad_work_day_id uuid references public.ad_work_days(id) on delete restrict,
+  vehicle_id uuid references public.vehicles(id) on delete restrict,
+  tracking_session_id uuid references public.tracking_sessions(id) on delete restrict,
+  execution_history_id uuid references public.m21_execution_history(id) on delete restrict,
   created_at timestamptz not null default clock_timestamp(),
   constraint m22_rule_signals_key_check check (signal_key ~ '^[0-9a-f]{64}$'),
   constraint m22_rule_signals_kind_check check (signal_kind in (
@@ -297,7 +301,11 @@ create table public.m22_rule_signals (
       and identity_conflict_id is null)
     or (signal_kind in ('health_sweep','recovery')
       and gps_device_id is not null and identity_conflict_id is null
-      and safe_fingerprint is null)
+      and safe_fingerprint is null
+      and (reason_code <> 'location_update_missing' or (
+        ad_work_day_id is not null and vehicle_id is not null
+        and tracking_session_id is not null and execution_history_id is not null
+      )))
   ),
   constraint m22_rule_signals_text_check check (
     (adapter_id is null or char_length(adapter_id) between 1 and 64)
@@ -337,13 +345,15 @@ create table public.m22_auth_failure_aggregates (
   safe_fingerprint text not null,
   adapter_id text not null,
   reason_code text not null,
+  bucket_started_at timestamptz not null,
   first_seen_at timestamptz not null,
   last_seen_at timestamptz not null,
   occurrence_count integer not null default 1,
-  last_signal_id uuid not null references public.m22_rule_signals(id) on delete restrict,
+  last_signal_id uuid references public.m22_rule_signals(id) on delete restrict,
+  signal_emitted_count integer not null default 0,
   created_at timestamptz not null default clock_timestamp(),
   updated_at timestamptz not null default clock_timestamp(),
-  primary key (safe_fingerprint, adapter_id, reason_code),
+  primary key (safe_fingerprint, adapter_id, reason_code, bucket_started_at),
   constraint m22_auth_aggregate_fingerprint_check check (safe_fingerprint ~ '^[0-9a-f]{64}$'),
   constraint m22_auth_aggregate_reason_check check (reason_code in (
     'presentation_missing','presentation_malformed','credential_unknown',
@@ -352,9 +362,19 @@ create table public.m22_auth_failure_aggregates (
   constraint m22_auth_aggregate_bounds_check check (
     char_length(adapter_id) between 1 and 64
     and occurrence_count between 1 and 1000000000
+    and signal_emitted_count between 0 and occurrence_count
     and last_seen_at >= first_seen_at
   )
 );
+create index m22_auth_failure_aggregates_retention_idx
+  on public.m22_auth_failure_aggregates (last_seen_at);
+
+create table public.m22_health_sweep_cursor (
+  singleton boolean primary key default true check (singleton),
+  last_device_id uuid,
+  updated_at timestamptz not null default clock_timestamp()
+);
+insert into public.m22_health_sweep_cursor(singleton) values (true);
 
 create table public.m22_rule_state (
   dedupe_key text primary key,
@@ -486,7 +506,10 @@ create or replace function public.m22_record_sanitized_signal(
 ) returns uuid
 language plpgsql security definer set search_path = pg_catalog, public
 as $$
-declare v_id uuid; v_key text;
+declare
+  v_id uuid; v_key text; v_bucket timestamptz; v_effective_fingerprint text;
+  v_aggregate public.m22_auth_failure_aggregates%rowtype;
+  v_policy public.m22_rule_policies%rowtype; v_distinct integer;
 begin
   if p_signal_kind not in ('adapter_rejection','authentication_failure') then
     raise exception 'Unsupported sanitized signal kind' using errcode = '22023';
@@ -508,17 +531,62 @@ begin
       or p_gps_device_id is not null or p_telemetry_receipt_id is not null
     then raise exception 'Invalid authentication failure signal' using errcode = '22023'; end if;
   end if;
+  v_bucket := date_bin('5 minutes',p_occurred_at,'2000-01-01+00'::timestamptz);
+  if p_signal_kind='authentication_failure' then
+    perform pg_advisory_xact_lock(hashtextextended(
+      concat_ws('|','m22-auth',trim(p_adapter_id),p_reason_code,v_bucket::text),22));
+    v_effective_fingerprint:=p_safe_fingerprint;
+    if not exists(select 1 from public.m22_auth_failure_aggregates a
+      where a.safe_fingerprint=v_effective_fingerprint
+        and a.adapter_id=trim(p_adapter_id) and a.reason_code=p_reason_code
+        and a.bucket_started_at=v_bucket)
+    then
+      select count(*)::integer into v_distinct
+      from public.m22_auth_failure_aggregates a
+      where a.adapter_id=trim(p_adapter_id) and a.reason_code=p_reason_code
+        and a.bucket_started_at=v_bucket;
+      if v_distinct>=256 then
+        v_effective_fingerprint:=public.m22_safe_digest(concat_ws('|',
+          'bounded-overflow',trim(p_adapter_id),p_reason_code,v_bucket::text));
+      end if;
+    end if;
+    insert into public.m22_auth_failure_aggregates(
+      safe_fingerprint,adapter_id,reason_code,bucket_started_at,
+      first_seen_at,last_seen_at,occurrence_count
+    ) values(v_effective_fingerprint,trim(p_adapter_id),p_reason_code,v_bucket,
+      p_occurred_at,p_occurred_at,1)
+    on conflict(safe_fingerprint,adapter_id,reason_code,bucket_started_at) do update set
+      last_seen_at=greatest(public.m22_auth_failure_aggregates.last_seen_at,excluded.last_seen_at),
+      occurrence_count=least(public.m22_auth_failure_aggregates.occurrence_count+1,1000000000),
+      updated_at=clock_timestamp()
+    returning * into v_aggregate;
+    v_policy:=public.m22_policy_at('unknown_device_or_credential',p_occurred_at);
+    -- One signal at threshold crossing, then a bounded periodic refresh per 100 failures.
+    if v_aggregate.occurrence_count<>v_policy.required_count
+      and v_aggregate.occurrence_count%100<>0 then return null; end if;
+  end if;
   v_key := public.m22_safe_digest(concat_ws('|',p_signal_kind,p_reason_code,
     trim(p_adapter_id),coalesce(p_gps_device_id::text,''),
-    coalesce(p_telemetry_receipt_id::text,''),coalesce(p_safe_fingerprint,''),
-    extract(epoch from p_occurred_at)::text,gen_random_uuid()::text));
+    coalesce(p_telemetry_receipt_id::text,''),
+    coalesce(v_effective_fingerprint,p_safe_fingerprint,''),v_bucket::text,
+    case when p_signal_kind='authentication_failure'
+      then v_aggregate.occurrence_count::text else '' end));
   insert into public.m22_rule_signals (
     signal_key,signal_kind,reason_code,occurred_at,gps_device_id,
     telemetry_receipt_id,adapter_id,safe_fingerprint
   ) values (
     v_key,p_signal_kind,p_reason_code,p_occurred_at,p_gps_device_id,
-    p_telemetry_receipt_id,trim(p_adapter_id),p_safe_fingerprint
-  ) returning id into v_id;
+    p_telemetry_receipt_id,trim(p_adapter_id),coalesce(v_effective_fingerprint,p_safe_fingerprint)
+  ) on conflict(signal_key) do nothing returning id into v_id;
+  if v_id is null then
+    select id into v_id from public.m22_rule_signals where signal_key=v_key;
+  end if;
+  if p_signal_kind='authentication_failure' then
+    update public.m22_auth_failure_aggregates set last_signal_id=v_id,
+      signal_emitted_count=signal_emitted_count+1,updated_at=clock_timestamp()
+    where safe_fingerprint=v_effective_fingerprint and adapter_id=trim(p_adapter_id)
+      and reason_code=p_reason_code and bucket_started_at=v_bucket;
+  end if;
   return v_id;
 end;
 $$;
@@ -551,6 +619,31 @@ as $$
     when 'unknown_device_or_credential' then 'Repeated device authentication failures'
     else 'Physical-device condition recovered'
   end
+$$;
+
+create or replace function public.m22_record_adapter_rejection_batch(
+  p_adapter_id text,p_occurred_at timestamptz,p_gps_device_id uuid,
+  p_invalid_coordinate_count integer,p_unsupported_sensor_count integer
+) returns jsonb language plpgsql security definer set search_path = pg_catalog, public
+as $$
+declare v_count integer:=0; v_id uuid;
+begin
+  if p_gps_device_id is null or p_invalid_coordinate_count not between 0 and 10
+    or p_unsupported_sensor_count not between 0 and 10
+    or p_invalid_coordinate_count+p_unsupported_sensor_count not between 1 and 10
+  then raise exception 'Invalid bounded adapter rejection batch' using errcode='22023'; end if;
+  if p_invalid_coordinate_count>0 then
+    v_id:=public.m22_record_sanitized_signal('adapter_rejection','invalid_coordinate',
+      p_adapter_id,p_occurred_at,p_gps_device_id,null,null);
+    if v_id is not null then v_count:=v_count+1; end if;
+  end if;
+  if p_unsupported_sensor_count>0 then
+    v_id:=public.m22_record_sanitized_signal('adapter_rejection','unsupported_sensor_observation',
+      p_adapter_id,p_occurred_at,p_gps_device_id,null,null);
+    if v_id is not null then v_count:=v_count+1; end if;
+  end if;
+  return jsonb_build_object('signals_enqueued',v_count);
+end;
 $$;
 
 create or replace function public.m22_apply_rule_observation(
@@ -760,19 +853,15 @@ declare
   d public.gps_devices%rowtype; c public.telemetry_identity_conflicts%rowtype;
   p public.m22_rule_policies%rowtype; a public.m22_auth_failure_aggregates%rowtype;
   v_rule text; v_source text; v_context text; v_count integer;
+  v_alert_id uuid;
   v_point record; v_prev record; v_speed numeric; v_distance numeric;
 begin
   select * into strict s from public.m22_rule_signals where id=p_signal_id;
   if s.signal_kind='authentication_failure' then
-    insert into public.m22_auth_failure_aggregates(
-      safe_fingerprint,adapter_id,reason_code,first_seen_at,last_seen_at,
-      occurrence_count,last_signal_id
-    ) values (s.safe_fingerprint,s.adapter_id,s.reason_code,s.occurred_at,s.occurred_at,1,s.id)
-    on conflict (safe_fingerprint,adapter_id,reason_code) do update set
-      last_seen_at=greatest(public.m22_auth_failure_aggregates.last_seen_at,excluded.last_seen_at),
-      occurrence_count=least(public.m22_auth_failure_aggregates.occurrence_count+1,1000000000),
-      last_signal_id=excluded.last_signal_id,updated_at=clock_timestamp()
-    returning * into a;
+    select * into strict a from public.m22_auth_failure_aggregates
+    where safe_fingerprint=s.safe_fingerprint and adapter_id=s.adapter_id
+      and reason_code=s.reason_code and bucket_started_at=
+        date_bin('5 minutes',s.occurred_at,'2000-01-01+00'::timestamptz);
     p := public.m22_policy_at('unknown_device_or_credential',s.occurred_at);
     if a.occurrence_count >= p.required_count then
       perform public.m22_apply_rule_observation(s.id,'unknown_device_or_credential',
@@ -801,20 +890,27 @@ begin
     return;
   elsif s.signal_kind='health_sweep' then
     if s.reason_code='location_update_missing' then
-      select concat_ws('|',t.gps_device_id::text,t.vehicle_id::text,
-        t.ad_work_day_id::text,t.execution_history_id::text)
-      into v_context
-      from public.tracking_sessions t
-      join public.ad_work_days wd on wd.id=t.ad_work_day_id
-      where t.gps_device_id=s.gps_device_id and t.tracking_mode='physical_device'
-        and t.status='running' and wd.status='running'
-      order by t.started_at desc limit 1;
-      if v_context is null then return; end if;
+      if not exists(select 1 from public.tracking_sessions t
+        join public.ad_work_days wd on wd.id=t.ad_work_day_id
+        join public.m21_execution_history eh on eh.id=t.execution_history_id
+        where t.id=s.tracking_session_id and t.gps_device_id=s.gps_device_id
+          and t.execution_history_id=s.execution_history_id
+          and t.tracking_mode='physical_device' and t.status='running'
+          and wd.id=s.ad_work_day_id and wd.status='running'
+          and eh.execution_status='running' and eh.effective_until is null)
+      then return; end if;
+      v_context:=concat_ws('|',s.gps_device_id::text,s.vehicle_id::text,
+        s.ad_work_day_id::text,s.execution_history_id::text);
     else
       v_context:=s.gps_device_id::text;
     end if;
-    perform public.m22_apply_rule_observation(s.id,s.reason_code,s.occurred_at,
+    v_alert_id:=public.m22_apply_rule_observation(s.id,s.reason_code,s.occurred_at,
       'health_sweep',v_context,s.gps_device_id,null,null,null);
+    if s.reason_code='location_update_missing' and v_alert_id is not null then
+      update public.alerts set ad_work_day_id=s.ad_work_day_id,vehicle_id=s.vehicle_id,
+        tracking_session_id=s.tracking_session_id,execution_history_id=s.execution_history_id,
+        updated_at=clock_timestamp() where id=v_alert_id;
+    end if;
     return;
   elsif s.signal_kind='recovery' then
     perform public.m22_clear_rule_condition(s.id,'heartbeat_missing','health_sweep',
@@ -982,13 +1078,21 @@ as $$
 declare d public.gps_devices%rowtype; v_rule text; v_count integer:=0;
   v_devices integer:=0; v_inserted integer:=0;
   v_age numeric; v_policy public.m22_rule_policies%rowtype; v_key text;
+  v_last_device_id uuid; v_session record; v_location_baseline timestamptz;
 begin
   if p_batch_size not between 1 and 500 or p_now is null then
     raise exception 'Invalid bounded health sweep' using errcode='22023';
   end if;
+  select last_device_id into v_last_device_id from public.m22_health_sweep_cursor
+    where singleton for update;
   for d in select * from public.gps_devices
     where status='active' and installation_state='installed'
-    order by id limit p_batch_size
+      and (v_last_device_id is null or id>v_last_device_id or not exists(
+        select 1 from public.gps_devices remaining
+        where remaining.status='active' and remaining.installation_state='installed'
+          and remaining.id>v_last_device_id))
+    order by id
+    limit p_batch_size
   loop
     v_devices:=v_devices+1;
     v_age:=extract(epoch from (p_now-coalesce(d.last_heartbeat_at,d.created_at)));
@@ -1005,18 +1109,36 @@ begin
       get diagnostics v_inserted = row_count;
       v_count:=v_count+v_inserted;
     end if;
-    if exists(select 1 from public.tracking_sessions t
+    select t.id,t.ad_work_day_id,t.vehicle_id,t.execution_history_id,
+      t.started_at,eh.effective_from
+    into v_session from public.tracking_sessions t
       join public.ad_work_days wd on wd.id=t.ad_work_day_id
+      join public.m21_execution_history eh on eh.id=t.execution_history_id
       where t.gps_device_id=d.id and t.tracking_mode='physical_device'
-        and t.status='running' and wd.status='running')
-      and extract(epoch from(p_now-coalesce(d.last_telemetry_at,d.created_at))) >=
-        (public.m22_policy_at('location_update_missing',p_now)).opening_threshold
-    then
+        and t.status='running' and wd.status='running'
+        and eh.execution_status='running' and eh.effective_until is null
+      order by eh.effective_from desc,t.started_at desc limit 1;
+    if v_session.id is not null then
+      select greatest(v_session.started_at,v_session.effective_from,
+        coalesce(max(lp.recorded_at),'-infinity'::timestamptz))
+      into v_location_baseline
+      from public.location_points lp
+      join public.telemetry_receipts tr on tr.id=lp.telemetry_receipt_id
+      where lp.tracking_session_id=v_session.id
+        and lp.execution_history_id=v_session.execution_history_id
+        and lp.device_id=d.id and lp.freshness='live'
+        and tr.disposition='accepted_live';
+    end if;
+    if v_session.id is not null and extract(epoch from(p_now-v_location_baseline)) >=
+      (public.m22_policy_at('location_update_missing',p_now)).opening_threshold then
       v_key:=public.m22_safe_digest(concat_ws('|','sweep','location_update_missing',
-        d.id::text,floor(extract(epoch from p_now)/60)::text));
+        d.id::text,v_session.ad_work_day_id::text,v_session.execution_history_id::text,
+        floor(extract(epoch from p_now)/60)::text));
       insert into public.m22_rule_signals(
-        signal_key,signal_kind,reason_code,occurred_at,gps_device_id
-      ) values(v_key,'health_sweep','location_update_missing',p_now,d.id)
+        signal_key,signal_kind,reason_code,occurred_at,gps_device_id,
+        ad_work_day_id,vehicle_id,tracking_session_id,execution_history_id
+      ) values(v_key,'health_sweep','location_update_missing',p_now,d.id,
+        v_session.ad_work_day_id,v_session.vehicle_id,v_session.id,v_session.execution_history_id)
       on conflict(signal_key) do nothing;
       get diagnostics v_inserted = row_count;
       v_count:=v_count+v_inserted;
@@ -1030,6 +1152,8 @@ begin
       get diagnostics v_inserted = row_count;
       v_count:=v_count+v_inserted;
     end if;
+    update public.m22_health_sweep_cursor set last_device_id=d.id,
+      updated_at=clock_timestamp() where singleton;
   end loop;
   return jsonb_build_object('devices_considered',v_devices,'signals_enqueued',v_count);
 end;
@@ -1038,7 +1162,14 @@ $$;
 
 create or replace function public.m22_protect_immutable()
 returns trigger language plpgsql set search_path = pg_catalog
-as $$ begin raise exception 'M22 evidence is immutable' using errcode='55000'; end; $$;
+as $$
+begin
+  if tg_op='DELETE' and current_setting('app.m22_retention',true)='on'
+    and current_user=pg_get_userbyid((select relowner from pg_class where oid=tg_relid))
+  then return old; end if;
+  raise exception 'M22 evidence is immutable' using errcode='55000';
+end;
+$$;
 
 create trigger alert_status_history_immutable before update or delete on public.alert_status_history
 for each row execute function public.m22_protect_immutable();
@@ -1048,6 +1179,78 @@ create trigger m22_rule_signals_immutable before update or delete on public.m22_
 for each row execute function public.m22_protect_immutable();
 create trigger m22_rule_assessments_immutable before update or delete on public.m22_rule_assessments
 for each row execute function public.m22_protect_immutable();
+
+create index m22_queue_completed_retention_idx
+  on public.m22_rule_evaluation_queue(completed_at) where state='completed';
+create index m22_queue_failed_retention_idx
+  on public.m22_rule_evaluation_queue(updated_at) where state='failed';
+create index m22_assessment_transient_retention_idx
+  on public.m22_rule_assessments(created_at) where alert_id is null;
+create index m22_rule_state_transient_retention_idx
+  on public.m22_rule_state(updated_at) where alert_id is null and not condition_active;
+create index m22_signals_retention_idx on public.m22_rule_signals(created_at);
+
+create or replace function public.m22_compact_operational_rows(
+  p_batch_size integer default 250,
+  p_now timestamptz default clock_timestamp()
+) returns jsonb language plpgsql security definer set search_path = pg_catalog, public
+as $$
+declare
+  v_queue integer:=0; v_signals integer:=0; v_auth integer:=0; v_assessments integer:=0;
+  v_state integer:=0;
+begin
+  if p_batch_size not between 1 and 500 or p_now is null then
+    raise exception 'Invalid bounded retention request' using errcode='22023';
+  end if;
+  perform set_config('app.m22_retention','on',true);
+
+  with candidates as (
+    select id from public.m22_rule_assessments
+    where alert_id is null and created_at<p_now-interval '30 days'
+    order by created_at,id for update skip locked limit p_batch_size
+  ) delete from public.m22_rule_assessments a using candidates c where a.id=c.id;
+  get diagnostics v_assessments=row_count;
+
+  with candidates as (
+    select ctid from public.m22_auth_failure_aggregates
+    where last_seen_at<p_now-interval '30 days'
+    order by last_seen_at for update skip locked limit p_batch_size
+  ) delete from public.m22_auth_failure_aggregates a using candidates c where a.ctid=c.ctid;
+  get diagnostics v_auth=row_count;
+
+  with candidates as (
+    select id from public.m22_rule_evaluation_queue
+    where (state='completed' and completed_at<p_now-interval '7 days')
+       or (state='failed' and updated_at<p_now-interval '30 days')
+    order by coalesce(completed_at,updated_at),id
+    for update skip locked limit p_batch_size
+  ) delete from public.m22_rule_evaluation_queue q using candidates c where q.id=c.id;
+  get diagnostics v_queue=row_count;
+
+  with candidates as (
+    select dedupe_key from public.m22_rule_state
+    where alert_id is null and not condition_active and updated_at<p_now-interval '30 days'
+    order by updated_at,dedupe_key for update skip locked limit p_batch_size
+  ) delete from public.m22_rule_state s using candidates c where s.dedupe_key=c.dedupe_key;
+  get diagnostics v_state=row_count;
+
+  with candidates as (
+    select s.id from public.m22_rule_signals s
+    where s.created_at<p_now-interval '30 days'
+      and not exists(select 1 from public.m22_rule_evaluation_queue q where q.signal_id=s.id)
+      and not exists(select 1 from public.m22_rule_assessments a where a.signal_id=s.id)
+      and not exists(select 1 from public.m22_rule_state rs where rs.last_signal_id=s.id)
+      and not exists(select 1 from public.m22_auth_failure_aggregates af where af.last_signal_id=s.id)
+    order by s.created_at,s.id for update skip locked limit p_batch_size
+  ) delete from public.m22_rule_signals s using candidates c where s.id=c.id;
+  get diagnostics v_signals=row_count;
+
+  perform set_config('app.m22_retention','off',true);
+  return jsonb_build_object('queue_rows_deleted',v_queue,
+    'signal_rows_deleted',v_signals,'auth_rows_deleted',v_auth,
+    'assessment_rows_deleted',v_assessments,'state_rows_deleted',v_state);
+end;
+$$;
 create or replace function public.m22_protect_rule_policy_history()
 returns trigger language plpgsql set search_path = pg_catalog
 as $$
@@ -1210,12 +1413,217 @@ begin
 end;
 $$;
 
+create or replace function public.admin_get_m22_tracking_health_v1(
+  p_ad_work_id uuid default null,
+  p_from_date date default current_date-6,
+  p_to_date date default current_date,
+  p_limit integer default 100,
+  p_now timestamptz default clock_timestamp()
+) returns jsonb language plpgsql security definer stable set search_path = pg_catalog, public
+as $$
+declare v_rows jsonb;
+begin
+  perform public.m20a_require_admin();
+  if p_limit not between 1 and 100 or p_from_date is null or p_to_date is null
+    or p_to_date<p_from_date or p_to_date-p_from_date>31 or p_now is null
+  then raise exception 'Invalid bounded tracking-health request' using errcode='22023'; end if;
+  select coalesce(jsonb_agg(row_value order by work_date desc,ad_work_day_id),'[]'::jsonb)
+  into v_rows from (
+    select wd.work_date,wd.id ad_work_day_id,jsonb_build_object(
+      'adWorkDayId',wd.id,'adWorkId',aw.id,
+      'workLabel',aw.title||' · '||wd.work_date::text,
+      'phoneSessionCount',(select count(*) from public.tracking_sessions t
+        where t.ad_work_day_id=wd.id and t.tracking_mode='phone_location'),
+      'physicalSessionCount',(select count(*) from public.tracking_sessions t
+        where t.ad_work_day_id=wd.id and t.tracking_mode='physical_device'),
+      'phonePointCount',(select count(*) from public.location_points lp join public.tracking_sessions t
+        on t.id=lp.tracking_session_id where t.ad_work_day_id=wd.id and t.tracking_mode='phone_location'),
+      'physicalPointCount',(select count(*) from public.location_points lp join public.tracking_sessions t
+        on t.id=lp.tracking_session_id where t.ad_work_day_id=wd.id and t.tracking_mode='physical_device'),
+      'phoneFirstUpdateAt',(select min(lp.recorded_at) from public.location_points lp
+        join public.tracking_sessions t on t.id=lp.tracking_session_id
+        where t.ad_work_day_id=wd.id and t.tracking_mode='phone_location'),
+      'phoneLastUpdateAt',(select max(lp.recorded_at) from public.location_points lp
+        join public.tracking_sessions t on t.id=lp.tracking_session_id
+        where t.ad_work_day_id=wd.id and t.tracking_mode='phone_location'),
+      'physicalFirstUpdateAt',(select min(lp.recorded_at) from public.location_points lp
+        join public.telemetry_receipts tr on tr.id=lp.telemetry_receipt_id
+        where tr.ad_work_day_id=wd.id),
+      'physicalLastUpdateAt',(select max(lp.recorded_at) from public.location_points lp
+        join public.telemetry_receipts tr on tr.id=lp.telemetry_receipt_id
+        where tr.ad_work_day_id=wd.id),
+      'latestAcceptedLivePhysicalUpdateAt',(select max(lp.recorded_at)
+        from public.location_points lp join public.telemetry_receipts tr on tr.id=lp.telemetry_receipt_id
+        where tr.ad_work_day_id=wd.id and tr.disposition='accepted_live'),
+      'delayedPhysicalCount',(select count(*) from public.telemetry_receipts tr
+        where tr.ad_work_day_id=wd.id and tr.disposition='accepted_delayed'),
+      'offlineBackfillCount',(select count(*) from public.telemetry_receipts tr
+        where tr.ad_work_day_id=wd.id and tr.offline_backfill),
+      'phoneHealth',coalesce((select t.tracking_health_status from public.tracking_sessions t
+        where t.ad_work_day_id=wd.id and t.tracking_mode='phone_location'
+        order by t.updated_at desc limit 1),'not_available'),
+      'physicalHealth',case when wd.gps_device_id is null then 'not_available'
+        when gd.last_heartbeat_at is null then 'no_recent_heartbeat'
+        when gd.last_heartbeat_at>=p_now-interval '2 minutes' then 'healthy' else 'delayed' end,
+      'heartbeatAgeSeconds',case when gd.last_heartbeat_at is null then null
+        else greatest(0,extract(epoch from(p_now-gd.last_heartbeat_at))::integer) end,
+      'physicalLocationUpdateAgeSeconds',case when (select max(lp.recorded_at)
+        from public.location_points lp join public.telemetry_receipts tr on tr.id=lp.telemetry_receipt_id
+        where tr.ad_work_day_id=wd.id and tr.disposition='accepted_live') is null then null
+        else greatest(0,extract(epoch from(p_now-(select max(lp.recorded_at)
+          from public.location_points lp join public.telemetry_receipts tr on tr.id=lp.telemetry_receipt_id
+          where tr.ad_work_day_id=wd.id and tr.disposition='accepted_live')))::integer) end,
+      'activeAlertCount',(select count(*) from public.alerts a where a.ad_work_day_id=wd.id
+        and a.rule_id is not null and a.condition_active),
+      'highestActiveSeverity',case
+        when exists(select 1 from public.alerts a where a.ad_work_day_id=wd.id and a.condition_active and a.severity='critical') then 'critical'
+        when exists(select 1 from public.alerts a where a.ad_work_day_id=wd.id and a.condition_active and a.severity='warning') then 'warning'
+        when exists(select 1 from public.alerts a where a.ad_work_day_id=wd.id and a.condition_active) then 'info'
+        else null end,
+      'latestHealthEpisode',(select jsonb_build_object('alertId',a.id,'ruleId',a.rule_id,
+        'status',a.status,'severity',a.severity,'lastDetectedAt',a.last_detected_at)
+        from public.alerts a where a.ad_work_day_id=wd.id
+          and a.rule_id in ('heartbeat_missing','location_update_missing','device_offline')
+        order by a.last_detected_at desc limit 1),
+      'comparisonStatus',case
+        when not exists(select 1 from public.tracking_sessions t where t.ad_work_day_id=wd.id and t.tracking_mode='phone_location')
+          or not exists(select 1 from public.tracking_sessions t where t.ad_work_day_id=wd.id and t.tracking_mode='physical_device') then 'not_available'
+        when (select count(*) from public.location_points lp where lp.ad_work_day_id=wd.id)=0 then 'not_evaluated'
+        else 'planned_for_m23' end
+    ) row_value
+    from public.ad_work_days wd join public.ad_works aw on aw.id=wd.ad_work_id
+    left join public.gps_devices gd on gd.id=wd.gps_device_id
+    where wd.work_date between p_from_date and p_to_date
+      and (p_ad_work_id is null or wd.ad_work_id=p_ad_work_id)
+    order by wd.work_date desc,wd.id limit p_limit
+  ) bounded;
+  return jsonb_build_object('contractVersion','m22-admin-v1','rows',v_rows);
+end;
+$$;
+
+create or replace function public.admin_list_m22_alerts_v1(
+  p_status text default null,p_severity text default null,p_rule_id text default null,
+  p_source text default null,p_gps_device_id uuid default null,p_vehicle_id uuid default null,
+  p_ad_work_id uuid default null,p_synthetic boolean default null,
+  p_condition_active boolean default null,p_limit integer default 100
+) returns jsonb language plpgsql security definer stable set search_path = pg_catalog, public
+as $$
+declare v_rows jsonb;
+begin
+  perform public.m20a_require_admin();
+  if p_limit not between 1 and 200 then raise exception 'Invalid bounded limit' using errcode='22023'; end if;
+  if p_status is not null and p_status not in ('new','acknowledged','investigating','resolved','false_alarm','ignored')
+    then raise exception 'Invalid status filter' using errcode='22023'; end if;
+  if p_severity is not null and p_severity not in ('info','warning','critical')
+    then raise exception 'Invalid severity filter' using errcode='22023'; end if;
+  select coalesce(jsonb_agg(row_value order by last_detected_at desc,id),'[]'::jsonb) into v_rows from (
+    select a.id,a.last_detected_at,jsonb_build_object(
+      'id',a.id,'ruleId',a.rule_id,'ruleVersion',a.rule_version,'title',a.title,
+      'message',a.message,'severity',a.severity,'status',a.status,'source',a.source,
+      'deviceLabel',gd.device_code,'vehicleLabel',v.vehicle_number,
+      'workLabel',case when aw.id is null then null else aw.title||coalesce(' · '||wd.work_date::text,'') end,
+      'firstDetectedAt',a.first_detected_at,'lastDetectedAt',a.last_detected_at,
+      'conditionActive',a.condition_active,'conditionClearedAt',a.condition_cleared_at,
+      'occurrenceCount',a.occurrence_count,'synthetic',a.synthetic
+    ) row_value from public.alerts a
+    left join public.gps_devices gd on gd.id=a.gps_device_id
+    left join public.vehicles v on v.id=a.vehicle_id
+    left join public.ad_work_days wd on wd.id=a.ad_work_day_id
+    left join public.ad_works aw on aw.id=coalesce(a.ad_work_id,wd.ad_work_id)
+    where a.rule_id is not null and (p_status is null or a.status::text=p_status)
+      and (p_severity is null or a.severity::text=p_severity)
+      and (p_rule_id is null or a.rule_id=p_rule_id) and (p_source is null or a.source=p_source)
+      and (p_gps_device_id is null or a.gps_device_id=p_gps_device_id)
+      and (p_vehicle_id is null or a.vehicle_id=p_vehicle_id)
+      and (p_ad_work_id is null or coalesce(a.ad_work_id,wd.ad_work_id)=p_ad_work_id)
+      and (p_synthetic is null or a.synthetic=p_synthetic)
+      and (p_condition_active is null or a.condition_active=p_condition_active)
+    order by a.last_detected_at desc,a.id limit p_limit
+  ) bounded;
+  return jsonb_build_object('contractVersion','m22-admin-v1','rows',v_rows);
+end;
+$$;
+
+create or replace function public.admin_get_m22_alert_detail_v1(p_alert_id uuid)
+returns jsonb language plpgsql security definer stable set search_path = pg_catalog, public
+as $$
+declare v_result jsonb;
+begin
+  perform public.m20a_require_admin();
+  select jsonb_build_object(
+    'contractVersion','m22-admin-v1',
+    'alert',jsonb_build_object('id',a.id,'ruleId',a.rule_id,'ruleVersion',a.rule_version,
+      'title',a.title,'message',a.message,'severity',a.severity,'status',a.status,
+      'source',a.source,'deviceLabel',gd.device_code,'vehicleLabel',v.vehicle_number,
+      'workLabel',case when aw.id is null then null else aw.title||coalesce(' · '||wd.work_date::text,'') end,
+      'firstDetectedAt',a.first_detected_at,'lastDetectedAt',a.last_detected_at,
+      'conditionActive',a.condition_active,'conditionClearedAt',a.condition_cleared_at,
+      'occurrenceCount',a.occurrence_count,'synthetic',a.synthetic),
+    'statusHistory',coalesce((select jsonb_agg(jsonb_build_object('id',h.id,
+      'previousStatus',h.previous_status,'newStatus',h.new_status,'reason',h.reason,
+      'note',h.note,'transitionAt',h.transition_at) order by h.transition_at)
+      from (select * from public.alert_status_history where alert_id=a.id
+        order by transition_at desc limit 100) h),'[]'::jsonb),
+    'notes',coalesce((select jsonb_agg(jsonb_build_object('id',n.id,'reason',n.reason,
+      'note',n.note,'createdAt',n.created_at) order by n.created_at)
+      from (select * from public.alert_notes where alert_id=a.id order by created_at desc limit 100) n),'[]'::jsonb),
+    'assessments',coalesce((select jsonb_agg(jsonb_build_object('id',x.id,'ruleId',x.rule_id,
+      'ruleVersion',x.rule_version,'outcome',x.outcome,'reasonCode',x.reason_code,
+      'evidenceTiming',x.evidence_timing,'assessedAt',x.assessed_at) order by x.assessed_at desc)
+      from (select * from public.m22_rule_assessments where alert_id=a.id
+        order by assessed_at desc limit 100) x),'[]'::jsonb),
+    'auditHistory',coalesce((select jsonb_agg(jsonb_build_object('id',l.id,'action',l.action,
+      'createdAt',l.created_at) order by l.created_at desc) from (select id,action,created_at
+      from public.audit_logs where entity_type='alert' and entity_id=a.id
+      order by created_at desc limit 100) l),'[]'::jsonb),
+    'allowedTransitions',case a.status::text
+      when 'new' then '["acknowledged","investigating","resolved","false_alarm","ignored"]'::jsonb
+      when 'acknowledged' then '["investigating","resolved","false_alarm","ignored"]'::jsonb
+      when 'investigating' then '["resolved","false_alarm","ignored"]'::jsonb
+      else '[]'::jsonb end,
+    'technicalValuesAvailable',exists(select 1 from public.m22_rule_assessments x
+      where x.alert_id=a.id and (x.observed_value is not null or x.threshold_value is not null))
+  ) into v_result from public.alerts a
+  left join public.gps_devices gd on gd.id=a.gps_device_id
+  left join public.vehicles v on v.id=a.vehicle_id
+  left join public.ad_work_days wd on wd.id=a.ad_work_day_id
+  left join public.ad_works aw on aw.id=coalesce(a.ad_work_id,wd.ad_work_id)
+  where a.id=p_alert_id and a.rule_id is not null;
+  if v_result is null then raise exception 'M22 alert not found' using errcode='P0002'; end if;
+  return v_result;
+end;
+$$;
+
+create or replace function public.admin_get_m22_alert_technical_values_v1(p_alert_id uuid)
+returns jsonb language plpgsql security definer set search_path = pg_catalog, public
+as $$
+declare v_actor uuid:=public.m20a_require_admin(); v_result jsonb;
+begin
+  perform 1 from public.alerts where id=p_alert_id and rule_id is not null;
+  if not found then raise exception 'M22 alert not found' using errcode='P0002'; end if;
+  insert into public.audit_logs(actor_type,actor_id,action,entity_type,entity_id,safe_details)
+  values('admin',v_actor,'alert_technical_values_viewed','alert',p_alert_id,
+    jsonb_build_object('contract_version','m22-admin-v1'));
+  select jsonb_build_object('contractVersion','m22-admin-v1','alertId',p_alert_id,
+    'ruleVersion',x.rule_version,'observedValue',x.observed_value,
+    'thresholdValue',x.threshold_value,'unit',x.value_unit,
+    'evidenceTiming',x.evidence_timing,'assessedAt',x.assessed_at)
+  into v_result from public.m22_rule_assessments x where x.alert_id=p_alert_id
+    and (x.observed_value is not null or x.threshold_value is not null)
+  order by x.assessed_at desc limit 1;
+  return coalesce(v_result,jsonb_build_object('contractVersion','m22-admin-v1',
+    'alertId',p_alert_id,'ruleVersion',null,'observedValue',null,
+    'thresholdValue',null,'unit',null,'evidenceTiming',null,'assessedAt',null));
+end;
+$$;
+
 alter table public.alert_status_history enable row level security;
 alter table public.alert_notes enable row level security;
 alter table public.m22_rule_policies enable row level security;
 alter table public.m22_rule_signals enable row level security;
 alter table public.m22_rule_evaluation_queue enable row level security;
 alter table public.m22_auth_failure_aggregates enable row level security;
+alter table public.m22_health_sweep_cursor enable row level security;
 alter table public.m22_rule_state enable row level security;
 alter table public.m22_rule_assessments enable row level security;
 
@@ -1237,6 +1645,7 @@ revoke all on public.m22_rule_policies from public,anon,authenticated;
 revoke all on public.m22_rule_signals from public,anon,authenticated;
 revoke all on public.m22_rule_evaluation_queue from public,anon,authenticated;
 revoke all on public.m22_auth_failure_aggregates from public,anon,authenticated;
+revoke all on public.m22_health_sweep_cursor from public,anon,authenticated;
 revoke all on public.m22_rule_state from public,anon,authenticated;
 revoke all on public.m22_rule_assessments from public,anon,authenticated;
 grant select on public.alerts,public.alert_status_history,public.alert_notes,
@@ -1244,14 +1653,21 @@ grant select on public.alerts,public.alert_status_history,public.alert_notes,
 
 revoke all on function public.m22_record_sanitized_signal(text,text,text,timestamptz,uuid,uuid,text)
   from public,anon,authenticated;
+revoke all on function public.m22_record_adapter_rejection_batch(text,timestamptz,uuid,integer,integer)
+  from public,anon,authenticated;
 revoke all on function public.m22_process_rule_queue(integer,timestamptz)
   from public,anon,authenticated;
 revoke all on function public.m22_run_health_sweep(integer,timestamptz)
   from public,anon,authenticated;
+revoke all on function public.m22_compact_operational_rows(integer,timestamptz)
+  from public,anon,authenticated;
 grant execute on function public.m22_record_sanitized_signal(text,text,text,timestamptz,uuid,uuid,text)
+  to service_role;
+grant execute on function public.m22_record_adapter_rejection_batch(text,timestamptz,uuid,integer,integer)
   to service_role;
 grant execute on function public.m22_process_rule_queue(integer,timestamptz) to service_role;
 grant execute on function public.m22_run_health_sweep(integer,timestamptz) to service_role;
+grant execute on function public.m22_compact_operational_rows(integer,timestamptz) to service_role;
 
 revoke all on function public.admin_transition_alert(uuid,text,text,text)
   from public,anon,authenticated;
@@ -1261,11 +1677,22 @@ revoke all on function public.admin_list_m22_alerts(text,text,text,text,uuid,uui
   from public,anon,authenticated;
 revoke all on function public.admin_get_m22_alert_detail(uuid)
   from public,anon,authenticated;
+revoke all on function public.admin_get_m22_tracking_health_v1(uuid,date,date,integer,timestamptz)
+  from public,anon,authenticated;
+revoke all on function public.admin_list_m22_alerts_v1(text,text,text,text,uuid,uuid,uuid,boolean,boolean,integer)
+  from public,anon,authenticated;
+revoke all on function public.admin_get_m22_alert_detail_v1(uuid)
+  from public,anon,authenticated;
+revoke all on function public.admin_get_m22_alert_technical_values_v1(uuid)
+  from public,anon,authenticated;
 grant execute on function public.admin_transition_alert(uuid,text,text,text) to authenticated;
 grant execute on function public.admin_add_alert_note(uuid,text,text) to authenticated;
-grant execute on function public.admin_list_m22_alerts(text,text,text,text,uuid,uuid,uuid,boolean,boolean,integer)
+grant execute on function public.admin_get_m22_tracking_health_v1(uuid,date,date,integer,timestamptz)
   to authenticated;
-grant execute on function public.admin_get_m22_alert_detail(uuid) to authenticated;
+grant execute on function public.admin_list_m22_alerts_v1(text,text,text,text,uuid,uuid,uuid,boolean,boolean,integer)
+  to authenticated;
+grant execute on function public.admin_get_m22_alert_detail_v1(uuid) to authenticated;
+grant execute on function public.admin_get_m22_alert_technical_values_v1(uuid) to authenticated;
 
 comment on table public.m22_rule_policies is
   'Effective-dated typed M22 provisional pilot policies; not AP production-policy approval.';
@@ -1398,4 +1825,3 @@ revoke all on function public.m22_evaluate_long_stop(uuid)
 revoke all on function public.m22_protect_immutable() from public,anon,authenticated;
 revoke all on function public.m22_protect_rule_policy_history() from public,anon,authenticated;
 revoke all on function public.m22_protect_alert_lifecycle() from public,anon,authenticated;
-

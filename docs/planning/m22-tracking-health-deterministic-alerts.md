@@ -17,13 +17,18 @@ Telemetry receipts and changed-content conflicts enqueue bounded, idempotent eva
 The scheduled Netlify worker calls service-role-only database RPCs. It:
 
 - is disabled unless `M22_RULE_ENGINE_ENABLED=true`;
-- processes at most 100 queued items per invocation and sweeps at most 250 devices;
+- runs once per minute, sweeps first, and drains up to four 200-row queue pages;
+- provides 800 evaluations/minute of theoretical bounded capacity against a 130/minute conservative sustained model (100 expected receipts, 25 sweep signals, and 5 retries), leaving 670/minute headroom;
 - has an eight-second server timeout;
-- calls the queue before the absence/recovery sweep;
+- stops starting queue pages at a 6.5-second soft deadline so cleanup retains time inside the host boundary;
 - returns and logs counts only, with no identifiers, coordinates, customer data, or secrets;
 - exposes no public application route and has no Supabase Realtime dependency.
 
-Server-only placeholder names are `M22_RULE_ENGINE_ENABLED`, `M22_RULE_QUEUE_BATCH_SIZE`, and `M22_HEALTH_SWEEP_BATCH_SIZE`. No hosted function or migration is deployed by this milestone task.
+Server-only placeholder names are `M22_RULE_ENGINE_ENABLED`, `M22_HEALTH_SWEEP_BATCH_SIZE`, and `M22_RETENTION_BATCH_SIZE`. Queue page size and iteration count are fixed safe constants. No hosted function or migration is deployed by this milestone task.
+
+The sweep advances a transactionally locked cursor through active installed devices and wraps fairly. Missing-location decisions are pinned to the exact running physical session and execution-authority episode, using the later of session start, running-interval start, and latest accepted-live point in that same episode. Break, end, delayed evidence, health-only evidence, and a different session cannot mask or clear the episode.
+
+Authentication failures aggregate transactionally by keyed safe fingerprint, adapter, reason, and five-minute policy bucket. A bucket admits at most 256 distinct fingerprints per adapter/reason and folds additional cardinality into one keyed overflow aggregate. Only threshold crossing and each bounded 100-occurrence refresh enqueue a signal. Adapter rejection batches produce at most one service RPC and two deterministic category signals per request. Completed queue rows age out after 7 days; exhausted rows, transient unreferenced signals, authentication aggregates, and unattached assessments use a provisional 30-day operational window. The service-only compactor is fixed-batch, uses no cascade, and preserves retained alert evidence and all alert/history/note/audit/receipt/session/point records.
 
 An active alert episode is keyed by the deterministic database-owned dedupe context. Repetition updates the same episode, last-detected time, occurrence count, severity, and safe last evidence. Clearing records `condition_active=false` and `condition_cleared_at` without deleting the alert. Recovery clears applicable live conditions once and does not create a noisy recovery alert. A recurrence before terminal admin closure reactivates the same episode; a recurrence after a terminal state creates the next episode.
 
@@ -31,9 +36,9 @@ Lifecycle transitions are admin-only RPC actions: acknowledge, start investigati
 
 ## Admin behavior
 
-Tracking Health shows Phone Location Proof and physical-device health as separate sources. It labels live versus delayed evidence and states **Comparison: Not evaluated — Planned for M23**. It performs no phone/device time pairing or distance calculation.
+Tracking Health uses one bounded versioned admin projection per work day. It shows Phone Location Proof and physical-device health as separate sources, labels live versus delayed evidence, and reports comparison as `not_available`, `not_evaluated`, or `planned_for_m23`. It performs no phone/device time pairing or distance calculation.
 
-Alerts provides bounded operational queues, safe filters, list/detail review, explicit lifecycle confirmation, history, notes, and audit context. Observed and threshold technical values are hidden until an admin chooses **Show technical values**. Coordinates, credentials, raw payloads, and authentication hints are never fetched by the view.
+Alerts uses explicit `m22-admin-v1` list and nested detail envelopes with server-side safe labels, state-specific allowed transitions, bounded lifecycle/note/assessment/audit history, and no internal correlation fields. Observed and threshold technical values are absent from list/detail and fetched only through a separate audited RPC after an admin chooses **Show technical values**. Coordinates, credentials, raw payloads, and authentication hints are never fetched by the view.
 
 Device Detail adds latest current health, latest live heartbeat and telemetry, battery/power/GPS/GSM state, active alert count, highest severity, recent episodes, rule version, and a delayed-evidence summary. Registry `Active`, current `Healthy`, and `Proof Ready` remain distinct.
 
@@ -47,9 +52,9 @@ Focused tests cover worker disablement, bounded batches, safe status output, ada
 
 The final local verification includes:
 
-- 32 focused rule-contract and M20B scenario tests plus 12 focused admin/worker tests;
-- 479 passing TypeScript tests;
-- 11 pgTAP files with 275 assertions, including 59 behavioral boundary/lifecycle assertions and 18 real `dblink` concurrency assertions;
+- 32 focused rule-contract and M20B scenario tests plus 15 focused admin/worker runtime tests;
+- 483 passing TypeScript tests;
+- 12 pgTAP files with 305 assertions, including focused fair-sweep, retention-preservation, admin-contract, RLS, behavioral-boundary, lifecycle, and real `dblink` concurrency coverage;
 - a representative M21-to-M22 upgrade test preserving legacy open/resolved alerts, phone and physical tracking evidence, an M21 receipt/conflict, and active/terminal device states;
 - a fresh complete migration reset, production RLS checks, lint, typecheck, production build, migration guardrails, and repository security guardrails;
 - the 60,000-event deterministic evidence profile with zero unexpected healthy alerts, zero identical-duplicate occurrences, one 250-occurrence changed-content alert, one recovery clear, no errors, and deterministic rerun equality.

@@ -7,7 +7,7 @@
   schedule = "@daily"
 
 [functions."m22-rule-worker"]
-  schedule = "*/2 * * * *"
+  schedule = "* * * * *"
 
 [dev]
   command = "pnpm --filter @kootha/web dev"

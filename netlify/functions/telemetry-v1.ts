@@ -9,10 +9,10 @@ import {
   reserveSupabaseUnauthenticatedRateLimitV1,
   SupabaseServerRuntimeV1,
 } from "./_telemetry/supabase-runtime-v2";
-import { createCorrelationId } from "./_telemetry/server-crypto";import {
-  classifyM22AdapterRejection,
+import { createCorrelationId } from "./_telemetry/server-crypto";
+import {
   classifyM22AuthenticationFailure,
-  recordM22AdapterRejection,
+  recordM22AdapterRejectionBatch,
   recordM22AuthenticationFailure,
   safeM22AuthenticationFingerprint,
 } from "./_m22/safe-signals";
@@ -125,6 +125,7 @@ export default async function handler(request: Request): Promise<Response> {
               safeM22AuthenticationFingerprint(
                 incoming.headers.get("authorization"),
                 server.rateLimitKey,
+                reason,
               ),
               receivedAt.toISOString(),
               signal,
@@ -164,12 +165,10 @@ export default async function handler(request: Request): Promise<Response> {
       persistWithSupabaseV1(event, authentication, server.runtime, signal),
     ...(process.env.M22_RULE_ENGINE_ENABLED === "true"
       ? {
-          recordSanitizedRejection: async (rawEvent, reasonCode, authentication, occurredAt, signal) => {
-            const classified = classifyM22AdapterRejection(rawEvent, reasonCode);
-            if (classified !== undefined) {
-              await recordM22AdapterRejection(server.runtime, authentication, classified, occurredAt, signal);
-            }
-          },
+          recordSanitizedRejections: (rejections, authentication, occurredAt, signal) =>
+            recordM22AdapterRejectionBatch(
+              server.runtime, authentication, rejections, occurredAt, signal,
+            ),
         }
       : {}),
   };

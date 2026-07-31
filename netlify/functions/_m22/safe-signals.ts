@@ -10,6 +10,11 @@ export type M22AuthenticationSignalReason =
   | "credential_unknown"
   | "secret_invalid"
   | "device_ineligible";
+const M22_SIGNAL_BUDGET_MS = 400;
+
+function boundedSignal(signal: AbortSignal): AbortSignal {
+  return AbortSignal.any([signal, AbortSignal.timeout(M22_SIGNAL_BUDGET_MS)]);
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -59,11 +64,38 @@ export function classifyM22AuthenticationFailure(
 export function safeM22AuthenticationFingerprint(
   authorization: string | null,
   fingerprintKey: string,
+  reasonScope = "authentication_failure",
 ): string {
   return keyedRequestFingerprintV1(
-    `m22-auth-v1\0${authorization ?? "presentation-missing"}`,
+    `m22-auth-v2\0${reasonScope}\0${authorization === null ? "presentation-missing" : "presentation-present"}`,
     fingerprintKey,
   );
+}
+
+export async function recordM22AdapterRejectionBatch(
+  runtime: SupabaseServerRuntimeV1,
+  authentication: AdapterAuthenticationContextV1,
+  rejections: ReadonlyArray<{ rawEvent: unknown; reasonCode: string }>,
+  occurredAt: string,
+  signal: AbortSignal,
+): Promise<void> {
+  const gpsDeviceId = (authentication as { authenticatedDeviceId?: unknown }).authenticatedDeviceId;
+  if (typeof gpsDeviceId !== "string") return;
+  let invalidCoordinateCount = 0;
+  let unsupportedSensorCount = 0;
+  for (const rejection of rejections.slice(0, 10)) {
+    const reason = classifyM22AdapterRejection(rejection.rawEvent, rejection.reasonCode);
+    if (reason === "invalid_coordinate") invalidCoordinateCount += 1;
+    if (reason === "unsupported_sensor_observation") unsupportedSensorCount += 1;
+  }
+  if (invalidCoordinateCount + unsupportedSensorCount === 0) return;
+  await runtime.rpc("m22_record_adapter_rejection_batch", {
+    p_adapter_id: "kootha.generic_http",
+    p_occurred_at: occurredAt,
+    p_gps_device_id: gpsDeviceId,
+    p_invalid_coordinate_count: invalidCoordinateCount,
+    p_unsupported_sensor_count: unsupportedSensorCount,
+  }, boundedSignal(signal));
 }
 
 export async function recordM22AdapterRejection(
@@ -83,7 +115,7 @@ export async function recordM22AdapterRejection(
     p_gps_device_id: gpsDeviceId,
     p_telemetry_receipt_id: null,
     p_safe_fingerprint: null,
-  }, signal);
+  }, boundedSignal(signal));
 }
 
 export async function recordM22AuthenticationFailure(
@@ -102,5 +134,5 @@ export async function recordM22AuthenticationFailure(
     p_gps_device_id: null,
     p_telemetry_receipt_id: null,
     p_safe_fingerprint: safeFingerprint,
-  }, signal);
+  }, boundedSignal(signal));
 }

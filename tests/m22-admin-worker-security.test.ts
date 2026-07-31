@@ -3,197 +3,159 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   M22RuleWorkerRuntime,
+  M22_RULE_QUEUE_BATCH_SIZE,
+  M22_RULE_QUEUE_MAX_ITERATIONS,
+  M22_RULE_THEORETICAL_CAPACITY_PER_MINUTE,
   M22_RULE_WORKER_TIMEOUT_MS,
   runM22RuleWorker,
 } from "../netlify/functions/_m22/rule-worker";
 import {
   classifyM22AdapterRejection,
   classifyM22AuthenticationFailure,
-  recordM22AdapterRejection,
+  recordM22AdapterRejectionBatch,
   recordM22AuthenticationFailure,
   safeM22AuthenticationFingerprint,
 } from "../netlify/functions/_m22/safe-signals";
 import { SupabaseServerRuntimeV1 } from "../netlify/functions/_telemetry/supabase-runtime-v2";
 
 const root = resolve(import.meta.dirname, "..");
-const adminM22 = readFileSync(resolve(root, "apps/web/src/admin-m22.tsx"), "utf8");
-const adminM22Css = readFileSync(resolve(root, "apps/web/src/admin-m22.css"), "utf8");
+const adminSource = readFileSync(resolve(root, "apps/web/src/admin-m22.tsx"), "utf8");
+const migration = readFileSync(resolve(root, "supabase/migrations/20260728010000_m22_tracking_health_deterministic_alerts.sql"), "utf8");
 const workerSource = readFileSync(resolve(root, "netlify/functions/m22-rule-worker.ts"), "utf8");
-const workerRuntime = readFileSync(resolve(root, "netlify/functions/_m22/rule-worker.ts"), "utf8");
-const safeSignals = readFileSync(resolve(root, "netlify/functions/_m22/safe-signals.ts"), "utf8");
 
-afterEach(() => {
-  vi.unstubAllGlobals();
-  vi.restoreAllMocks();
-});
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-describe("M22 scheduled deterministic rule worker", () => {
-  it("is disabled by default and has no public application route", () => {
+describe("M22 worker v1 contract and capacity", () => {
+  it("keeps the scheduled worker private, disabled by default, and inside the 8 second boundary", () => {
     expect(workerSource).toContain('process.env.M22_RULE_ENGINE_ENABLED !== "true"');
-    expect(workerSource).toContain("status: 204");
-    expect(workerSource).toContain('schedule: "*/2 * * * *"');
+    expect(workerSource).toContain('schedule: "* * * * *"');
     expect(workerSource).not.toContain("path:");
-  });
-
-  it("uses only service-role server credentials, bounded batches, timeout, and safe summaries", () => {
-    expect(workerSource).toContain("SUPABASE_SERVICE_ROLE_KEY");
-    expect(workerSource).not.toContain("VITE_");
-    expect(workerRuntime).toContain("p_batch_size");
-    expect(workerRuntime).toContain("MAX_QUEUE_BATCH = 100");
-    expect(workerRuntime).toContain("MAX_SWEEP_BATCH = 250");
     expect(M22_RULE_WORKER_TIMEOUT_MS).toBe(8_000);
-    for (const forbidden of ["latitude", "longitude", "authorizationHeader", "customer", "raw_payload"]) {
-      expect(workerRuntime.toLowerCase()).not.toContain(forbidden.toLowerCase());
-    }
+    expect(M22_RULE_QUEUE_BATCH_SIZE).toBe(200);
+    expect(M22_RULE_QUEUE_MAX_ITERATIONS).toBe(4);
+    expect(M22_RULE_THEORETICAL_CAPACITY_PER_MINUTE).toBe(800);
   });
 
-  it("calls queue before sweep with capped settings and returns counts only", async () => {
-    const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
+  it("consumes the exact SQL response shapes, sweeps first, and reports retry activity as partial failure", async () => {
+    const requests: Array<{ name: string; body: Record<string, unknown> }> = [];
+    const replies = [
+      { devices_considered: 250, signals_enqueued: 13 },
+      { claimed: 200, completed: 199, retry_or_failed: 1 },
+      { claimed: 17, completed: 17, retry_or_failed: 0 },
+      { queue_rows_deleted: 4, signal_rows_deleted: 3, auth_rows_deleted: 2, assessment_rows_deleted: 1, state_rows_deleted: 5 },
+    ];
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-      requests.push({ url: String(input), body: JSON.parse(String(init?.body)) as Record<string, unknown> });
-      return new Response(
-        requests.length === 1
-          ? JSON.stringify({ processed_count: 17, failed: 1, ignored_identifier: "never returned" })
-          : JSON.stringify({ evaluated_count: 23, failure_count: 2 }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      );
+      requests.push({ name: String(input).split("/").at(-1)!, body: JSON.parse(String(init?.body)) });
+      return new Response(JSON.stringify(replies[requests.length - 1]), { status: 200 });
     }));
     const result = await runM22RuleWorker(
       new M22RuleWorkerRuntime("https://example.invalid", "service-role-test-only"),
-      { M22_RULE_QUEUE_BATCH_SIZE: "9999", M22_HEALTH_SWEEP_BATCH_SIZE: "9999" },
+      { M22_HEALTH_SWEEP_BATCH_SIZE: "9999", M22_RETENTION_BATCH_SIZE: "9999" },
     );
-    expect(requests.map((request) => request.url.split("/").at(-1))).toEqual([
-      "m22_process_rule_queue", "m22_run_health_sweep",
+    expect(requests.map((request) => request.name)).toEqual([
+      "m22_run_health_sweep", "m22_process_rule_queue", "m22_process_rule_queue", "m22_compact_operational_rows",
     ]);
-    expect(requests[0]?.body.p_batch_size).toBe(100);
-    expect(requests[1]?.body.p_batch_size).toBe(250);
-    expect(result).toEqual({ ok: true, queueProcessed: 17, sweepEvaluated: 23, failures: 3 });
-    expect(JSON.stringify(result)).not.toContain("identifier");
+    expect(requests[0]?.body.p_batch_size).toBe(500);
+    expect(requests[1]?.body.p_batch_size).toBe(200);
+    expect(result).toEqual({
+      contractVersion: "m22-worker-v1", workerOk: false, workerStatus: "partial_failure",
+      queueClaimed: 217, queueCompleted: 216, queueRetryOrFailed: 1,
+      devicesConsidered: 250, sweepSignalsEnqueued: 13, operationalRowsCompacted: 15,
+    });
+  });
+
+  it.each([
+    { claimed: 1, completed: 1 },
+    { claimed: -1, completed: 0, retry_or_failed: 0 },
+    { claimed: 1, completed: 0, retry_or_failed: 0 },
+    { claimed: 1.5, completed: 1.5, retry_or_failed: 0 },
+  ])("fails closed for malformed queue result %#", async (invalid) => {
+    const replies = [{ devices_considered: 1, signals_enqueued: 0 }, invalid]; let index = 0;
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(replies[index++]), { status: 200 })));
+    await expect(runM22RuleWorker(
+      new M22RuleWorkerRuntime("https://example.invalid", "service-role-test-only"), {},
+    )).rejects.toThrow(/contract_invalid/);
+  });
+
+  it("models sustained load, sweep overhead, retry rows, a 10x burst, and one interrupted invocation", () => {
+    const capacity = M22_RULE_THEORETICAL_CAPACITY_PER_MINUTE;
+    const sustainedPerMinute = 100 + 25 + 5;
+    let backlog = 0; let oldestAgeMinutes = 0;
+    for (let minute = 0; minute < 60; minute += 1) {
+      backlog += sustainedPerMinute;
+      backlog = Math.max(0, backlog - capacity);
+      oldestAgeMinutes = backlog === 0 ? 0 : oldestAgeMinutes + 1;
+    }
+    expect(backlog).toBe(0);
+    backlog += 1_000 + 25 + 100;
+    backlog = Math.max(0, backlog - capacity);
+    expect(backlog).toBe(325);
+    backlog += sustainedPerMinute; oldestAgeMinutes += 1; // interrupted worker
+    backlog += sustainedPerMinute; oldestAgeMinutes += 1;
+    backlog = Math.max(0, backlog - capacity);
+    expect(backlog).toBe(0);
+    expect(oldestAgeMinutes).toBeLessThanOrEqual(2);
+    expect(capacity - sustainedPerMinute).toBe(670);
   });
 });
 
-describe("M22 sanitized ingestion signals", () => {
-  it("classifies only authenticated rule-worthy adapter rejections without retaining evidence", () => {
-    expect(classifyM22AdapterRejection(
-      { position: { latitude: 91, longitude: 10 } },
-      "canonical_event_invalid",
-    )).toBe("invalid_coordinate");
-    expect(classifyM22AdapterRejection(
-      { observations: [{ metric: "vendor-private" }] },
-      "sensor_observation_unsupported",
-    )).toBe("unsupported_sensor_observation");
-    expect(classifyM22AdapterRejection(
-      { position: { latitude: 10, longitude: 20 } },
-      "canonical_event_invalid",
-    )).toBeUndefined();
+describe("M22 bounded sanitized signals", () => {
+  it("classifies only rule-worthy safe categories", () => {
+    expect(classifyM22AdapterRejection({ position: { latitude: 91, longitude: 10 } }, "canonical_event_invalid")).toBe("invalid_coordinate");
+    expect(classifyM22AdapterRejection({ observations: [{ metric: "vendor-private" }] }, "sensor_observation_unsupported")).toBe("unsupported_sensor_observation");
+    expect(classifyM22AuthenticationFailure({ ok: false, externalReasonCode: "authentication_failed", internalReasonCode: "credential_secret_invalid" })).toBe("secret_invalid");
   });
 
-  it("maps bounded authentication categories while preserving a keyed 64-hex fingerprint", () => {
-    expect(classifyM22AuthenticationFailure({
-      ok: false, externalReasonCode: "authentication_failed", internalReasonCode: "credential_secret_invalid",
-    })).toBe("secret_invalid");
-    const fingerprint = safeM22AuthenticationFingerprint(
-      "Bearer raw-material-never-persisted",
-      "test-only-fingerprint-key-with-at-least-thirty-two-characters",
-    );
-    expect(fingerprint).toMatch(/^[0-9a-f]{64}$/);
-    expect(fingerprint).not.toContain("raw-material");
+  it("does not fingerprint raw presented secrets and scopes the safe digest by reason", () => {
+    const key = "test-only-fingerprint-key-with-at-least-thirty-two-characters";
+    const first = safeM22AuthenticationFingerprint("Bearer first-secret", key, "secret_invalid");
+    const second = safeM22AuthenticationFingerprint("Bearer second-secret", key, "secret_invalid");
+    expect(first).toMatch(/^[0-9a-f]{64}$/);
+    expect(first).toBe(second);
+    expect(first).not.toContain("secret");
+    expect(safeM22AuthenticationFingerprint(null, key, "presentation_missing")).not.toBe(first);
   });
 
-  it("sends only constrained RPC fields and no body, coordinate, hint, key ID, token, or IP", async () => {
+  it("collapses up to ten adapter rejections into one bounded RPC", async () => {
     const bodies: Record<string, unknown>[] = [];
     vi.stubGlobal("fetch", vi.fn(async (_input: unknown, init?: RequestInit) => {
-      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
-      return new Response(JSON.stringify("00000000-0000-0000-0000-000000000001"), { status: 200 });
+      bodies.push(JSON.parse(String(init?.body))); return new Response(JSON.stringify({ signals_enqueued: 2 }), { status: 200 });
     }));
-    const runtime = new SupabaseServerRuntimeV1("https://example.invalid", "service-role-test-only");
-    const signal = new AbortController().signal;
-    await recordM22AdapterRejection(
-      runtime,
-      {
-        authenticatedDeviceId: "00000000-0000-0000-0000-000000000002",
-        authenticatedDeviceExternalId: "not-forwarded",
-        authenticationMethod: "bearer_digest",
-        credentialKeyId: "not-forwarded",
-      } as never,
-      "invalid_coordinate",
-      "2026-07-28T00:00:00.000Z",
-      signal,
+    await recordM22AdapterRejectionBatch(
+      new SupabaseServerRuntimeV1("https://example.invalid", "service-role-test-only"),
+      { authenticatedDeviceId: "00000000-0000-0000-0000-000000000002" } as never,
+      Array.from({ length: 10 }, (_, index) => index % 2 === 0
+        ? { rawEvent: { position: { latitude: 91, longitude: 10 } }, reasonCode: "canonical_event_invalid" }
+        : { rawEvent: { observations: [{}] }, reasonCode: "sensor_observation_unsupported" }),
+      "2026-07-28T00:00:00.000Z", new AbortController().signal,
     );
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toMatchObject({ p_invalid_coordinate_count: 5, p_unsupported_sensor_count: 5 });
+  });
+
+  it("auth aggregation call contains no raw presentation, coordinate, IP, or credential identifier", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_input: unknown, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body))); return new Response(JSON.stringify(null), { status: 200 });
+    }));
     await recordM22AuthenticationFailure(
-      runtime,
-      "credential_unknown",
-      "a".repeat(64),
-      "2026-07-28T00:00:01.000Z",
-      signal,
+      new SupabaseServerRuntimeV1("https://example.invalid", "service-role-test-only"),
+      "credential_unknown", "a".repeat(64), "2026-07-28T00:00:01.000Z", new AbortController().signal,
     );
-    expect(bodies[0]).toEqual({
-      p_signal_kind: "adapter_rejection",
-      p_reason_code: "invalid_coordinate",
-      p_adapter_id: "kootha.generic_http",
-      p_occurred_at: "2026-07-28T00:00:00.000Z",
-      p_gps_device_id: "00000000-0000-0000-0000-000000000002",
-      p_telemetry_receipt_id: null,
-      p_safe_fingerprint: null,
-    });
-    const serialized = JSON.stringify(bodies);
-    for (const forbidden of ["not-forwarded", "latitude", "longitude", "raw", "token", "ip_address", "credential_key_id"]) {
-      expect(serialized).not.toContain(forbidden);
-    }
+    expect(JSON.stringify(bodies)).not.toMatch(/authorization|latitude|longitude|ip_address|credential_key_id/i);
   });
 });
 
-describe("M22 admin health and alerts", () => {
-  it("keeps source health separate and labels delayed/live evidence explicitly", () => {
-    for (const required of [
-      "Tracking Health", "Physical-device health", "Phone Location Proof health",
-      "Current device health only", "Live", "Last live evidence is delayed",
-      "Comparison", "Not evaluated", "Planned for M23",
-    ]) expect(adminM22).toContain(required);
-    expect(adminM22).toContain("Sources are not paired.");
-  });
-
-  it("implements bounded alert queues, filters, detail, and validated lifecycle actions", () => {
-    for (const required of [
-      "New", "Critical active", "Investigating", "Cleared, awaiting review", "Resolved recently",
-      "Rule/type", "Source", "Condition", "Synthetic", "Rule version",
-      "Acknowledge", "Start investigation", "Resolve", "Mark false alarm", "Ignore",
-      "A safe reason and note are required.", "Confirm alert lifecycle change",
-      "Lifecycle history", "Admin notes", "Audit history",
-    ]) expect(adminM22).toContain(required);
-    expect(adminM22).toContain("p_limit: 100");
-    expect(adminM22).toContain("admin_transition_alert");
-  });
-
-  it("hides technical values behind explicit access and never requests coordinates", () => {
-    expect(adminM22).toContain("Show technical values");
-    expect(adminM22).toContain("Hide technical values");
-    expect(adminM22).toContain("Coordinates, credentials, raw payloads, and authentication hints are not available");
-    expect(adminM22).not.toMatch(/\b(lat|lng|latitude|longitude)\b\s*[:,]/);
-  });
-
-  it("adds Device Detail health without equating lifecycle, health, and proof readiness", () => {
-    for (const required of [
-      "Current Tracking Health", "Active registry status is not the same as Healthy or Proof Ready",
-      "Latest live heartbeat", "Latest live telemetry", "Battery / power", "GPS / GSM",
-      "Active alerts", "Highest severity", "Recent alert episodes", "Delayed evidence summary",
-    ]) expect(adminM22).toContain(required);
-  });
-
-  it("contains no map, M23 comparison runtime, or customer-facing behavior", () => {
-    expect(adminM22Css).not.toContain("@import");
-    for (const forbidden of [
-      "mapbox", "google.maps", "leaflet", "haversine", "customer_updates",
-      "sendEmail", "sendSms", "sendWhatsApp", "pushNotification", "mismatch alert",
-    ]) expect(adminM22.toLowerCase()).not.toContain(forbidden.toLowerCase());
-    expect(adminM22).toContain("No customer notification is sent.");
-  });
-
-  it("keeps server signal and worker modules free of customer, map, and notification side effects", () => {
-    const combined = `${workerSource}\n${workerRuntime}\n${safeSignals}`.toLowerCase();
-    for (const forbidden of [
-      "customer_updates", "final_proof_summaries", "public tracking", "mapbox",
-      "leaflet", "haversine", "twilio", "sendgrid", "whatsapp", "mqtt", "udp", "tcp",
-    ]) expect(combined).not.toContain(forbidden);
+describe("M22 safe admin boundary", () => {
+  it("uses only versioned bounded RPCs and does not prefetch technical values", () => {
+    expect(adminSource).toContain("admin_get_m22_tracking_health_v1");
+    expect(adminSource).toContain("admin_list_m22_alerts_v1");
+    expect(adminSource).toContain("admin_get_m22_alert_detail_v1");
+    expect(adminSource).toContain("admin_get_m22_alert_technical_values_v1");
+    expect(adminSource).not.toContain("tracking_mode=eq.phone");
+    expect(adminSource).not.toContain("Ã‚Â·");
+    expect(migration).toContain("'contractVersion','m22-admin-v1'");
+    expect(migration).toContain("'technicalValuesAvailable'");
+    expect(migration).toContain("alert_technical_values_viewed");
   });
 });

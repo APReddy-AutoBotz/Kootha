@@ -66,9 +66,8 @@ export interface TelemetryHttpHostDependenciesV1 {
     correlationId: string,
     signal: AbortSignal,
   ) => Promise<SafeTelemetryEventResultV1>;
-  readonly recordSanitizedRejection?: (
-    rawEvent: unknown,
-    reasonCode: string,
+  readonly recordSanitizedRejections?: (
+    rejections: ReadonlyArray<{ rawEvent: unknown; reasonCode: string }>,
     authentication: AdapterAuthenticationContextV1,
     occurredAt: string,
     signal: AbortSignal,
@@ -351,7 +350,7 @@ export function createTelemetryHttpHandlerV1(
         );
       }
       const results: SafeTelemetryEventResultV1[] = [];
-      const sanitizedSignalWrites: Promise<void>[] = [];
+      const sanitizedRejections: Array<{ rawEvent: unknown; reasonCode: string }> = [];
       for (const rawEvent of parsed.events) {
         controller.signal.throwIfAborted();
         const normalized = adapter.normalize(
@@ -361,18 +360,10 @@ export function createTelemetryHttpHandlerV1(
         );
         if (normalized.ok === false) {
           if (
-            dependencies.recordSanitizedRejection !== undefined &&
-            sanitizedSignalWrites.length < 10
+            dependencies.recordSanitizedRejections !== undefined &&
+            sanitizedRejections.length < 10
           ) {
-            sanitizedSignalWrites.push(
-              dependencies.recordSanitizedRejection(
-                rawEvent,
-                normalized.reasonCode,
-                authentication.context,
-                receipt.hostReceivedAt,
-                controller.signal,
-              ),
-            );
+            sanitizedRejections.push({ rawEvent, reasonCode: normalized.reasonCode });
           }
           results.push({
             ...(safeReference(rawEvent, "clientEventId") === undefined
@@ -398,7 +389,18 @@ export function createTelemetryHttpHandlerV1(
           ),
         );
       }
-      await Promise.allSettled(sanitizedSignalWrites);
+      if (dependencies.recordSanitizedRejections !== undefined && sanitizedRejections.length > 0) {
+        try {
+          await dependencies.recordSanitizedRejections(
+            sanitizedRejections,
+            authentication.context,
+            receipt.hostReceivedAt,
+            controller.signal,
+          );
+        } catch {
+          // Best-effort signals cannot alter accepted telemetry persistence or its response.
+        }
+      }
       const rejectedCount = results.filter(
         (result) =>
           result.disposition === "rejected" ||

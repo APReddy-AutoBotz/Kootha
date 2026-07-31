@@ -346,15 +346,13 @@ create function pg_temp.m22_auth_signal(p_number integer)
 returns void language plpgsql as $$
 declare v_signal uuid;
 begin
-  insert into public.m22_rule_signals(
-    signal_key,signal_kind,reason_code,occurred_at,adapter_id,safe_fingerprint
-  ) values(
-    public.m22_safe_digest('auth-behavior|'||p_number::text),
-    'authentication_failure','secret_invalid',
+  v_signal:=public.m22_record_sanitized_signal(
+    'authentication_failure','secret_invalid','m22.behavior',
     '2026-07-29 05:00:00+00'::timestamptz+make_interval(secs=>p_number),
-    'm22.behavior',repeat('f',64)
-  ) returning id into v_signal;
-  perform public.m22_evaluate_signal(v_signal,clock_timestamp());
+    null,null,repeat('f',64));
+  if v_signal is not null then
+    perform public.m22_evaluate_signal(v_signal,clock_timestamp());
+  end if;
 end;
 $$;
 select lives_ok(
@@ -371,13 +369,14 @@ select is(
     where rule_id='unknown_device_or_credential'),1,
   'authentication alert opens at exact count');
 select lives_ok($$select pg_temp.m22_auth_signal(6)$$,
-  'sixth safe authentication failure evaluates');
+  'sixth safe authentication failure aggregates without another signal');
 select ok(
-  (select count(*)=1 and min(occurrence_count)=2
+  (select count(*)=1 and min(occurrence_count)=1
     from public.alerts where rule_id='unknown_device_or_credential'),
-  'repeated authentication failures update one fingerprint alert');
+  'subsequent failures do not create one alert occurrence per request');
 select ok(
   (select safe_fingerprint=repeat('f',64) and occurrence_count=6
+      and bucket_started_at='2026-07-29 05:00:00+00'
     from public.m22_auth_failure_aggregates)
   and not exists(
     select 1 from information_schema.columns
