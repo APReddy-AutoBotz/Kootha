@@ -322,6 +322,12 @@ create or replace function public.m23_protect_pair()
 returns trigger language plpgsql set search_path = pg_catalog, public
 as $$
 begin
+  -- The only deletion exception is the bounded, service-only compactor.  Its
+  -- predicate below excludes final, reviewed, alert-referenced, and source
+  -- evidence rows; ordinary callers still get immutable evidence semantics.
+  if tg_op='DELETE' and current_setting('app.m23_compaction',true)='on' then
+    return old;
+  end if;
   raise exception 'M23 comparison pair evidence is immutable' using errcode='55000';
 end;
 $$;
@@ -866,6 +872,7 @@ as $$
 declare v_deleted integer:=0;
 begin
   if p_batch_size not between 1 and 100 then raise exception 'Invalid bounded M23 compaction batch' using errcode='22023'; end if;
+  perform set_config('app.m23_compaction','on',true);
   delete from public.m23_comparison_pairs x where x.id in (
     select x2.id from public.m23_comparison_pairs x2
       join public.m23_comparison_snapshots s on s.id=x2.snapshot_id
@@ -875,6 +882,7 @@ begin
     order by x2.id limit p_batch_size
   );
   get diagnostics v_deleted=row_count;
+  perform set_config('app.m23_compaction','off',true);
   return jsonb_build_object('deletedDetailRows',v_deleted,'batchSize',p_batch_size);
 end;
 $$;
@@ -1517,6 +1525,7 @@ declare
   v_raw numeric; v_conservative numeric; v_quality text; v_pair_outcome text;
   v_release_count integer:=0; v_link_count integer:=0;
   v_fast_pair_count integer:=0;
+  v_fast_path_used boolean:=false;
   v_current boolean:=false; v_current_first timestamptz; v_current_last timestamptz;
   v_current_count integer:=0; v_current_min numeric; v_current_max numeric; v_current_first_id text;
   v_best boolean:=false; v_best_first timestamptz; v_best_last timestamptz; v_best_count integer:=0;
@@ -1645,13 +1654,33 @@ begin
   v_input_hash:=public.m22_safe_digest(concat_ws('|',v_scope_key,p.policy_id,p.policy_version,
     v_expectation,v_finality,v_grace_elapsed,v_phone_count,v_physical_count,
     coalesce(v_watermark::text,''),coalesce((select string_agg(
-      concat_ws(':',lp.id::text,lp.recorded_at::text,coalesce(lp.accuracy_meters::text,'null'),
-        coalesce(lp.quality::text,'null'),coalesce(lp.synthetic::text,'false')),
-      ',' order by lp.recorded_at,lp.id)
-      from public.location_points lp
-      where lp.ad_work_day_id=w.id and lp.recorded_at>=v_scope_from
-        and (v_scope_until is null or lp.recorded_at<v_scope_until)
-        and lp.source::text in ('phone','physical_device')),'')));
+      concat_ws(':',z.id::text,z.recorded_at::text,coalesce(z.accuracy_meters::text,'null'),
+        coalesce(z.quality::text,'null'),coalesce(z.synthetic::text,'false')),
+      ',' order by z.source,z.recorded_at,z.id)
+      from (
+        select lp.id,lp.recorded_at,lp.accuracy_meters,lp.quality,lp.synthetic,lp.source::text source
+        from public.location_points lp join public.tracking_sessions ts on ts.id=lp.tracking_session_id
+        where v_phone_expected and ah.id is not null and rh.id is not null
+          and lp.ad_work_day_id=w.id and lp.source::text='phone'
+          and ts.tracking_mode='phone_location' and lp.assignment_history_id=ah.id
+          and lp.driver_id=ah.driver_id and lp.vehicle_id=ah.vehicle_id
+          and lp.recorded_at>=v_scope_from and (v_scope_until is null or lp.recorded_at<v_scope_until)
+          and (ts.started_at is null or lp.recorded_at>=ts.started_at)
+          and (ts.ended_at is null or lp.recorded_at<ts.ended_at)
+        union all
+        select q.id,q.recorded_at,q.accuracy_meters,q.quality,q.synthetic,q.source::text source
+        from public.location_points q join public.tracking_sessions ts on ts.id=q.tracking_session_id
+          join public.telemetry_receipts tr on tr.id=q.telemetry_receipt_id
+        where v_physical_expected and ah.id is not null and rh.id is not null and l.id is not null
+          and q.ad_work_day_id=w.id and q.source::text='physical_device'
+          and ts.tracking_mode='physical_device' and q.execution_history_id=e.id
+          and q.assignment_history_id=ah.id and q.gps_device_vehicle_link_id=l.id
+          and q.device_id=p_gps_device_id
+          and tr.disposition in ('accepted_live','accepted_delayed') and tr.quality in ('valid','degraded')
+          and q.recorded_at>=v_scope_from and (v_scope_until is null or q.recorded_at<v_scope_until)
+          and (ts.started_at is null or q.recorded_at>=ts.started_at)
+          and (ts.ended_at is null or q.recorded_at<ts.ended_at)
+      ) z),'')));
   perform pg_advisory_xact_lock(hashtextextended(v_scope_key,23));
   select id into v_existing from public.m23_comparison_snapshots
     where authority_scope_key=v_scope_key and policy_id=p.policy_id and policy_version=p.policy_version
@@ -1704,6 +1733,7 @@ begin
     from phone_points ph join physical_points q on q.seq=ph.seq and q.synthetic=ph.synthetic
     where abs(extract(epoch from(q.recorded_at-ph.recorded_at)))<=p.pair_window_seconds;
     if v_fast_pair_count=v_phone_count then
+      v_fast_path_used:=true;
       insert into public.m23_comparison_pair_evidence(
         first_snapshot_id,authority_scope_key,policy_id,policy_version,pair_identity,
         phone_point_id,physical_point_id,phone_captured_at,physical_captured_at,
@@ -1760,7 +1790,8 @@ begin
     end if;
   end if;
 
-  if v_phone_expected and v_physical_expected and not v_ambiguous and ah.id is not null and rh.id is not null then
+  if v_phone_expected and v_physical_expected and not v_ambiguous and ah.id is not null and rh.id is not null
+     and not v_fast_path_used then
     -- Pairing is deliberately set based.  The former nested loop executed a
     -- physical-point search once per phone point and made the comparison cost
     -- grow with the product of the two source streams.  Candidate selection is
@@ -1836,6 +1867,9 @@ begin
       z.synthetic
     from classified z
     on conflict(authority_scope_key,policy_id,policy_version,pair_identity) do nothing;
+  end if;
+
+  if v_phone_expected and v_physical_expected and not v_ambiguous and ah.id is not null and rh.id is not null then
     insert into public.m23_comparison_pairs(
       snapshot_id,pair_identity,phone_point_id,physical_point_id,phone_captured_at,
       physical_captured_at,time_difference_milliseconds,raw_haversine_distance_meters,
