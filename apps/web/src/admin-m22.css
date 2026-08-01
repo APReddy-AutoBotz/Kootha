@@ -23,6 +23,10 @@
 .m22-alert-detail article { border-top: 1px solid #e5e8e5; padding-top: .65rem; display: grid; gap: .2rem; }
 .m22-alert-detail article span { color: #62706a; font-size: .85rem; }
 .m22-technical-values { background: #f6f8f6; border-radius: 10px; padding: .75rem; }
+.m23-comparison-detail { margin-top: 1rem; }
+.m23-comparison-detail article { display: grid; gap: .2rem; border-top: 1px solid #e5e8e5; padding-top: .55rem; }
+.m23-comparison-detail article span { color: #62706a; font-size: .85rem; }
+.text-button { border: 0; background: none; color: #23734b; padding: 0; text-decoration: underline; cursor: pointer; font: inherit; }
 .m22-device-health h3 { display: flex; align-items: center; gap: .45rem; }
 .m22-device-health article { display: flex; justify-content: space-between; gap: 1rem; border-top: 1px solid #e5e8e5; padding: .65rem 0; }
 .m22-device-health article span { color: #62706a; font-size: .85rem; }

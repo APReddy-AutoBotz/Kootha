@@ -14,3 +14,6 @@ TELEMETRY_RATE_LIMIT_KEY=replace-with-random-server-only-rate-limit-key
 M22_RULE_ENGINE_ENABLED=false
 M22_HEALTH_SWEEP_BATCH_SIZE=250
 M22_RETENTION_BATCH_SIZE=250
+
+# M23 server-only phone/device comparison worker. Disabled by default; policy and thresholds are database-owned.
+M23_COMPARISON_ENGINE_ENABLED=false
