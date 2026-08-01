@@ -32,7 +32,8 @@ test("M21 runtime sources add no forbidden protocol, alert, comparison, map, or 
   )
     .split(/\r?\n/)
     .filter((path) => /\.(?:ts|tsx|mjs|sql)$/.test(path))
-    .filter((path) => !/^(?:tests|scripts)\//.test(path.replaceAll("\\", "/")));
+    .filter((path) => !/^(?:tests|scripts)\//.test(path.replaceAll("\\", "/")))
+    .filter((path) => !/(?:^|\/)m23(?:-|\/|\.)/i.test(path.replaceAll("\\", "/")));
 
   const source = changed
     .map((path) => readFileSync(path, "utf8"))
@@ -52,6 +53,8 @@ test("M21 evidence explicitly remains local-only", () => {
   assert.match(guide, /local-only/i);
   assert.match(guide, /no hosted Supabase migration/i);
   assert.match(guide, /no Netlify deployment/i);
-  assert.match(guide, /M21 remains In Progress/i);
-  assert.match(guide, /M22(?:\u2013|-| through )M26 remain Not Started/i);
+  assert.match(guide, /M21 is Completed/i);
+  assert.match(guide, /M22 (?:is|are) Completed/i);
+  assert.match(guide, /M23 is In Progress/i);
+  assert.match(guide, /M24(?:\u2013|-| through )M26 remain Not Started/i);
 });

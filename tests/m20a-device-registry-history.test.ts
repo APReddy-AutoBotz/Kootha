@@ -466,15 +466,19 @@ describe("M20A physical device registry and history", () => {
       );
     }
 
-    const futureTasks = physicalTasks.match(/## M22[\s\S]*$/)?.[0];
-    expect(futureTasks).toBeTruthy();
+    const currentAndFutureTasks = physicalTasks.match(/## M22[\s\S]*$/)?.[0];
+    expect(currentAndFutureTasks).toBeTruthy();
     for (const taskId of ["T001", "T002", "T003", "T004"]) {
-      expect(futureTasks).toMatch(
-        new RegExp(`- \\[~\\] M22-${taskId}\\b`),
+      expect(currentAndFutureTasks).toMatch(
+        new RegExp(`- \\[x\\] M22-${taskId}\\b`),
       );
     }
-    expect(futureTasks).not.toMatch(/- \[x\]/);
-    expect(futureTasks).toMatch(
+    for (const taskId of ["T001", "T002", "T003"]) {
+      expect(currentAndFutureTasks).toMatch(
+        new RegExp(`- \\[~\\] M23-${taskId}\\b`),
+      );
+    }
+    expect(currentAndFutureTasks).toMatch(
       /M22[\s\S]*M23[\s\S]*M24[\s\S]*M25[\s\S]*M26/,
     );
   });

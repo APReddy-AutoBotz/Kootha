@@ -51,7 +51,7 @@ M19 is a planning-only stream. M18 real-device Phone Location Proof evidence rem
 - [x] M20B-T004 Prove synthetic marking and absence of real routes, people, and production credentials.
   - Requirements: SIM-001, PRIVACY-004
 
-M18 remains incomplete and in progress. M20A, M20B, and M21 are complete. M22 is In Progress. M23 through M26 remain Not Started.
+M18 remains incomplete and in progress. M20A, M20B, M21, and M22 are complete. M23 is In Progress. M24 through M26 remain Not Started.
 
 ## M21 — Generic Secure HTTP Ingestion
 
@@ -72,22 +72,22 @@ M18 remains incomplete and in progress. M20A, M20B, and M21 are complete. M22 is
 
 ## M22 — Tracking Health and Alerts
 
-- [~] M22-T001 Add versioned deterministic device/data-quality rules.
+- [x] M22-T001 Add versioned deterministic device/data-quality rules.
   - Requirements: HEALTH-001
-- [~] M22-T002 Extend alert deduplication, lifecycle, context, notes, and audit behavior.
+- [x] M22-T002 Extend alert deduplication, lifecycle, context, notes, and audit behavior.
   - Requirements: HEALTH-002
-- [~] M22-T003 Add admin dual-source health, device status, and alert screens without maps.
+- [x] M22-T003 Add admin dual-source health, device status, and alert screens without maps.
   - Requirements: ADMIN-002
-- [~] M22-T004 Test every rule, repeat episode, resolution, RLS, and customer-notification guardrail.
+- [x] M22-T004 Test every rule, repeat episode, resolution, RLS, and customer-notification guardrail.
   - Requirements: HEALTH-001, HEALTH-002
 
 ## M23 — Phone Versus Device Comparison
 
-- [ ] M23-T001 Implement active-work, accuracy-aware time pairing and Haversine distance.
+- [~] M23-T001 Implement active-work, accuracy-aware time pairing and Haversine distance.
   - Requirements: COMPARE-001
-- [ ] M23-T002 Add sustained mismatch, missing-source, and comparison-unavailable rules.
+- [~] M23-T002 Add sustained mismatch, missing-source, and comparison-unavailable rules.
   - Requirements: COMPARE-001
-- [ ] M23-T003 Add admin review status and synthetic comparison tests.
+- [~] M23-T003 Add admin review status and synthetic comparison tests.
   - Requirements: ADMIN-002, COMPARE-001
 
 ## M24 — Selected Vendor or Device Adapter

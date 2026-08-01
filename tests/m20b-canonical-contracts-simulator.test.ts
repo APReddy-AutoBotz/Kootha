@@ -163,7 +163,7 @@ test.each(["M20B-T001", "M20B-T002", "M20B-T003", "M20B-T004"])(
   },
 );
 
-test("milestone status reflects merged M20B and in-progress M21", () => {
+test("milestone status reflects the M23 implementation checkpoint", () => {
   const physicalTasks = read(physicalGpsTasks);
   const mvpLedger = read(mvpTasks);
   const guide = read(planningGuide);
@@ -173,7 +173,9 @@ test("milestone status reflects merged M20B and in-progress M21", () => {
   assert.match(statusText, /M20A[\s\S]{0,100}(complete|completed)/i);
   assert.match(statusText, /M20B[\s\S]{0,200}(complete|completed)/i);
   assert.match(statusText, /M21[\s\S]{0,200}in progress/i);
-  assert.match(statusText, /M22 through M26 remain Not Started/i);
+  assert.match(statusText, /M22[\s\S]{0,200}(complete|completed)/i);
+  assert.match(statusText, /M23[\s\S]{0,200}in progress/i);
+  assert.match(statusText, /M24 through M26 remain Not Started/i);
   assert.doesNotMatch(mvpLedger, /## Milestone M18[\s\S]{0,200}- \[x\]/i);
 });
 

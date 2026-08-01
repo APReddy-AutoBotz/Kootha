@@ -1,6 +1,6 @@
 # M21 Generic Secure HTTP Telemetry Ingestion
 
-M21 remains In Progress pending merge and post-merge verification. M18 remains incomplete/in progress, M20A and M20B are Completed, and M22–M26 remain Not Started.
+M21 is Completed after merge and post-merge verification. M18 remains incomplete/in progress, M20A, M20B, and M22 are Completed, M23 is In Progress, and M24–M26 remain Not Started.
 
 M21 is hardware-independent. Its merge/tag decision depends on review of this code and its local verification evidence, not on future M24 or M26 hardware work; hosted deployment validation remains a separate future operational gate.
 
