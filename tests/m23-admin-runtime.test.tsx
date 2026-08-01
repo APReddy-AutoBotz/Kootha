@@ -12,10 +12,10 @@ const summary = {
   snapshotId: "snapshot-1", adWorkDayId: "day-1", adWorkId: "work-1", workLabel: "Campaign A",
   policyVersion: "m23-pilot-v1", pairingAlgorithmVersion: "m23-pairing-v1", sourceExpectation: "both_expected",
   overallOutcome: "sustained_mismatch", reviewStatus: "not_reviewed", finality: "provisional_backfill_open",
-  phoneEligibleCount: 4, physicalEligibleCount: 4, pairCount: 4, matchCount: 0,
+  phoneEligibleCount: 4, physicalEligibleCount: 4, pairCount: 4, acceptablePairCount: 4, matchCount: 0,
   mismatchCandidateCount: 4, insufficientQualityCount: 0, unpairedPhoneCount: 0, unpairedPhysicalCount: 0,
   sustainedPairCount: 4, sustainedFirstPairAt: "2026-07-31T08:00:00Z", sustainedLastPairAt: "2026-07-31T08:05:00Z",
-  minimumConservativeSeparationMeters: 300, maximumConservativeSeparationMeters: 360, synthetic: true,
+  synthetic: true,
   generatedAt: "2026-07-31T08:06:00Z", technicalValuesAvailable: true,
 };
 function response(value: unknown, ok = true) {
@@ -27,8 +27,10 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 describe("M23 admin comparison runtime", () => {
   it("keeps technical pair values behind explicit audited access and preserves neutral language", async () => {
     const names: string[] = [];
+    const bodies: Array<Record<string, unknown>> = [];
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const name = String(input).split("/").at(-1)!; names.push(name);
+      if (init?.body) bodies.push(JSON.parse(String(init.body)) as Record<string, unknown>);
       if (name === "admin_get_m22_tracking_health_v1") return response({ contractVersion: "m22-admin-v1", rows: [{
         adWorkDayId: "day-1", adWorkId: "work-1", workLabel: "Campaign A", phoneSessionCount: 1, physicalSessionCount: 1,
         phonePointCount: 4, physicalPointCount: 4, phoneFirstUpdateAt: null, phoneLastUpdateAt: null,
@@ -39,11 +41,11 @@ describe("M23 admin comparison runtime", () => {
       }] });
       if (name === "admin_get_m23_comparison_detail_v1") return response({ contractVersion: "m23-admin-v1", comparison: summary, reviewHistory: [], alert: null });
       if (name === "admin_get_m23_comparison_technical_values_v1") return response({
-        contractVersion: "m23-admin-v1", snapshotId: "snapshot-1", policyVersion: "m23-pilot-v1", mismatchDistanceMeters: 250,
-        accessedAt: "2026-07-31T08:07:00Z", pairs: [{ pairId: "pair-1", phonePointId: "phone-1", physicalPointId: "physical-1",
+        contractVersion: "m23-admin-v1", snapshotId: "snapshot-1", policyVersion: "m23-pilot-v1", threshold: 300,
+        accessedAt: "2026-07-31T08:07:00Z", hasMore: false, nextCursor: null, pairs: [{ pairId: "pair-1",
           phoneCapturedAt: "2026-07-31T08:00:00Z", physicalCapturedAt: "2026-07-31T08:00:01Z", timeDifferenceMilliseconds: 1000,
           rawHaversineDistanceMeters: 400, phoneAccuracyMeters: 10, physicalDeviceAccuracyMeters: 10,
-          conservativeSeparationMeters: 380, quality: "acceptable", outcome: "mismatch_candidate", synthetic: true }],
+          conservativeSeparationMeters: 380, threshold: 300, quality: "acceptable", outcome: "mismatch_candidate", policyVersion: "m23-pilot-v1", synthetic: true }],
       });
       if (name === "admin_transition_m23_comparison_review") return response({ contractVersion: "m23-admin-v1", snapshotId: "snapshot-1", reviewStatus: "reviewed_needs_follow_up" });
       throw new Error(`unexpected RPC ${name} ${String(init?.body)}`);
@@ -56,6 +58,10 @@ describe("M23 admin comparison runtime", () => {
     await userEvent.click(screen.getByRole("button", { name: "Show technical values" }));
     expect(await screen.findByText("380 metres", { exact: false })).toBeTruthy();
     expect(names.filter((name) => name === "admin_get_m23_comparison_technical_values_v1")).toHaveLength(1);
+    const technicalRequest = bodies.find((body) => body.p_snapshot_id === "snapshot-1" && body.p_limit === 100);
+    expect(technicalRequest?.p_limit).toBe(100);
+    expect(technicalRequest?.p_after_cursor).toBeNull();
+    expect(JSON.stringify(technicalRequest)).not.toMatch(/phonePointId|physicalPointId|latitude|longitude/i);
     await userEvent.selectOptions(screen.getByLabelText("Status"), "reviewed_needs_follow_up");
     await userEvent.type(screen.getByLabelText("Reason"), "Compare retained synthetic evidence");
     await userEvent.type(screen.getByLabelText("Safe admin note"), "Follow-up remains operational only");
