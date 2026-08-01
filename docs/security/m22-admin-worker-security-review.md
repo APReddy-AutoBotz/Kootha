@@ -1,10 +1,12 @@
 # M22 Admin and Worker Security Review
 
-Status: final evidence reconciliation for the corrected M22 source diff on draft PR #27. M22 remains **In Progress** pending merge, post-merge verification, and AP review.
+Status: final post-merge security-evidence reconciliation for PR #27. The M22 implementation is merged through merge commit `3266218c555aa22648825bad11e19819e5089797`; final milestone tagging remains pending this correction PR's merge and post-merge verification.
 
 ## Scope
 
-The review covers the final M22 diff from base `641dcb963569ebf8b8f36e39cd4dcf46fd5ac64a` through sealed head `2585cf35a863702d05307295909a115597f7ff86`, including:
+PR #27 was merged through merge commit `3266218c555aa22648825bad11e19819e5089797` with final reviewed PR head `60192a043e877a9ce7411bf5fbebccded8ecd94f`. The reviewed tree and merge tree were verified equivalent. This document records PR #27's final reviewed security scan; final milestone tagging occurs only after this post-merge evidence reconciliation is merged and verified.
+
+The review covers the final M22 diff from base `641dcb963569ebf8b8f36e39cd4dcf46fd5ac64a` through final reviewed head `60192a043e877a9ce7411bf5fbebccded8ecd94f`, including:
 
 - the once-per-minute scheduled worker and server-only service-role RPC boundary;
 - effective-dated deterministic rule policies, queue processing, bounded operational retention, and fair health sweeping;
@@ -86,30 +88,33 @@ The final corrected implementation evidence records:
 - production build: **passed**
 - migration guardrails: **passed**
 - repository security guardrails: **passed**
-- GitHub Quality and Security workflow: **passed**
+- PR-head GitHub `verify`, `rls`, and Quality and Security checks: **passed**
 
 No hosted Supabase migration, Netlify deployment, real credential, customer data, production data, or physical hardware was used.
 
 ## Completed Codex Security scan
 
-The final current-head scan was completed and sealed; no security scan was waived.
+The final PR #27 current-head scan was completed and sealed; no security scan was waived.
 
 | Field | Confirmed value |
 | --- | --- |
-| Scan ID | `8b892ebb-330a-4a9a-8071-4bd8e2352b61` |
+| Scan ID | `0b6fadda-8071-4e9e-b4ad-f6757afe8d0e` |
 | Scan type | branch diff (`git_diff`) |
 | Base SHA | `641dcb963569ebf8b8f36e39cd4dcf46fd5ac64a` |
-| Sealed head SHA | `2585cf35a863702d05307295909a115597f7ff86` |
+| Sealed reviewed head SHA | `60192a043e877a9ce7411bf5fbebccded8ecd94f` |
 | Snapshot digest | `codex-security-snapshot/v1:sha256:1d74df0bc5da366ec7aad16a4841552de3d91d1cb5319d4e849096130ccb54eb` |
-| Coverage | complete; 18/18 changed source-like review rows |
+| Coverage | complete; 19/19 current-head review rows |
 | Deferred rows | 0 |
 | Reportable findings | 0 |
 
-Canonical artifacts:
+### Superseded intermediate implementation scan
 
-- report: `C:\Users\mailt\AppData\Local\Temp\codex-security-scans-VTVbml\kootha\2585cf35a863702d05307295909a115597f7ff86_20260731T164610Z_o3us_1ii\report.md`
-- manifest: `C:\Users\mailt\AppData\Local\Temp\codex-security-scans-VTVbml\kootha\2585cf35a863702d05307295909a115597f7ff86_20260731T164610Z_o3us_1ii\scan-manifest.json`
-- coverage: `C:\Users\mailt\AppData\Local\Temp\codex-security-scans-VTVbml\kootha\2585cf35a863702d05307295909a115597f7ff86_20260731T164610Z_o3us_1ii\coverage.json`
-- findings: `C:\Users\mailt\AppData\Local\Temp\codex-security-scans-VTVbml\kootha\2585cf35a863702d05307295909a115597f7ff86_20260731T164610Z_o3us_1ii\findings.json`
+- Scan: `8b892ebb-330a-4a9a-8071-4bd8e2352b61`
+- Sealed head: `2585cf35a863702d05307295909a115597f7ff86`
+- Coverage: 18/18
+
+This intermediate implementation scan is superseded by the final PR #27 scan above.
+
+Canonical verification identity is the final scan ID, sealed reviewed SHA, snapshot digest, coverage, deferred-row count, and reportable-finding count. Generated scan files were produced in the executing environment but are intentionally not referenced through non-portable machine-local paths in this committed document. PR and closeout metadata retain the reported artifact details.
 
 One bounded worker deadline/backlog candidate was validated and rejected as a security vulnerability because the path is private, rate-limited, fixed-batch, time-bounded, retry-safe, and non-destructive. Hosted queue age, RPC duration, and compaction cadence remain operational launch observations, not unresolved security findings.
