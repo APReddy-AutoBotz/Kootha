@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(8);
+select plan(14);
 
 insert into public.drivers(id,name,phone,approval_status,onboarding_status)
 values('28000000-0000-0000-0000-000000000001','M23 Replacement Driver','9000000028','approved','approved');
@@ -61,6 +61,17 @@ select is((select count(*)::integer from public.m23_comparison_pairs where snaps
 select is((select count(*)::integer from public.m23_comparison_pairs where snapshot_id in (select id from public.m23_comparison_snapshots where gps_device_vehicle_link_id='28000000-0000-0000-0000-000000000014')),2,'points after replacement pair only with device B');
 select ok(not exists(select 1 from public.m23_comparison_pairs cp join public.m23_comparison_snapshots s on s.id=cp.snapshot_id where s.gps_device_vehicle_link_id='28000000-0000-0000-0000-000000000013' and cp.physical_point_id in ('28300000-0000-0000-0000-000000000003','28300000-0000-0000-0000-000000000004')),'no pair crosses the replacement boundary');
 select ok(exists(select 1 from public.m23_comparison_pairs cp join public.m23_comparison_snapshots s on s.id=cp.snapshot_id where s.gps_device_vehicle_link_id='28000000-0000-0000-0000-000000000014' and cp.phone_captured_at='2026-07-31 09:00+00' and cp.physical_captured_at='2026-07-31 09:00+00'),'exact boundary capture belongs to the replacement scope');
+
+update public.ad_work_days
+set execution_status='completed',execution_completed_at=clock_timestamp()
+where id='28000000-0000-0000-0000-000000000009';
+select ok(exists(select 1 from public.m21_execution_history where ad_work_day_id='28000000-0000-0000-0000-000000000009' and execution_status='completed'),'End Work records a subsequent completed history row');
+select is(public.m23_evaluate_work_day('28000000-0000-0000-0000-000000000009','phone-device-comparison','m23-pilot-v1','2026-07-31 10:30+00'),2,'completed execution history does not create a second authority scope');
+select is((select count(distinct execution_history_id)::integer from public.m23_comparison_snapshots where ad_work_day_id='28000000-0000-0000-0000-000000000009'),1,'ended running history remains the only snapshot authority through finality');
+select ok(not exists(select 1 from public.m23_comparison_snapshots where ad_work_day_id='28000000-0000-0000-0000-000000000009' and overall_outcome in ('comparison_unavailable','phone_missing','physical_device_missing','both_missing')),'completed history does not introduce missing or unavailable outcomes');
+select public.m23_evaluate_scope('28000000-0000-0000-0000-000000000009','28000000-0000-0000-0000-000000000012','28000000-0000-0000-0000-000000000010',null,null,'phone-device-comparison','m23-pilot-v1','2026-07-31 10:30+00');
+select is((select overall_outcome from public.m23_comparison_snapshots where ad_work_day_id='28000000-0000-0000-0000-000000000009' order by created_at desc,id desc limit 1),'comparison_unavailable','an incomplete device authority shape fails closed once');
+select is((select count(*)::integer from public.m23_comparison_pairs where snapshot_id=(select id from public.m23_comparison_snapshots where ad_work_day_id='28000000-0000-0000-0000-000000000009' order by created_at desc,id desc limit 1)),0,'fail-closed authority context contains no technical pair detail');
 
 update public.m23_comparison_jobs set state='completed',completed_at=clock_timestamp(),locked_at=null,processing_generation=requested_generation,completed_generation=requested_generation,dirty_after_claim=false,safe_failure_reason_code=null where ad_work_day_id='28000000-0000-0000-0000-000000000009';
 update public.gps_device_vehicle_links set effective_until='2026-07-31 09:30+00',closed_by_admin='28000000-0000-0000-0000-000000000003',closed_at='2026-07-31 09:30+00' where id='28000000-0000-0000-0000-000000000014';

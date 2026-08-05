@@ -1564,73 +1564,225 @@ as $$
 declare
   w public.ad_work_days%rowtype; e public.m21_execution_history%rowtype;
   ah public.m21_assignment_history%rowtype; p public.m23_comparison_policies%rowtype;
-  phone record; physical record; v_raw numeric; v_conservative numeric;
-  v_quality text; v_pair_outcome text;
+  v_phone_count integer:=0; v_physical_count integer:=0;
+  v_fast_pair_count integer:=0; v_fast_path_used boolean:=false;
 begin
   select * into strict w from public.ad_work_days where id=p_work_day_id;
   select * into strict e from public.m21_execution_history where id=p_execution_history_id;
   select * into strict ah from public.m21_assignment_history where id=p_assignment_history_id;
   select * into strict p from public.m23_comparison_policies
     where policy_id=p_policy_id and policy_version=p_policy_version;
-  for phone in
-    select lp.id,lp.recorded_at,lp.accuracy_meters,lp.lat,lp.lng,lp.synthetic
-    from public.location_points lp join public.tracking_sessions ts on ts.id=lp.tracking_session_id
-    where lp.ad_work_day_id=w.id and lp.source::text='phone'
-      and ts.tracking_mode='phone_location' and lp.assignment_history_id=ah.id
-      and lp.driver_id=ah.driver_id and lp.vehicle_id=ah.vehicle_id
-      and lp.recorded_at>=p_scope_from and (p_scope_until is null or lp.recorded_at<p_scope_until)
-      and (ts.started_at is null or lp.recorded_at>=ts.started_at)
-      and (ts.ended_at is null or lp.recorded_at<ts.ended_at)
-    order by lp.recorded_at,lp.id
-  loop
-    select q.id,q.recorded_at,q.accuracy_meters,q.lat,q.lng,q.synthetic,
-      abs(extract(epoch from(q.recorded_at-phone.recorded_at))) time_delta
-      into physical
-    from public.location_points q join public.tracking_sessions ts on ts.id=q.tracking_session_id
-      join public.telemetry_receipts tr on tr.id=q.telemetry_receipt_id
-    where q.ad_work_day_id=w.id and q.source::text='physical_device'
-      and ts.tracking_mode='physical_device' and q.execution_history_id=e.id
-      and q.assignment_history_id=ah.id and q.gps_device_vehicle_link_id=p_link_id
-      and q.device_id=p_device_id
-      and tr.disposition in ('accepted_live','accepted_delayed') and tr.quality in ('valid','degraded')
-      and q.synthetic=phone.synthetic
-      and q.recorded_at between phone.recorded_at-make_interval(secs=>p.pair_window_seconds)
-        and phone.recorded_at+make_interval(secs=>p.pair_window_seconds)
-      and q.recorded_at>=p_scope_from and (p_scope_until is null or q.recorded_at<p_scope_until)
-      and (ts.started_at is null or q.recorded_at>=ts.started_at)
-      and (ts.ended_at is null or q.recorded_at<ts.ended_at)
-      and not exists(select 1 from public.m23_comparison_pair_evidence used
-        where used.authority_scope_key=p_scope_key and used.policy_id=p.policy_id
-          and used.policy_version=p.policy_version and used.physical_point_id=q.id)
-    order by abs(extract(epoch from(q.recorded_at-phone.recorded_at))),q.recorded_at,q.id
-    limit 1;
-    if not found then continue; end if;
-    v_raw:=case when phone.lat=physical.lat and phone.lng=physical.lng then 0
-      else public.m22_distance_m(phone.lat,phone.lng,physical.lat,physical.lng) end;
-    if phone.accuracy_meters is not null and physical.accuracy_meters is not null
-      and phone.accuracy_meters::text<>'NaN' and physical.accuracy_meters::text<>'NaN'
-      and phone.accuracy_meters between 0 and p.maximum_phone_accuracy_meters
-      and physical.accuracy_meters between 0 and p.maximum_physical_accuracy_meters then
-      v_quality:='acceptable';
-      v_conservative:=greatest(0,v_raw-phone.accuracy_meters-physical.accuracy_meters);
-      v_pair_outcome:=case when v_conservative>p.sustained_mismatch_distance_meters
-        then 'mismatch_candidate' else 'match' end;
-    else
-      v_quality:='insufficient_quality'; v_conservative:=null; v_pair_outcome:='insufficient_quality';
-    end if;
-    insert into public.m23_comparison_pair_evidence(
-      first_snapshot_id,authority_scope_key,policy_id,policy_version,pair_identity,
-      phone_point_id,physical_point_id,phone_captured_at,physical_captured_at,
-      time_difference_milliseconds,raw_haversine_distance_meters,phone_accuracy_meters,
-      physical_device_accuracy_meters,conservative_separation_meters,quality,outcome,synthetic
-    ) values (
-      p_snapshot_id,p_scope_key,p.policy_id,p.policy_version,
-      public.m23_pair_identity(w.id,e.id,p.policy_version,phone.id,physical.id),
-      phone.id,physical.id,phone.recorded_at,physical.recorded_at,(physical.time_delta*1000)::bigint,
-      case when v_quality='acceptable' then v_raw end,phone.accuracy_meters,physical.accuracy_meters,
-      v_conservative,v_quality,v_pair_outcome,phone.synthetic
-    ) on conflict(authority_scope_key,policy_id,policy_version,pair_identity) do nothing;
-  end loop;
+  select count(*)::integer into v_phone_count
+  from public.location_points lp join public.tracking_sessions ts on ts.id=lp.tracking_session_id
+  where lp.ad_work_day_id=w.id and lp.source::text='phone'
+    and ts.tracking_mode='phone_location' and lp.assignment_history_id=ah.id
+    and lp.driver_id=ah.driver_id and lp.vehicle_id=ah.vehicle_id
+    and lp.recorded_at>=p_scope_from and (p_scope_until is null or lp.recorded_at<p_scope_until)
+    and (ts.started_at is null or lp.recorded_at>=ts.started_at)
+    and (ts.ended_at is null or lp.recorded_at<ts.ended_at);
+  select count(*)::integer into v_physical_count
+  from public.location_points q join public.tracking_sessions ts on ts.id=q.tracking_session_id
+    join public.telemetry_receipts tr on tr.id=q.telemetry_receipt_id
+  where q.ad_work_day_id=w.id and q.source::text='physical_device'
+    and ts.tracking_mode='physical_device' and q.execution_history_id=e.id
+    and q.assignment_history_id=ah.id and q.gps_device_vehicle_link_id=p_link_id
+    and q.device_id=p_device_id
+    and tr.disposition in ('accepted_live','accepted_delayed') and tr.quality in ('valid','degraded')
+    and q.recorded_at>=p_scope_from and (p_scope_until is null or q.recorded_at<p_scope_until)
+    and (ts.started_at is null or q.recorded_at>=ts.started_at)
+    and (ts.ended_at is null or q.recorded_at<ts.ended_at);
+
+  -- An ordinal path is used only when its nearest-candidate proof agrees with
+  -- the complete m23-pairing-v1 greedy order.  Otherwise the exact recursive
+  -- path below performs the same ordered one-to-one selection.
+  select count(*) filter(where candidate_rank=1 and phone_seq=physical_seq)::integer
+    into v_fast_pair_count
+  from (
+    with phone_points as (
+      select lp.id,lp.recorded_at,lp.synthetic,
+        row_number() over(order by lp.recorded_at,lp.id) seq
+      from public.location_points lp join public.tracking_sessions ts on ts.id=lp.tracking_session_id
+      where lp.ad_work_day_id=w.id and lp.source::text='phone'
+        and ts.tracking_mode='phone_location' and lp.assignment_history_id=ah.id
+        and lp.driver_id=ah.driver_id and lp.vehicle_id=ah.vehicle_id
+        and lp.recorded_at>=p_scope_from and (p_scope_until is null or lp.recorded_at<p_scope_until)
+        and (ts.started_at is null or lp.recorded_at>=ts.started_at)
+        and (ts.ended_at is null or lp.recorded_at<ts.ended_at)
+    ), physical_points as (
+      select q.id,q.recorded_at,q.synthetic,
+        row_number() over(order by q.recorded_at,q.id) seq
+      from public.location_points q join public.tracking_sessions ts on ts.id=q.tracking_session_id
+        join public.telemetry_receipts tr on tr.id=q.telemetry_receipt_id
+      where q.ad_work_day_id=w.id and q.source::text='physical_device'
+        and ts.tracking_mode='physical_device' and q.execution_history_id=e.id
+        and q.assignment_history_id=ah.id and q.gps_device_vehicle_link_id=p_link_id
+        and q.device_id=p_device_id
+        and tr.disposition in ('accepted_live','accepted_delayed') and tr.quality in ('valid','degraded')
+        and q.recorded_at>=p_scope_from and (p_scope_until is null or q.recorded_at<p_scope_until)
+        and (ts.started_at is null or q.recorded_at>=ts.started_at)
+        and (ts.ended_at is null or q.recorded_at<ts.ended_at)
+    )
+    select ph.seq phone_seq,q.seq physical_seq,
+      row_number() over(partition by ph.id order by
+        abs(extract(epoch from(q.recorded_at-ph.recorded_at))),q.recorded_at,q.id) candidate_rank
+    from phone_points ph join physical_points q on q.synthetic=ph.synthetic
+      and q.recorded_at between ph.recorded_at-make_interval(secs=>p.pair_window_seconds)
+        and ph.recorded_at+make_interval(secs=>p.pair_window_seconds)
+  ) proof;
+  v_fast_path_used:=v_phone_count=v_physical_count and v_phone_count>0
+    and v_fast_pair_count=v_phone_count;
+
+  if v_fast_path_used then
+    insert into public.m23_comparison_pairs(
+      snapshot_id,pair_identity,phone_point_id,physical_point_id,phone_captured_at,
+      physical_captured_at,time_difference_milliseconds,raw_haversine_distance_meters,
+      phone_accuracy_meters,physical_device_accuracy_meters,conservative_separation_meters,
+      quality,outcome,synthetic
+    )
+    with phone_points as (
+      select lp.id,lp.recorded_at,lp.accuracy_meters,lp.lat,lp.lng,lp.synthetic,
+        row_number() over(order by lp.recorded_at,lp.id) seq
+      from public.location_points lp join public.tracking_sessions ts on ts.id=lp.tracking_session_id
+      where lp.ad_work_day_id=w.id and lp.source::text='phone'
+        and ts.tracking_mode='phone_location' and lp.assignment_history_id=ah.id
+        and lp.driver_id=ah.driver_id and lp.vehicle_id=ah.vehicle_id
+        and lp.recorded_at>=p_scope_from and (p_scope_until is null or lp.recorded_at<p_scope_until)
+        and (ts.started_at is null or lp.recorded_at>=ts.started_at)
+        and (ts.ended_at is null or lp.recorded_at<ts.ended_at)
+    ), physical_points as (
+      select q.id,q.recorded_at,q.accuracy_meters,q.lat,q.lng,q.synthetic,
+        row_number() over(order by q.recorded_at,q.id) seq
+      from public.location_points q join public.tracking_sessions ts on ts.id=q.tracking_session_id
+        join public.telemetry_receipts tr on tr.id=q.telemetry_receipt_id
+      where q.ad_work_day_id=w.id and q.source::text='physical_device'
+        and ts.tracking_mode='physical_device' and q.execution_history_id=e.id
+        and q.assignment_history_id=ah.id and q.gps_device_vehicle_link_id=p_link_id
+        and q.device_id=p_device_id
+        and tr.disposition in ('accepted_live','accepted_delayed') and tr.quality in ('valid','degraded')
+        and q.recorded_at>=p_scope_from and (p_scope_until is null or q.recorded_at<p_scope_until)
+        and (ts.started_at is null or q.recorded_at>=ts.started_at)
+        and (ts.ended_at is null or q.recorded_at<ts.ended_at)
+    ), measured as (
+      select ph.*,q.id physical_point_id,q.recorded_at physical_captured_at,
+        q.accuracy_meters physical_accuracy,
+        case when ph.lat=q.lat and ph.lng=q.lng then 0
+          else public.m22_distance_m(ph.lat,ph.lng,q.lat,q.lng) end raw_distance
+      from phone_points ph join physical_points q on q.seq=ph.seq and q.synthetic=ph.synthetic
+    ), classified as (
+      select m.*,case when m.accuracy_meters is not null and m.physical_accuracy is not null
+        and m.accuracy_meters::text<>'NaN' and m.physical_accuracy::text<>'NaN'
+        and m.accuracy_meters between 0 and p.maximum_phone_accuracy_meters
+        and m.physical_accuracy between 0 and p.maximum_physical_accuracy_meters
+        then 'acceptable' else 'insufficient_quality' end quality
+      from measured m
+    )
+    select p_snapshot_id,public.m23_pair_identity(w.id,e.id,p.policy_version,z.id,z.physical_point_id),
+      z.id,z.physical_point_id,z.recorded_at,z.physical_captured_at,
+      abs(extract(epoch from(z.physical_captured_at-z.recorded_at))*1000)::bigint,
+      case when z.quality='acceptable' then z.raw_distance end,z.accuracy_meters,z.physical_accuracy,
+      case when z.quality='acceptable' then greatest(0,z.raw_distance-z.accuracy_meters-z.physical_accuracy) end,
+      z.quality,
+      case when z.quality='insufficient_quality' then 'insufficient_quality'
+        when greatest(0,z.raw_distance-z.accuracy_meters-z.physical_accuracy)>
+          p.sustained_mismatch_distance_meters then 'mismatch_candidate' else 'match' end,
+      z.synthetic
+    from classified z;
+  else
+    insert into public.m23_comparison_pairs(
+      snapshot_id,pair_identity,phone_point_id,physical_point_id,phone_captured_at,
+      physical_captured_at,time_difference_milliseconds,raw_haversine_distance_meters,
+      phone_accuracy_meters,physical_device_accuracy_meters,conservative_separation_meters,
+      quality,outcome,synthetic
+    )
+    with recursive phone_points as (
+      select lp.id,lp.recorded_at,lp.accuracy_meters,lp.lat,lp.lng,lp.synthetic,
+        row_number() over(order by lp.recorded_at,lp.id) seq
+      from public.location_points lp join public.tracking_sessions ts on ts.id=lp.tracking_session_id
+      where lp.ad_work_day_id=w.id and lp.source::text='phone'
+        and ts.tracking_mode='phone_location' and lp.assignment_history_id=ah.id
+        and lp.driver_id=ah.driver_id and lp.vehicle_id=ah.vehicle_id
+        and lp.recorded_at>=p_scope_from and (p_scope_until is null or lp.recorded_at<p_scope_until)
+        and (ts.started_at is null or lp.recorded_at>=ts.started_at)
+        and (ts.ended_at is null or lp.recorded_at<ts.ended_at)
+    ), physical_points as (
+      select q.id,q.recorded_at,q.accuracy_meters,q.lat,q.lng,q.synthetic
+      from public.location_points q join public.tracking_sessions ts on ts.id=q.tracking_session_id
+        join public.telemetry_receipts tr on tr.id=q.telemetry_receipt_id
+      where q.ad_work_day_id=w.id and q.source::text='physical_device'
+        and ts.tracking_mode='physical_device' and q.execution_history_id=e.id
+        and q.assignment_history_id=ah.id and q.gps_device_vehicle_link_id=p_link_id
+        and q.device_id=p_device_id
+        and tr.disposition in ('accepted_live','accepted_delayed') and tr.quality in ('valid','degraded')
+        and q.recorded_at>=p_scope_from and (p_scope_until is null or q.recorded_at<p_scope_until)
+        and (ts.started_at is null or q.recorded_at>=ts.started_at)
+        and (ts.ended_at is null or q.recorded_at<ts.ended_at)
+    ), greedy(seq,phone_point_id,physical_point_id,used_physical_ids) as (
+      select ph.seq,ph.id,choice.id,
+        case when choice.id is null then array[]::uuid[] else array[choice.id] end
+      from phone_points ph
+      left join lateral (
+        select q.id from physical_points q
+        where q.synthetic=ph.synthetic
+          and q.recorded_at between ph.recorded_at-make_interval(secs=>p.pair_window_seconds)
+            and ph.recorded_at+make_interval(secs=>p.pair_window_seconds)
+        order by abs(extract(epoch from(q.recorded_at-ph.recorded_at))),q.recorded_at,q.id limit 1
+      ) choice on true
+      where ph.seq=1
+      union all
+      select ph.seq,ph.id,choice.id,
+        case when choice.id is null then g.used_physical_ids else g.used_physical_ids || choice.id end
+      from greedy g join phone_points ph on ph.seq=g.seq+1
+      left join lateral (
+        select q.id from physical_points q
+        where q.synthetic=ph.synthetic and not (q.id=any(g.used_physical_ids))
+          and q.recorded_at between ph.recorded_at-make_interval(secs=>p.pair_window_seconds)
+            and ph.recorded_at+make_interval(secs=>p.pair_window_seconds)
+        order by abs(extract(epoch from(q.recorded_at-ph.recorded_at))),q.recorded_at,q.id limit 1
+      ) choice on true
+    ), measured as (
+      select ph.*,q.id physical_point_id,q.recorded_at physical_captured_at,
+        q.accuracy_meters physical_accuracy,
+        case when ph.lat=q.lat and ph.lng=q.lng then 0
+          else public.m22_distance_m(ph.lat,ph.lng,q.lat,q.lng) end raw_distance
+      from greedy g join phone_points ph on ph.id=g.phone_point_id
+        join physical_points q on q.id=g.physical_point_id
+      where g.physical_point_id is not null
+    ), classified as (
+      select m.*,case when m.accuracy_meters is not null and m.physical_accuracy is not null
+        and m.accuracy_meters::text<>'NaN' and m.physical_accuracy::text<>'NaN'
+        and m.accuracy_meters between 0 and p.maximum_phone_accuracy_meters
+        and m.physical_accuracy between 0 and p.maximum_physical_accuracy_meters
+        then 'acceptable' else 'insufficient_quality' end quality
+      from measured m
+    )
+    select p_snapshot_id,public.m23_pair_identity(w.id,e.id,p.policy_version,z.id,z.physical_point_id),
+      z.id,z.physical_point_id,z.recorded_at,z.physical_captured_at,
+      abs(extract(epoch from(z.physical_captured_at-z.recorded_at))*1000)::bigint,
+      case when z.quality='acceptable' then z.raw_distance end,z.accuracy_meters,z.physical_accuracy,
+      case when z.quality='acceptable' then greatest(0,z.raw_distance-z.accuracy_meters-z.physical_accuracy) end,
+      z.quality,
+      case when z.quality='insufficient_quality' then 'insufficient_quality'
+        when greatest(0,z.raw_distance-z.accuracy_meters-z.physical_accuracy)>
+          p.sustained_mismatch_distance_meters then 'mismatch_candidate' else 'match' end,
+      z.synthetic
+    from classified z;
+  end if;
+
+  -- The evidence cache is reusable measurement data for selected pairs only;
+  -- it never controls a later snapshot's selection.
+  insert into public.m23_comparison_pair_evidence(
+    first_snapshot_id,authority_scope_key,policy_id,policy_version,pair_identity,
+    phone_point_id,physical_point_id,phone_captured_at,physical_captured_at,
+    time_difference_milliseconds,raw_haversine_distance_meters,phone_accuracy_meters,
+    physical_device_accuracy_meters,conservative_separation_meters,quality,outcome,synthetic
+  )
+  select p_snapshot_id,p_scope_key,p.policy_id,p.policy_version,cp.pair_identity,
+    cp.phone_point_id,cp.physical_point_id,cp.phone_captured_at,cp.physical_captured_at,
+    cp.time_difference_milliseconds,cp.raw_haversine_distance_meters,cp.phone_accuracy_meters,
+    cp.physical_device_accuracy_meters,cp.conservative_separation_meters,cp.quality,cp.outcome,cp.synthetic
+  from public.m23_comparison_pairs cp
+  where cp.snapshot_id=p_snapshot_id
+  on conflict(authority_scope_key,policy_id,policy_version,pair_identity) do nothing;
 end;
 $$;
 revoke all on function public.m23_pair_scope_exact(uuid,uuid,uuid,uuid,uuid,text,text,text,timestamptz,timestamptz,uuid) from public,anon,authenticated;
@@ -1679,7 +1831,7 @@ begin
   if p.policy_id is null then raise exception 'M23 comparison policy not found' using errcode='P0002'; end if;
   -- A non-running history row is never an active comparison scope.  The ended
   -- running row is reevaluated to close its grace/backfill phases.
-  if e.execution_status not in ('running','completed') then return null; end if;
+  if e.execution_status <> 'running' then return null; end if;
 
   if p_assignment_history_id is not null then
     select * into ah from public.m21_assignment_history where id=p_assignment_history_id;
@@ -1843,127 +1995,9 @@ begin
   insert into public.m23_comparison_reviews(snapshot_id,status) values(s.id,'not_reviewed')
     on conflict(snapshot_id) do nothing;
 
-  -- Common cadence-aligned streams can be paired by ordinal in linear time.
-  -- The fast path is used only when every ordinal pair is inside the policy
-  -- window; otherwise the general deterministic candidate path below handles
-  -- delayed, sparse, or uneven streams.
-  if v_phone_expected and v_physical_expected and not v_ambiguous and ah.id is not null and rh.id is not null
-     and v_phone_count=v_physical_count and v_phone_count>0 then
-    with phone_points as (
-      select lp.id,lp.recorded_at,lp.accuracy_meters,lp.lat,lp.lng,lp.synthetic,
-        row_number() over(order by lp.recorded_at,lp.id) seq
-      from public.location_points lp join public.tracking_sessions ts on ts.id=lp.tracking_session_id
-      where lp.ad_work_day_id=w.id and lp.source::text='phone'
-        and ts.tracking_mode='phone_location' and lp.assignment_history_id=ah.id
-        and lp.driver_id=ah.driver_id and lp.vehicle_id=ah.vehicle_id
-        and lp.recorded_at>=v_scope_from and (v_scope_until is null or lp.recorded_at<v_scope_until)
-        and (ts.started_at is null or lp.recorded_at>=ts.started_at)
-        and (ts.ended_at is null or lp.recorded_at<ts.ended_at)
-    ), physical_points as (
-      select q.id,q.recorded_at,q.accuracy_meters,q.lat,q.lng,q.synthetic,
-        row_number() over(order by q.recorded_at,q.id) seq
-      from public.location_points q join public.tracking_sessions ts on ts.id=q.tracking_session_id
-        join public.telemetry_receipts tr on tr.id=q.telemetry_receipt_id
-      where q.ad_work_day_id=w.id and q.source::text='physical_device'
-        and ts.tracking_mode='physical_device' and q.execution_history_id=e.id and q.assignment_history_id=ah.id
-        and q.gps_device_vehicle_link_id=l.id and q.device_id=p_gps_device_id
-        and tr.disposition in ('accepted_live','accepted_delayed') and tr.quality in ('valid','degraded')
-        and q.recorded_at>=v_scope_from and (v_scope_until is null or q.recorded_at<v_scope_until)
-        and (ts.started_at is null or q.recorded_at>=ts.started_at)
-        and (ts.ended_at is null or q.recorded_at<ts.ended_at)
-    )
-    -- The ordinal shortcut is legal only when an executable nearest-candidate
-    -- proof agrees with M23-PAIRING-V1 for every phone point.  Equal counts
-    -- and an in-window ordinal pair alone are not sufficient for adversarial
-    -- or irregular streams.
-    , candidates as (
-      select ph.seq phone_seq,q.seq physical_seq,
-        row_number() over (partition by ph.id order by
-          abs(extract(epoch from(q.recorded_at-ph.recorded_at))),q.recorded_at,q.id) candidate_rank
-      from phone_points ph join physical_points q on q.synthetic=ph.synthetic
-        and q.recorded_at between ph.recorded_at-make_interval(secs=>p.pair_window_seconds)
-          and ph.recorded_at+make_interval(secs=>p.pair_window_seconds)
-    )
-    select count(*) filter(where candidate_rank=1 and phone_seq=physical_seq)::integer
-      into v_fast_pair_count from candidates;
-    if v_phone_count=v_physical_count and v_fast_pair_count=v_phone_count then
-      v_fast_path_used:=true;
-      insert into public.m23_comparison_pair_evidence(
-        first_snapshot_id,authority_scope_key,policy_id,policy_version,pair_identity,
-        phone_point_id,physical_point_id,phone_captured_at,physical_captured_at,
-        time_difference_milliseconds,raw_haversine_distance_meters,phone_accuracy_meters,
-        physical_device_accuracy_meters,conservative_separation_meters,quality,outcome,synthetic
-      )
-      with phone_points as (
-        select lp.id,lp.recorded_at,lp.accuracy_meters,lp.lat,lp.lng,lp.synthetic,
-          row_number() over(order by lp.recorded_at,lp.id) seq
-        from public.location_points lp join public.tracking_sessions ts on ts.id=lp.tracking_session_id
-        where lp.ad_work_day_id=w.id and lp.source::text='phone'
-          and ts.tracking_mode='phone_location' and lp.assignment_history_id=ah.id
-          and lp.driver_id=ah.driver_id and lp.vehicle_id=ah.vehicle_id
-          and lp.recorded_at>=v_scope_from and (v_scope_until is null or lp.recorded_at<v_scope_until)
-          and (ts.started_at is null or lp.recorded_at>=ts.started_at)
-          and (ts.ended_at is null or lp.recorded_at<ts.ended_at)
-      ), physical_points as (
-        select q.id,q.recorded_at,q.accuracy_meters,q.lat,q.lng,q.synthetic,
-          row_number() over(order by q.recorded_at,q.id) seq
-        from public.location_points q join public.tracking_sessions ts on ts.id=q.tracking_session_id
-          join public.telemetry_receipts tr on tr.id=q.telemetry_receipt_id
-        where q.ad_work_day_id=w.id and q.source::text='physical_device'
-          and ts.tracking_mode='physical_device' and q.execution_history_id=e.id and q.assignment_history_id=ah.id
-          and q.gps_device_vehicle_link_id=l.id and q.device_id=p_gps_device_id
-          and tr.disposition in ('accepted_live','accepted_delayed') and tr.quality in ('valid','degraded')
-          and q.recorded_at>=v_scope_from and (v_scope_until is null or q.recorded_at<v_scope_until)
-          and (ts.started_at is null or q.recorded_at>=ts.started_at)
-          and (ts.ended_at is null or q.recorded_at<ts.ended_at)
-      ), measured as (
-        select ph.*,q.id physical_point_id,q.recorded_at physical_captured_at,q.accuracy_meters physical_accuracy,
-          case when ph.lat=q.lat and ph.lng=q.lng then 0
-            else public.m22_distance_m(ph.lat,ph.lng,q.lat,q.lng) end raw_distance
-        from phone_points ph join physical_points q on q.seq=ph.seq and q.synthetic=ph.synthetic
-      ), classified as (
-        select m.*,case when m.accuracy_meters is not null and m.physical_accuracy is not null
-          and m.accuracy_meters::text<>'NaN' and m.physical_accuracy::text<>'NaN'
-          and m.accuracy_meters between 0 and p.maximum_phone_accuracy_meters
-          and m.physical_accuracy between 0 and p.maximum_physical_accuracy_meters
-          then 'acceptable' else 'insufficient_quality' end quality
-        from measured m
-      )
-      select s.id,v_scope_key,p.policy_id,p.policy_version,public.m23_pair_identity(w.id,e.id,p.policy_version,z.id,z.physical_point_id),
-        z.id,z.physical_point_id,z.recorded_at,z.physical_captured_at,
-        abs(extract(epoch from(z.physical_captured_at-z.recorded_at))*1000)::bigint,
-        case when z.quality='acceptable' then z.raw_distance end,z.accuracy_meters,z.physical_accuracy,
-        case when z.quality='acceptable' then greatest(0,z.raw_distance-z.accuracy_meters-z.physical_accuracy) end,
-        z.quality,
-        case when z.quality='insufficient_quality' then 'insufficient_quality'
-          when greatest(0,z.raw_distance-z.accuracy_meters-z.physical_accuracy)>p.sustained_mismatch_distance_meters
-            then 'mismatch_candidate' else 'match' end,
-        z.synthetic
-      from classified z
-      on conflict(authority_scope_key,policy_id,policy_version,pair_identity) do nothing;
-    end if;
-  end if;
-
-  if v_phone_expected and v_physical_expected and not v_ambiguous and ah.id is not null and rh.id is not null
-     and not v_fast_path_used then
+  if v_phone_expected and v_physical_expected and not v_ambiguous and ah.id is not null and rh.id is not null then
     perform public.m23_pair_scope_exact(w.id,e.id,ah.id,l.id,p_gps_device_id,
       p.policy_id,p.policy_version,v_scope_key,v_scope_from,v_scope_until,s.id);
-  end if;
-
-  if v_phone_expected and v_physical_expected and not v_ambiguous and ah.id is not null and rh.id is not null then
-    insert into public.m23_comparison_pairs(
-      snapshot_id,pair_identity,phone_point_id,physical_point_id,phone_captured_at,
-      physical_captured_at,time_difference_milliseconds,raw_haversine_distance_meters,
-      phone_accuracy_meters,physical_device_accuracy_meters,conservative_separation_meters,
-      quality,outcome,synthetic
-    )
-    select s.id,x.pair_identity,x.phone_point_id,x.physical_point_id,x.phone_captured_at,
-      x.physical_captured_at,x.time_difference_milliseconds,x.raw_haversine_distance_meters,
-      x.phone_accuracy_meters,x.physical_device_accuracy_meters,x.conservative_separation_meters,
-      x.quality,x.outcome,x.synthetic
-    from public.m23_comparison_pair_evidence x
-    where x.authority_scope_key=v_scope_key and x.policy_id=p.policy_id and x.policy_version=p.policy_version
-    on conflict do nothing;
   end if;
 
   select count(*)::integer,count(*) filter(where x.quality='acceptable')::integer,
@@ -1971,16 +2005,16 @@ begin
     count(*) filter(where x.outcome='mismatch_candidate')::integer,
     count(*) filter(where x.outcome='insufficient_quality')::integer
     into v_pair_count,v_acceptable_count,v_match_count,v_mismatch_count,v_quality_count
-  from public.m23_comparison_pair_evidence x
-  where x.authority_scope_key=v_scope_key and x.policy_id=p.policy_id and x.policy_version=p.policy_version
+  from public.m23_comparison_pairs x
+  where x.snapshot_id=s.id
     and (v_watermark is null or (x.phone_captured_at<=v_watermark and x.physical_captured_at<=v_watermark));
   v_unpaired_phone:=greatest(0,v_phone_count-v_pair_count);
   v_unpaired_physical:=greatest(0,v_physical_count-v_pair_count);
 
   for cached in
     select x.*,greatest(x.phone_captured_at,x.physical_captured_at) pair_time
-    from public.m23_comparison_pair_evidence x
-    where x.authority_scope_key=v_scope_key and x.policy_id=p.policy_id and x.policy_version=p.policy_version
+    from public.m23_comparison_pairs x
+    where x.snapshot_id=s.id
       and (v_watermark is null or (x.phone_captured_at<=v_watermark and x.physical_captured_at<=v_watermark))
     order by greatest(x.phone_captured_at,x.physical_captured_at),x.phone_captured_at,x.physical_captured_at,x.pair_identity
   loop
@@ -2047,7 +2081,7 @@ begin
     minimum_conservative_separation_meters=case when v_best then v_min end,
     maximum_conservative_separation_meters=case when v_best then v_max end,
     overall_outcome=v_outcome,
-    synthetic=case when v_pair_count>0 then (select bool_and(x.synthetic) from public.m23_comparison_pair_evidence x where x.authority_scope_key=v_scope_key and x.policy_id=p.policy_id and x.policy_version=p.policy_version) else false end,
+    synthetic=case when v_pair_count>0 then (select bool_and(x.synthetic) from public.m23_comparison_pairs x where x.snapshot_id=s.id) else false end,
     build_complete=true
   where id=s.id;
   perform set_config('app.m23_snapshot_build','off',true);
@@ -2085,7 +2119,7 @@ declare e record; ah record; rh record; l record; v_count integer:=0; v_link_cou
   v_from timestamptz; v_until timestamptz;
 begin
   for e in select * from public.m21_execution_history where ad_work_day_id=p_ad_work_day_id
-    and execution_status in ('running','completed') order by effective_from,id
+    and execution_status='running' and effective_from<=p_now order by effective_from,id
   loop
     for ah in select * from public.m21_assignment_history x
       where x.ad_work_id=(select ad_work_id from public.ad_work_days where id=p_ad_work_day_id)
@@ -2106,31 +2140,49 @@ begin
           when rh.effective_until is null then least(e.effective_until,ah.effective_until)
           else least(e.effective_until,ah.effective_until,rh.effective_until) end;
         if (select tracking_type::text from public.ad_works where id=(select ad_work_id from public.ad_work_days where id=p_ad_work_day_id)) in ('device','both') then
-          v_link_count:=0;
-          for l in select x.id,x.gps_device_id,x.vehicle_id,x.effective_from,x.effective_until
+          select count(*)::integer into v_link_count
+          from public.gps_device_vehicle_links x
+          where x.vehicle_id=ah.vehicle_id and x.is_primary
+            and x.effective_from<coalesce(v_until,p_now)
+            and (x.effective_until is null or v_from<x.effective_until);
+          if exists(
+            select 1
+            from public.gps_device_vehicle_links x
+            join public.gps_device_vehicle_links y
+              on y.vehicle_id=x.vehicle_id and y.is_primary and y.id<>x.id
+            where x.vehicle_id=ah.vehicle_id and x.is_primary
+              and x.effective_from<coalesce(v_until,'infinity'::timestamptz)
+              and coalesce(x.effective_until,'infinity'::timestamptz)>v_from
+              and y.effective_from<coalesce(v_until,'infinity'::timestamptz)
+              and coalesce(y.effective_until,'infinity'::timestamptz)>v_from
+              and x.effective_from<coalesce(y.effective_until,'infinity'::timestamptz)
+              and coalesce(x.effective_until,'infinity'::timestamptz)>y.effective_from
+          ) then
+            -- M20A normally excludes this shape.  If it occurs, fail closed
+            -- once without selecting either conflicting link or creating two
+            -- competing conclusions.
+            perform public.m23_evaluate_scope_authority(p_ad_work_day_id,e.id,ah.id,null,null,rh.id,p_policy_id,p_policy_version,p_now); v_count:=v_count+1;
+          elsif v_link_count=1 then
+            select x.id,x.gps_device_id,x.vehicle_id,x.effective_from,x.effective_until
+              into l
             from public.gps_device_vehicle_links x
             where x.vehicle_id=ah.vehicle_id and x.is_primary
               and x.effective_from<coalesce(v_until,p_now)
               and (x.effective_until is null or v_from<x.effective_until)
-            order by x.effective_from,x.id
-          loop
-            v_link_count:=v_link_count+1;
-            -- A replacement is a new scope.  Only an actual interval overlap
-            -- is ambiguous; sequential non-overlapping links are evaluated
-            -- independently with their exact link interval.
-            if exists(select 1 from public.gps_device_vehicle_links x
-              where x.vehicle_id=l.vehicle_id and x.is_primary and x.id<>l.id
-                and x.effective_from<coalesce(v_until,'infinity'::timestamptz)
-                and coalesce(x.effective_until,'infinity'::timestamptz)>v_from
-                and x.effective_from<coalesce(l.effective_until,'infinity'::timestamptz)
-                and coalesce(x.effective_until,'infinity'::timestamptz)>l.effective_from) then
-              perform public.m23_evaluate_scope_authority(p_ad_work_day_id,e.id,ah.id,l.id,l.gps_device_id,rh.id,p_policy_id,p_policy_version,p_now); v_count:=v_count+1;
-            else
-              perform public.m23_evaluate_scope_authority(p_ad_work_day_id,e.id,ah.id,l.id,l.gps_device_id,rh.id,p_policy_id,p_policy_version,p_now); v_count:=v_count+1;
-            end if;
-          end loop;
-          if v_link_count=0 then
+            order by x.effective_from,x.id limit 1;
+            perform public.m23_evaluate_scope_authority(p_ad_work_day_id,e.id,ah.id,l.id,l.gps_device_id,rh.id,p_policy_id,p_policy_version,p_now); v_count:=v_count+1;
+          elsif v_link_count=0 then
             perform public.m23_evaluate_scope_authority(p_ad_work_day_id,e.id,ah.id,null,null,rh.id,p_policy_id,p_policy_version,p_now); v_count:=v_count+1;
+          else
+            for l in select x.id,x.gps_device_id,x.vehicle_id,x.effective_from,x.effective_until
+              from public.gps_device_vehicle_links x
+              where x.vehicle_id=ah.vehicle_id and x.is_primary
+                and x.effective_from<coalesce(v_until,p_now)
+                and (x.effective_until is null or v_from<x.effective_until)
+              order by x.effective_from,x.id
+            loop
+              perform public.m23_evaluate_scope_authority(p_ad_work_day_id,e.id,ah.id,l.id,l.gps_device_id,rh.id,p_policy_id,p_policy_version,p_now); v_count:=v_count+1;
+            end loop;
           end if;
         else
           perform public.m23_evaluate_scope_authority(p_ad_work_day_id,e.id,ah.id,null,null,rh.id,p_policy_id,p_policy_version,p_now); v_count:=v_count+1;

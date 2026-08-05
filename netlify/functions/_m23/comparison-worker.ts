@@ -4,6 +4,7 @@ export const M23_COMPARISON_WORKER_SOFT_DEADLINE_MS = 6_500;
 export const M23_COMPARISON_QUEUE_BATCH_SIZE = 1;
 export const M23_COMPARISON_WORKER_MAX_CONCURRENCY = 5;
 export const M23_COMPARISON_QUEUE_MAX_ITERATIONS = 4;
+export const M23_COMPARISON_WORKER_COMPACTION_MIN_REMAINING_MS = 250;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -93,24 +94,31 @@ export async function runM23ComparisonWorker(
         < M23_COMPARISON_WORKER_MAX_CONCURRENCY * M23_COMPARISON_QUEUE_BATCH_SIZE) break;
     }
     let compacted = 0;
+    let compactionAttempted = false;
     let compactionFailed = false;
-    try {
-      const compactedResponse = await runtime.rpc(
-        "m23_compact_comparison_detail",
-        { p_batch_size: 100 },
-        controller.signal,
-      );
-      if (typeof compactedResponse !== "object" || compactedResponse === null || Array.isArray(compactedResponse)) {
-        throw new Error("m23_compaction_contract_invalid");
+    const remainingBudget = M23_COMPARISON_WORKER_SOFT_DEADLINE_MS - (Date.now() - startedAt);
+    if (remainingBudget > M23_COMPARISON_WORKER_COMPACTION_MIN_REMAINING_MS) {
+      compactionAttempted = true;
+      try {
+        const compactedResponse = await runtime.rpc(
+          "m23_compact_comparison_detail",
+          { p_batch_size: 100 },
+          controller.signal,
+        );
+        if (typeof compactedResponse !== "object" || compactedResponse === null || Array.isArray(compactedResponse)) {
+          throw new Error("m23_compaction_contract_invalid");
+        }
+        const deleted = (compactedResponse as JsonRecord).deletedDetailRows;
+        if (typeof deleted !== "number" || !Number.isSafeInteger(deleted) || deleted < 0) {
+          throw new Error("m23_compaction_contract_invalid");
+        }
+        compacted = deleted;
+      } catch {
+        // Compaction is explicitly best effort.  The shared controller bounds
+        // it to this invocation; an abort or HTTP failure must not rewrite a
+        // successful queue result as worker failure.
+        compactionFailed = true;
       }
-      const deleted = (compactedResponse as JsonRecord).deletedDetailRows;
-      if (typeof deleted !== "number" || !Number.isSafeInteger(deleted) || deleted < 0) {
-        throw new Error("m23_compaction_contract_invalid");
-      }
-      compacted = deleted;
-    } catch (error) {
-      if (controller.signal.aborted) throw error;
-      compactionFailed = true;
     }
     const workerOk = queueRetryOrFailed === 0;
     return {
@@ -120,7 +128,7 @@ export async function runM23ComparisonWorker(
       queueClaimed,
       queueCompleted,
       queueRetryOrFailed,
-      compactionAttempted: true,
+      compactionAttempted,
       compacted,
       compactionFailed,
     };
