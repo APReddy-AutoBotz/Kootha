@@ -1361,6 +1361,25 @@ alter table public.m23_comparison_jobs
   add column if not exists completed_generation bigint not null default 0,
   add column if not exists dirty_after_claim boolean not null default false;
 
+-- A singleton cursor makes repeated bounded due sweeps fair.  It is only a
+-- scheduling cursor: it carries no source data and is never exposed through
+-- the Data API.
+create table if not exists public.m23_due_sweep_state (
+  id boolean primary key default true check (id),
+  cursor_ad_work_day_id uuid,
+  cursor_policy_id text,
+  cursor_policy_version text,
+  cursor_job_id uuid,
+  updated_at timestamptz not null default clock_timestamp()
+);
+insert into public.m23_due_sweep_state(id)
+values(true) on conflict(id) do nothing;
+alter table public.m23_due_sweep_state enable row level security;
+revoke all on public.m23_due_sweep_state from public, anon, authenticated;
+create index if not exists m23_job_due_fair_idx
+  on public.m23_comparison_jobs(ad_work_day_id,policy_id,policy_version,id)
+  where state='completed';
+
 alter table public.m23_comparison_snapshots
   add column if not exists acceptable_pair_count integer not null default 0,
   add column if not exists evaluation_phase text not null default 'active_work';
@@ -1495,6 +1514,127 @@ drop trigger if exists m23_execution_authority_enqueue on public.m21_execution_h
 create trigger m23_execution_authority_enqueue after insert or update on public.m21_execution_history
 for each row execute function public.m23_enqueue_authority_change();
 
+create or replace function public.m23_enqueue_link_authority_change()
+returns trigger language plpgsql security definer set search_path = pg_catalog, public
+as $$
+declare
+  v_day uuid;
+  v_vehicle_id uuid;
+  v_link_from timestamptz;
+  v_link_until timestamptz;
+begin
+  -- M20A closes old links and inserts replacement links in one transaction.
+  -- Enqueue only work days whose assignment and execution histories could
+  -- intersect the changed vehicle-link interval; no source values are copied.
+  for v_vehicle_id, v_link_from, v_link_until in
+    select x.vehicle_id, x.effective_from, x.effective_until
+    from (select new.vehicle_id, new.effective_from, new.effective_until
+          where tg_op <> 'DELETE'
+          union all
+          select old.vehicle_id, old.effective_from, old.effective_until
+          where tg_op <> 'INSERT') x
+  loop
+    for v_day in
+      select distinct wd.id
+      from public.ad_work_days wd
+      join public.m21_assignment_history ah on ah.ad_work_id=wd.ad_work_id
+        and ah.vehicle_id=v_vehicle_id
+        and ah.effective_from<coalesce(v_link_until,'infinity'::timestamptz)
+        and coalesce(ah.effective_until,'infinity'::timestamptz)>v_link_from
+      join public.m21_execution_history eh on eh.ad_work_day_id=wd.id
+        and eh.effective_from<coalesce(v_link_until,'infinity'::timestamptz)
+        and coalesce(eh.effective_until,'infinity'::timestamptz)>v_link_from
+    loop
+      perform public.m23_enqueue_comparison_job(v_day);
+    end loop;
+  end loop;
+  return case when tg_op='DELETE' then old else new end;
+end;
+$$;
+drop trigger if exists m23_link_authority_enqueue on public.gps_device_vehicle_links;
+create trigger m23_link_authority_enqueue after insert or update of gps_device_id,vehicle_id,is_primary,effective_from,effective_until
+on public.gps_device_vehicle_links for each row execute function public.m23_enqueue_link_authority_change();
+
+create or replace function public.m23_pair_scope_exact(
+  p_work_day_id uuid,p_execution_history_id uuid,p_assignment_history_id uuid,
+  p_link_id uuid,p_device_id uuid,p_policy_id text,p_policy_version text,
+  p_scope_key text,p_scope_from timestamptz,p_scope_until timestamptz,p_snapshot_id uuid
+) returns void language plpgsql security definer set search_path = pg_catalog, public
+as $$
+declare
+  w public.ad_work_days%rowtype; e public.m21_execution_history%rowtype;
+  ah public.m21_assignment_history%rowtype; p public.m23_comparison_policies%rowtype;
+  phone record; physical record; v_raw numeric; v_conservative numeric;
+  v_quality text; v_pair_outcome text;
+begin
+  select * into strict w from public.ad_work_days where id=p_work_day_id;
+  select * into strict e from public.m21_execution_history where id=p_execution_history_id;
+  select * into strict ah from public.m21_assignment_history where id=p_assignment_history_id;
+  select * into strict p from public.m23_comparison_policies
+    where policy_id=p_policy_id and policy_version=p_policy_version;
+  for phone in
+    select lp.id,lp.recorded_at,lp.accuracy_meters,lp.lat,lp.lng,lp.synthetic
+    from public.location_points lp join public.tracking_sessions ts on ts.id=lp.tracking_session_id
+    where lp.ad_work_day_id=w.id and lp.source::text='phone'
+      and ts.tracking_mode='phone_location' and lp.assignment_history_id=ah.id
+      and lp.driver_id=ah.driver_id and lp.vehicle_id=ah.vehicle_id
+      and lp.recorded_at>=p_scope_from and (p_scope_until is null or lp.recorded_at<p_scope_until)
+      and (ts.started_at is null or lp.recorded_at>=ts.started_at)
+      and (ts.ended_at is null or lp.recorded_at<ts.ended_at)
+    order by lp.recorded_at,lp.id
+  loop
+    select q.id,q.recorded_at,q.accuracy_meters,q.lat,q.lng,q.synthetic,
+      abs(extract(epoch from(q.recorded_at-phone.recorded_at))) time_delta
+      into physical
+    from public.location_points q join public.tracking_sessions ts on ts.id=q.tracking_session_id
+      join public.telemetry_receipts tr on tr.id=q.telemetry_receipt_id
+    where q.ad_work_day_id=w.id and q.source::text='physical_device'
+      and ts.tracking_mode='physical_device' and q.execution_history_id=e.id
+      and q.assignment_history_id=ah.id and q.gps_device_vehicle_link_id=p_link_id
+      and q.device_id=p_device_id
+      and tr.disposition in ('accepted_live','accepted_delayed') and tr.quality in ('valid','degraded')
+      and q.synthetic=phone.synthetic
+      and q.recorded_at between phone.recorded_at-make_interval(secs=>p.pair_window_seconds)
+        and phone.recorded_at+make_interval(secs=>p.pair_window_seconds)
+      and q.recorded_at>=p_scope_from and (p_scope_until is null or q.recorded_at<p_scope_until)
+      and (ts.started_at is null or q.recorded_at>=ts.started_at)
+      and (ts.ended_at is null or q.recorded_at<ts.ended_at)
+      and not exists(select 1 from public.m23_comparison_pair_evidence used
+        where used.authority_scope_key=p_scope_key and used.policy_id=p.policy_id
+          and used.policy_version=p.policy_version and used.physical_point_id=q.id)
+    order by abs(extract(epoch from(q.recorded_at-phone.recorded_at))),q.recorded_at,q.id
+    limit 1;
+    if not found then continue; end if;
+    v_raw:=case when phone.lat=physical.lat and phone.lng=physical.lng then 0
+      else public.m22_distance_m(phone.lat,phone.lng,physical.lat,physical.lng) end;
+    if phone.accuracy_meters is not null and physical.accuracy_meters is not null
+      and phone.accuracy_meters::text<>'NaN' and physical.accuracy_meters::text<>'NaN'
+      and phone.accuracy_meters between 0 and p.maximum_phone_accuracy_meters
+      and physical.accuracy_meters between 0 and p.maximum_physical_accuracy_meters then
+      v_quality:='acceptable';
+      v_conservative:=greatest(0,v_raw-phone.accuracy_meters-physical.accuracy_meters);
+      v_pair_outcome:=case when v_conservative>p.sustained_mismatch_distance_meters
+        then 'mismatch_candidate' else 'match' end;
+    else
+      v_quality:='insufficient_quality'; v_conservative:=null; v_pair_outcome:='insufficient_quality';
+    end if;
+    insert into public.m23_comparison_pair_evidence(
+      first_snapshot_id,authority_scope_key,policy_id,policy_version,pair_identity,
+      phone_point_id,physical_point_id,phone_captured_at,physical_captured_at,
+      time_difference_milliseconds,raw_haversine_distance_meters,phone_accuracy_meters,
+      physical_device_accuracy_meters,conservative_separation_meters,quality,outcome,synthetic
+    ) values (
+      p_snapshot_id,p_scope_key,p.policy_id,p.policy_version,
+      public.m23_pair_identity(w.id,e.id,p.policy_version,phone.id,physical.id),
+      phone.id,physical.id,phone.recorded_at,physical.recorded_at,(physical.time_delta*1000)::bigint,
+      case when v_quality='acceptable' then v_raw end,phone.accuracy_meters,physical.accuracy_meters,
+      v_conservative,v_quality,v_pair_outcome,phone.synthetic
+    ) on conflict(authority_scope_key,policy_id,policy_version,pair_identity) do nothing;
+  end loop;
+end;
+$$;
+revoke all on function public.m23_pair_scope_exact(uuid,uuid,uuid,uuid,uuid,text,text,text,timestamptz,timestamptz,uuid) from public,anon,authenticated;
+
 create or replace function public.m23_evaluate_scope_authority(
   p_ad_work_day_id uuid,
   p_execution_history_id uuid,
@@ -1539,7 +1679,7 @@ begin
   if p.policy_id is null then raise exception 'M23 comparison policy not found' using errcode='P0002'; end if;
   -- A non-running history row is never an active comparison scope.  The ended
   -- running row is reevaluated to close its grace/backfill phases.
-  if e.execution_status <> 'running' then return null; end if;
+  if e.execution_status not in ('running','completed') then return null; end if;
 
   if p_assignment_history_id is not null then
     select * into ah from public.m21_assignment_history where id=p_assignment_history_id;
@@ -1579,13 +1719,6 @@ begin
   if p_assignment_history_id is null and (v_phone_expected or v_physical_expected) then
     v_ambiguous:=true;
   end if;
-  if p_gps_device_vehicle_link_id is not null then
-    select count(*)::integer into v_link_count from public.gps_device_vehicle_links x
-    where x.vehicle_id=l.vehicle_id and x.is_primary
-      and x.effective_from < coalesce(e.effective_until,p_now)
-      and (x.effective_until is null or e.effective_from < x.effective_until);
-    if v_link_count>1 then v_ambiguous:=true; end if;
-  end if;
   v_expectation:=case when v_ambiguous then 'ambiguous'
     when v_phone_expected and v_physical_expected then 'both_expected'
     when v_phone_expected then 'phone_only'
@@ -1610,13 +1743,23 @@ begin
       when rh.effective_until is null then v_scope_until else least(v_scope_until,rh.effective_until) end;
   end if;
   if v_scope_until is not null and v_scope_until<=v_scope_from then return null; end if;
+  if l.id is not null then
+    -- Scope-local ambiguity: a sequential historical replacement outside the
+    -- exact execution/assignment/release/link intersection cannot poison this
+    -- scope, while a genuine overlap still fails closed.
+    select count(*)::integer into v_link_count from public.gps_device_vehicle_links x
+    where x.vehicle_id=l.vehicle_id and x.is_primary
+      and x.effective_from < coalesce(v_scope_until,'infinity'::timestamptz)
+      and coalesce(x.effective_until,'infinity'::timestamptz)>v_scope_from;
+    if v_link_count>1 then v_ambiguous:=true; end if;
+  end if;
   v_scope_key:=public.m22_safe_digest(concat_ws('|',w.id::text,e.id::text,
     coalesce(ah.id::text,''),coalesce(l.id::text,''),coalesce(p_gps_device_id::text,''),
     coalesce(rh.id::text,''),v_scope_from::text,coalesce(v_scope_until::text,'')));
 
   v_work_end:=coalesce(v_scope_until,w.actual_end_time);
   v_finality:=case
-    when p_now>=v_scope_from and (v_scope_until is null or p_now<v_scope_until)
+    when e.execution_status='running' and p_now>=v_scope_from and (v_scope_until is null or p_now<v_scope_until)
       then 'provisional_active_work'
     when v_work_end is null or p_now<v_work_end+make_interval(secs=>p.backfill_window_seconds)
       then 'provisional_backfill_open'
@@ -1729,10 +1872,21 @@ begin
         and (ts.started_at is null or q.recorded_at>=ts.started_at)
         and (ts.ended_at is null or q.recorded_at<ts.ended_at)
     )
-    select count(*)::integer into v_fast_pair_count
-    from phone_points ph join physical_points q on q.seq=ph.seq and q.synthetic=ph.synthetic
-    where abs(extract(epoch from(q.recorded_at-ph.recorded_at)))<=p.pair_window_seconds;
-    if v_fast_pair_count=v_phone_count then
+    -- The ordinal shortcut is legal only when an executable nearest-candidate
+    -- proof agrees with M23-PAIRING-V1 for every phone point.  Equal counts
+    -- and an in-window ordinal pair alone are not sufficient for adversarial
+    -- or irregular streams.
+    , candidates as (
+      select ph.seq phone_seq,q.seq physical_seq,
+        row_number() over (partition by ph.id order by
+          abs(extract(epoch from(q.recorded_at-ph.recorded_at))),q.recorded_at,q.id) candidate_rank
+      from phone_points ph join physical_points q on q.synthetic=ph.synthetic
+        and q.recorded_at between ph.recorded_at-make_interval(secs=>p.pair_window_seconds)
+          and ph.recorded_at+make_interval(secs=>p.pair_window_seconds)
+    )
+    select count(*) filter(where candidate_rank=1 and phone_seq=physical_seq)::integer
+      into v_fast_pair_count from candidates;
+    if v_phone_count=v_physical_count and v_fast_pair_count=v_phone_count then
       v_fast_path_used:=true;
       insert into public.m23_comparison_pair_evidence(
         first_snapshot_id,authority_scope_key,policy_id,policy_version,pair_identity,
@@ -1792,81 +1946,8 @@ begin
 
   if v_phone_expected and v_physical_expected and not v_ambiguous and ah.id is not null and rh.id is not null
      and not v_fast_path_used then
-    -- Pairing is deliberately set based.  The former nested loop executed a
-    -- physical-point search once per phone point and made the comparison cost
-    -- grow with the product of the two source streams.  Candidate selection is
-    -- deterministic: nearest capture time, then physical capture time/id;
-    -- conflicting candidates are awarded to the earliest phone capture/id.
-    insert into public.m23_comparison_pair_evidence(
-      first_snapshot_id,authority_scope_key,policy_id,policy_version,pair_identity,
-      phone_point_id,physical_point_id,phone_captured_at,physical_captured_at,
-      time_difference_milliseconds,raw_haversine_distance_meters,phone_accuracy_meters,
-      physical_device_accuracy_meters,conservative_separation_meters,quality,outcome,synthetic
-    )
-    with phone_points as (
-      select lp.id,lp.recorded_at,lp.accuracy_meters,lp.lat,lp.lng,lp.synthetic
-      from public.location_points lp join public.tracking_sessions ts on ts.id=lp.tracking_session_id
-      where lp.ad_work_day_id=w.id and lp.source::text='phone'
-        and ts.tracking_mode='phone_location' and lp.assignment_history_id=ah.id
-        and lp.driver_id=ah.driver_id and lp.vehicle_id=ah.vehicle_id
-        and lp.recorded_at>=v_scope_from and (v_scope_until is null or lp.recorded_at<v_scope_until)
-        and (ts.started_at is null or lp.recorded_at>=ts.started_at)
-        and (ts.ended_at is null or lp.recorded_at<ts.ended_at)
-        and not exists(select 1 from public.m23_comparison_pair_evidence x
-          where x.authority_scope_key=v_scope_key and x.policy_id=p.policy_id and x.policy_version=p.policy_version
-            and x.phone_point_id=lp.id)
-    ), physical_points as (
-      select q.id,q.recorded_at,q.accuracy_meters,q.lat,q.lng,q.synthetic
-      from public.location_points q join public.tracking_sessions ts on ts.id=q.tracking_session_id
-        join public.telemetry_receipts tr on tr.id=q.telemetry_receipt_id
-      where q.ad_work_day_id=w.id and q.source::text='physical_device'
-        and ts.tracking_mode='physical_device' and q.execution_history_id=e.id and q.assignment_history_id=ah.id
-        and q.gps_device_vehicle_link_id=l.id and q.device_id=p_gps_device_id
-        and tr.disposition in ('accepted_live','accepted_delayed') and tr.quality in ('valid','degraded')
-        and q.recorded_at>=v_scope_from and (v_scope_until is null or q.recorded_at<v_scope_until)
-        and (ts.started_at is null or q.recorded_at>=ts.started_at)
-        and (ts.ended_at is null or q.recorded_at<ts.ended_at)
-    ), candidates as (
-      select ph.*,q.id physical_point_id,q.recorded_at physical_captured_at,
-        q.accuracy_meters physical_accuracy,q.lat physical_lat,q.lng physical_lng,
-        abs(extract(epoch from(q.recorded_at-ph.recorded_at))) time_delta
-      from phone_points ph join physical_points q
-        on q.synthetic=ph.synthetic
-       and q.recorded_at between ph.recorded_at-make_interval(secs=>p.pair_window_seconds)
-         and ph.recorded_at+make_interval(secs=>p.pair_window_seconds)
-    ), phone_best as (
-      select c.*,row_number() over(partition by c.id order by c.time_delta,c.physical_captured_at,c.physical_point_id) phone_rank
-      from candidates c
-    ), selected as (
-      select distinct on (physical_point_id) *
-      from phone_best
-      where phone_rank=1
-      order by physical_point_id,recorded_at,id
-    ), measured as (
-      select z.*,case when z.lat=z.physical_lat and z.lng=z.physical_lng then 0
-        else public.m22_distance_m(z.lat,z.lng,z.physical_lat,z.physical_lng) end raw_distance
-      from selected z
-    ), classified as (
-      select z.*,
-        case when z.accuracy_meters is not null and z.physical_accuracy is not null
-          and z.accuracy_meters::text<>'NaN' and z.physical_accuracy::text<>'NaN'
-          and z.accuracy_meters between 0 and p.maximum_phone_accuracy_meters
-          and z.physical_accuracy between 0 and p.maximum_physical_accuracy_meters
-          then 'acceptable' else 'insufficient_quality' end quality
-      from measured z
-    )
-    select s.id,v_scope_key,p.policy_id,p.policy_version,public.m23_pair_identity(w.id,e.id,p.policy_version,z.id,z.physical_point_id),
-      z.id,z.physical_point_id,z.recorded_at,z.physical_captured_at,
-      (z.time_delta*1000)::bigint,
-      case when z.quality='acceptable' then z.raw_distance end,z.accuracy_meters,z.physical_accuracy,
-      case when z.quality='acceptable' then greatest(0,z.raw_distance-z.accuracy_meters-z.physical_accuracy) end,
-      z.quality,
-      case when z.quality='insufficient_quality' then 'insufficient_quality'
-        when greatest(0,z.raw_distance-z.accuracy_meters-z.physical_accuracy)>p.sustained_mismatch_distance_meters
-          then 'mismatch_candidate' else 'match' end,
-      z.synthetic
-    from classified z
-    on conflict(authority_scope_key,policy_id,policy_version,pair_identity) do nothing;
+    perform public.m23_pair_scope_exact(w.id,e.id,ah.id,l.id,p_gps_device_id,
+      p.policy_id,p.policy_version,v_scope_key,v_scope_from,v_scope_until,s.id);
   end if;
 
   if v_phone_expected and v_physical_expected and not v_ambiguous and ah.id is not null and rh.id is not null then
@@ -2004,7 +2085,7 @@ declare e record; ah record; rh record; l record; v_count integer:=0; v_link_cou
   v_from timestamptz; v_until timestamptz;
 begin
   for e in select * from public.m21_execution_history where ad_work_day_id=p_ad_work_day_id
-    and execution_status='running' order by effective_from,id
+    and execution_status in ('running','completed') order by effective_from,id
   loop
     for ah in select * from public.m21_assignment_history x
       where x.ad_work_id=(select ad_work_id from public.ad_work_days where id=p_ad_work_day_id)
@@ -2039,9 +2120,11 @@ begin
             -- independently with their exact link interval.
             if exists(select 1 from public.gps_device_vehicle_links x
               where x.vehicle_id=l.vehicle_id and x.is_primary and x.id<>l.id
+                and x.effective_from<coalesce(v_until,'infinity'::timestamptz)
+                and coalesce(x.effective_until,'infinity'::timestamptz)>v_from
                 and x.effective_from<coalesce(l.effective_until,'infinity'::timestamptz)
-                and l.effective_from<coalesce(x.effective_until,'infinity'::timestamptz)) then
-              perform public.m23_evaluate_scope_authority(p_ad_work_day_id,e.id,ah.id,null,null,rh.id,p_policy_id,p_policy_version,p_now); v_count:=v_count+1;
+                and coalesce(x.effective_until,'infinity'::timestamptz)>l.effective_from) then
+              perform public.m23_evaluate_scope_authority(p_ad_work_day_id,e.id,ah.id,l.id,l.gps_device_id,rh.id,p_policy_id,p_policy_version,p_now); v_count:=v_count+1;
             else
               perform public.m23_evaluate_scope_authority(p_ad_work_day_id,e.id,ah.id,l.id,l.gps_device_id,rh.id,p_policy_id,p_policy_version,p_now); v_count:=v_count+1;
             end if;
@@ -2063,22 +2146,68 @@ create or replace function public.m23_enqueue_due_comparison_jobs(
   p_now timestamptz default clock_timestamp(), p_limit integer default 100
 ) returns integer language plpgsql security definer set search_path = pg_catalog, public
 as $$
-declare r record; v_count integer:=0;
+declare
+  r record; v_count integer:=0; v_pass integer; v_found boolean:=false;
+  v_cursor_work_day uuid; v_cursor_policy text; v_cursor_version text; v_cursor_job uuid;
+  v_last_work_day uuid; v_last_policy text; v_last_version text; v_last_job uuid;
 begin
   if p_limit not between 1 and 100 or p_now is null then raise exception 'Invalid bounded M23 due sweep' using errcode='22023'; end if;
-  for r in
-    select distinct j.ad_work_day_id from public.m23_comparison_jobs j
-      join public.m23_comparison_heads h on h.policy_id=j.policy_id and h.policy_version=j.policy_version
-      join public.m23_comparison_snapshots s on s.id=h.snapshot_id
-      join public.m23_comparison_policies p on p.policy_id=s.policy_id and p.policy_version=s.policy_version
-    where j.state='completed' and (
-      (s.overall_outcome='awaiting_sources' and exists(select 1 from public.m21_execution_history e where e.id=s.execution_history_id and p_now>=e.effective_from+make_interval(secs=>p.missing_source_grace_seconds)))
-      or (s.finality='provisional_active_work' and exists(select 1 from public.m21_execution_history e where e.id=s.execution_history_id and e.effective_until is not null and p_now>=e.effective_until))
-      or (s.finality='provisional_backfill_open' and exists(select 1 from public.m21_execution_history e where e.id=s.execution_history_id and e.effective_until is not null and p_now>=e.effective_until+make_interval(secs=>p.backfill_window_seconds)))
-    ) order by j.ad_work_day_id limit p_limit
-  loop
-    perform public.m23_enqueue_comparison_job(r.ad_work_day_id); v_count:=v_count+1;
+  select cursor_ad_work_day_id,cursor_policy_id,cursor_policy_version,cursor_job_id
+    into v_cursor_work_day,v_cursor_policy,v_cursor_version,v_cursor_job
+    from public.m23_due_sweep_state where id=true for update;
+  for v_pass in 1..2 loop
+    for r in
+      select j.* from public.m23_comparison_jobs j
+      where j.state='completed'
+        and (v_pass=2 or v_cursor_work_day is null
+          or (j.ad_work_day_id,j.policy_id,j.policy_version,j.id)>
+             (v_cursor_work_day,v_cursor_policy,v_cursor_version,v_cursor_job))
+        and exists(
+          select 1
+          from public.m23_comparison_heads h
+          join public.m23_comparison_snapshots s on s.id=h.snapshot_id
+          join public.m23_comparison_policies p on p.policy_id=s.policy_id and p.policy_version=s.policy_version
+          where h.policy_id=j.policy_id and h.policy_version=j.policy_version
+            and s.ad_work_day_id=j.ad_work_day_id
+            and (
+              (s.overall_outcome='awaiting_sources' and exists(
+                select 1 from public.m21_execution_history e
+                where e.id=s.execution_history_id
+                  and p_now>=e.effective_from+make_interval(secs=>p.missing_source_grace_seconds)))
+              or (s.finality='provisional_active_work' and exists(
+                select 1 from public.m21_execution_history e
+                where e.id=s.execution_history_id and e.effective_until is not null
+                  and p_now>=e.effective_until))
+              or (s.finality='provisional_backfill_open' and exists(
+                select 1 from public.m21_execution_history e
+                where e.id=s.execution_history_id and e.effective_until is not null
+                  and p_now>=e.effective_until+make_interval(secs=>p.backfill_window_seconds)))
+            )
+        )
+      order by j.ad_work_day_id,j.policy_id,j.policy_version,j.id
+      for update skip locked limit p_limit
+    loop
+      v_found:=true; v_count:=v_count+1;
+      update public.m23_comparison_jobs set
+        requested_generation=requested_generation+1,
+        dirty_after_claim=case when state='processing' then true else dirty_after_claim end,
+        state='pending',next_attempt_at=p_now,completed_at=null,safe_failure_reason_code=null,
+        updated_at=clock_timestamp()
+      where id=r.id;
+      v_last_work_day:=r.ad_work_day_id; v_last_policy:=r.policy_id;
+      v_last_version:=r.policy_version; v_last_job:=r.id;
+    end loop;
+    exit when v_found or v_cursor_work_day is null;
+    -- The cursor reached the end of the current ordering; wrap once so a
+    -- later due job cannot be starved by an old cursor.
+    v_cursor_work_day:=null; v_cursor_policy:=null; v_cursor_version:=null; v_cursor_job:=null;
   end loop;
+  update public.m23_due_sweep_state set
+    cursor_ad_work_day_id=case when v_found then v_last_work_day else null end,
+    cursor_policy_id=case when v_found then v_last_policy else null end,
+    cursor_policy_version=case when v_found then v_last_version else null end,
+    cursor_job_id=case when v_found then v_last_job else null end,
+    updated_at=clock_timestamp() where id=true;
   return v_count;
 end;
 $$;

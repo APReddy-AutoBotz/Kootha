@@ -1,10 +1,9 @@
 export const M23_COMPARISON_WORKER_CONTRACT_VERSION = "m23-comparison-worker-v1" as const;
 export const M23_COMPARISON_WORKER_TIMEOUT_MS = 8_000;
 export const M23_COMPARISON_WORKER_SOFT_DEADLINE_MS = 6_500;
-export const M23_COMPARISON_QUEUE_BATCH_SIZE = 50;
+export const M23_COMPARISON_QUEUE_BATCH_SIZE = 1;
+export const M23_COMPARISON_WORKER_MAX_CONCURRENCY = 5;
 export const M23_COMPARISON_QUEUE_MAX_ITERATIONS = 4;
-export const M23_COMPARISON_THEORETICAL_CAPACITY_PER_MINUTE =
-  M23_COMPARISON_QUEUE_BATCH_SIZE * M23_COMPARISON_QUEUE_MAX_ITERATIONS;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -15,6 +14,9 @@ export type M23ComparisonWorkerSummary = {
   readonly queueClaimed: number;
   readonly queueCompleted: number;
   readonly queueRetryOrFailed: number;
+  readonly compactionAttempted: boolean;
+  readonly compacted: number;
+  readonly compactionFailed: boolean;
 };
 
 function exactCounts(value: unknown): { claimed: number; completed: number; retry_or_failed: number } {
@@ -71,18 +73,44 @@ export async function runM23ComparisonWorker(
     const now = new Date().toISOString();
     for (let iteration = 0; iteration < M23_COMPARISON_QUEUE_MAX_ITERATIONS; iteration += 1) {
       if (Date.now() - startedAt >= M23_COMPARISON_WORKER_SOFT_DEADLINE_MS) break;
-      const counts = exactCounts(await runtime.rpc(
-        "m23_process_comparison_queue",
-        { p_batch_size: M23_COMPARISON_QUEUE_BATCH_SIZE, p_now: now },
-        controller.signal,
+      const counts = await Promise.all(Array.from(
+        { length: M23_COMPARISON_WORKER_MAX_CONCURRENCY },
+        async () => exactCounts(await runtime.rpc(
+          "m23_process_comparison_queue",
+          { p_batch_size: M23_COMPARISON_QUEUE_BATCH_SIZE, p_now: now },
+          controller.signal,
+        )),
       ));
-      if (counts.claimed !== counts.completed + counts.retry_or_failed) {
-        throw new Error("m23_queue_contract_invalid");
+      for (const count of counts) {
+        if (count.claimed !== count.completed + count.retry_or_failed) {
+          throw new Error("m23_queue_contract_invalid");
+        }
+        queueClaimed += count.claimed;
+        queueCompleted += count.completed;
+        queueRetryOrFailed += count.retry_or_failed;
       }
-      queueClaimed += counts.claimed;
-      queueCompleted += counts.completed;
-      queueRetryOrFailed += counts.retry_or_failed;
-      if (counts.claimed < M23_COMPARISON_QUEUE_BATCH_SIZE) break;
+      if (counts.reduce((total, count) => total + count.claimed, 0)
+        < M23_COMPARISON_WORKER_MAX_CONCURRENCY * M23_COMPARISON_QUEUE_BATCH_SIZE) break;
+    }
+    let compacted = 0;
+    let compactionFailed = false;
+    try {
+      const compactedResponse = await runtime.rpc(
+        "m23_compact_comparison_detail",
+        { p_batch_size: 100 },
+        controller.signal,
+      );
+      if (typeof compactedResponse !== "object" || compactedResponse === null || Array.isArray(compactedResponse)) {
+        throw new Error("m23_compaction_contract_invalid");
+      }
+      const deleted = (compactedResponse as JsonRecord).deletedDetailRows;
+      if (typeof deleted !== "number" || !Number.isSafeInteger(deleted) || deleted < 0) {
+        throw new Error("m23_compaction_contract_invalid");
+      }
+      compacted = deleted;
+    } catch (error) {
+      if (controller.signal.aborted) throw error;
+      compactionFailed = true;
     }
     const workerOk = queueRetryOrFailed === 0;
     return {
@@ -92,6 +120,9 @@ export async function runM23ComparisonWorker(
       queueClaimed,
       queueCompleted,
       queueRetryOrFailed,
+      compactionAttempted: true,
+      compacted,
+      compactionFailed,
     };
   } finally {
     clearTimeout(timeout);
@@ -106,6 +137,9 @@ export function failedM23ComparisonWorkerSummary(): M23ComparisonWorkerSummary {
     queueClaimed: 0,
     queueCompleted: 0,
     queueRetryOrFailed: 0,
+    compactionAttempted: false,
+    compacted: 0,
+    compactionFailed: false,
   };
 }
 

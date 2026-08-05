@@ -345,10 +345,11 @@ select throws_ok(
 create function pg_temp.m22_auth_signal(p_number integer)
 returns void language plpgsql as $$
 declare v_signal uuid;
+  v_base timestamptz:=date_bin('5 minutes',clock_timestamp()-interval '1 day'-interval '1 minute','2000-01-01+00'::timestamptz);
 begin
   v_signal:=public.m22_record_sanitized_signal(
     'authentication_failure','secret_invalid','m22.behavior',
-    '2026-07-29 05:00:00+00'::timestamptz+make_interval(secs=>p_number),
+    v_base+make_interval(secs=>p_number),
     null,null,repeat('f',64));
   if v_signal is not null then
     perform public.m22_evaluate_signal(v_signal,clock_timestamp());
@@ -376,7 +377,7 @@ select ok(
   'subsequent failures do not create one alert occurrence per request');
 select ok(
   (select safe_fingerprint=repeat('f',64) and occurrence_count=6
-      and bucket_started_at='2026-07-29 05:00:00+00'
+      and bucket_started_at=date_bin('5 minutes',clock_timestamp()-interval '1 day'-interval '1 minute','2000-01-01+00'::timestamptz)
     from public.m22_auth_failure_aggregates)
   and not exists(
     select 1 from information_schema.columns
