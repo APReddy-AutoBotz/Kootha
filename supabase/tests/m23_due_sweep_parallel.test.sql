@@ -107,6 +107,7 @@ select dblink_disconnect('m23_due_3');
 select dblink_disconnect('m23_due_4');
 select dblink_disconnect('m23_due_5');
 
+set session_replication_role=replica;
 delete from public.m23_comparison_jobs where ad_work_id='2b000000-0000-0000-0000-000000000003';
 delete from public.m23_comparison_heads where snapshot_id='2b300000-0000-0000-0000-000000000000';
 delete from public.m23_comparison_snapshots where id='2b300000-0000-0000-0000-000000000000';
@@ -116,4 +117,5 @@ delete from public.ad_works where id='2b000000-0000-0000-0000-000000000003';
 delete from public.drivers where id='2b000000-0000-0000-0000-000000000001';
 delete from public.vehicles where id='2b000000-0000-0000-0000-000000000002';
 update public.m23_due_sweep_state set cursor_ad_work_day_id=null,cursor_policy_id=null,cursor_policy_version=null,cursor_job_id=null;
+set session_replication_role=origin;
 drop function public.m23_hold_due_cursor_for_test();

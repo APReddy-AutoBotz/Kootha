@@ -78,6 +78,12 @@ create temp table m23_pairing_successor on commit drop as
 select id from public.m23_comparison_snapshots
 where ad_work_day_id='29000000-0000-0000-0000-000000000005'
 order by created_at desc,id desc limit 1;
+create temp table m23_pairing_successor_relationship on commit drop as
+select pair_identity from public.m23_comparison_pairs
+where snapshot_id=(select id from m23_pairing_successor)
+  and phone_point_id='29100000-0000-0000-0000-000000000001'
+  and physical_point_id='29500000-0000-0000-0000-000000000001';
+grant select on m23_pairing_successor_relationship to authenticated;
 select is(jsonb_array_length(public.admin_get_m23_comparison_technical_values_v1((select id from m23_pairing_first))->'pairs'),
   (select pair_count from public.m23_comparison_snapshots where id=(select id from m23_pairing_first)),
   'first technical projection count equals first snapshot selected pair count');
@@ -88,7 +94,7 @@ select ok((public.admin_get_m23_comparison_technical_values_v1((select id from m
   'first technical projection contains first-snapshot relationship A');
 select ok((public.admin_get_m23_comparison_technical_values_v1((select id from m23_pairing_successor)))::text not like '%'||(select pair_identity from m23_pairing_first_relationship)||'%',
   'successor technical projection excludes superseded first relationship A');
-select ok((public.admin_get_m23_comparison_technical_values_v1((select id from m23_pairing_successor)))::text like '%'||(select pair_identity from public.m23_comparison_pairs where snapshot_id=(select id from m23_pairing_successor) and phone_point_id='29100000-0000-0000-0000-000000000001' and physical_point_id='29500000-0000-0000-0000-000000000001')||'%',
+select ok((public.admin_get_m23_comparison_technical_values_v1((select id from m23_pairing_successor)))::text like '%'||(select pair_identity from m23_pairing_successor_relationship)||'%',
   'successor technical projection contains delayed relationship B');
 select ok((public.admin_get_m23_comparison_technical_values_v1((select id from m23_pairing_first)))::text !~ 'phonePointId|physicalPointId|latitude|longitude|rawPayload|credential'
   and (public.admin_get_m23_comparison_technical_values_v1((select id from m23_pairing_successor)))::text !~ 'phonePointId|physicalPointId|latitude|longitude|rawPayload|credential',
