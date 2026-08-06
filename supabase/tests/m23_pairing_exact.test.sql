@@ -72,8 +72,6 @@ values('29500000-0000-0000-0000-000000000001','29000000-0000-0000-0000-000000000
 insert into public.location_points(id,tracking_session_id,source,device_id,driver_id,vehicle_id,recorded_at,received_at,lat,lng,accuracy_meters,quality,ad_work_id,ad_work_day_id,assignment_id,telemetry_receipt_id,synthetic,gps_device_vehicle_link_id,assignment_history_id,execution_history_id)
 values('29600000-0000-0000-0000-000000000001','29000000-0000-0000-0000-000000000012','phone',null,'29000000-0000-0000-0000-000000000001','29000000-0000-0000-0000-000000000002','2026-07-31 08:01:20+00','2026-07-31 08:10+00',17,78,10,'good','29000000-0000-0000-0000-000000000003','29000000-0000-0000-0000-000000000005','29000000-0000-0000-0000-000000000004',null,true,null,'29000000-0000-0000-0000-000000000006','29000000-0000-0000-0000-000000000008');
 select public.m23_evaluate_scope('29000000-0000-0000-0000-000000000005','29000000-0000-0000-0000-000000000008','29000000-0000-0000-0000-000000000006','29000000-0000-0000-0000-000000000010','29000000-0000-0000-0000-000000000009','phone-device-comparison','m23-pilot-v1','2026-07-31 08:10+00');
-set local role authenticated;
-select set_config('request.jwt.claims',json_build_object('sub','29000000-0000-0000-0000-000000000014')::text,true);
 create temp table m23_pairing_successor on commit drop as
 select id from public.m23_comparison_snapshots
 where ad_work_day_id='29000000-0000-0000-0000-000000000005'
@@ -84,6 +82,9 @@ where snapshot_id=(select id from m23_pairing_successor)
   and phone_point_id='29100000-0000-0000-0000-000000000001'
   and physical_point_id='29500000-0000-0000-0000-000000000001';
 grant select on m23_pairing_successor_relationship to authenticated;
+grant select on m23_pairing_successor to authenticated;
+set local role authenticated;
+select set_config('request.jwt.claims',json_build_object('sub','29000000-0000-0000-0000-000000000014')::text,true);
 select is(jsonb_array_length(public.admin_get_m23_comparison_technical_values_v1((select id from m23_pairing_first))->'pairs'),
   (select pair_count from public.m23_comparison_snapshots where id=(select id from m23_pairing_first)),
   'first technical projection count equals first snapshot selected pair count');
