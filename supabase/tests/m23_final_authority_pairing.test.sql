@@ -78,8 +78,18 @@ select is((select count(*)::integer from public.m23_comparison_pairs where snaps
 select ok(not exists(select 1 from public.m23_comparison_pairs cp join public.m23_comparison_snapshots s on s.id=cp.snapshot_id where s.gps_device_vehicle_link_id='28000000-0000-0000-0000-000000000013' and cp.physical_point_id in ('28300000-0000-0000-0000-000000000003','28300000-0000-0000-0000-000000000004')),'no pair crosses the replacement boundary');
 select ok(exists(select 1 from public.m23_comparison_pairs cp join public.m23_comparison_snapshots s on s.id=cp.snapshot_id where s.gps_device_vehicle_link_id='28000000-0000-0000-0000-000000000014' and cp.phone_captured_at='2026-07-31 09:00+00' and cp.physical_captured_at='2026-07-31 09:00+00'),'exact boundary capture belongs to the replacement scope');
 
+-- End Work is represented by the immutable execution successor at the exact
+-- synthetic boundary.  Do not toggle the day row here: its M21 transition
+-- trigger timestamps a new successor with wall-clock time, which would make
+-- this clock-controlled boundary nondeterministic.
+insert into public.m21_execution_history(
+  ad_work_day_id,execution_status,effective_from,history_origin
+) values(
+  '28000000-0000-0000-0000-000000000009','completed',
+  '2026-07-31 10:00:00+00','observed'
+);
 update public.ad_work_days
-set execution_status='completed',execution_completed_at='2026-07-31 10:00:00+00'
+set execution_completed_at='2026-07-31 10:00:00+00'
 where id='28000000-0000-0000-0000-000000000009';
 select ok(exists(select 1 from public.m21_execution_history where ad_work_day_id='28000000-0000-0000-0000-000000000009' and execution_status='completed'),'End Work records a subsequent completed history row');
 select is(public.m23_evaluate_work_day('28000000-0000-0000-0000-000000000009','phone-device-comparison','m23-pilot-v1','2026-07-31 10:30+00'),2,'completed execution history does not create a second authority scope');
