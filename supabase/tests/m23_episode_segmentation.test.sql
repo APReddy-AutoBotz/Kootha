@@ -63,6 +63,7 @@ create temp table m23_episode_key on commit drop as
 select a.dedupe_key from public.alerts a
 join public.m23_comparison_alert_context c on c.alert_id=a.id
 where c.first_snapshot_id=(select snapshot_id from m23_episode_first);
+grant select on m23_episode_key to authenticated;
 insert into public.m23_comparison_snapshots(
   ad_work_day_id,ad_work_id,driver_id,vehicle_id,assignment_history_id,execution_history_id,
   gps_device_id,gps_device_vehicle_link_id,policy_id,policy_version,pairing_algorithm_version,

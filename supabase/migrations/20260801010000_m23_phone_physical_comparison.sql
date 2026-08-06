@@ -794,7 +794,7 @@ $$;
 
 drop function if exists public.admin_get_m23_comparison_technical_values_v1(uuid,text,integer);
 create function public.admin_get_m23_comparison_technical_values_v1(
-  p_snapshot_id uuid,p_after_cursor text default null,p_limit integer default 100
+  p_snapshot_id uuid,p_after_cursor text,p_limit integer
 ) returns jsonb language plpgsql security definer set search_path = pg_catalog, public
 as $$
 declare v_actor uuid:=public.m20a_require_admin(); s public.m23_comparison_snapshots%rowtype;
@@ -822,7 +822,7 @@ begin
       'rawHaversineDistanceMeters',x.raw_haversine_distance_meters,'conservativeSeparationMeters',x.conservative_separation_meters,
       'phoneAccuracyMeters',x.phone_accuracy_meters,'physicalDeviceAccuracyMeters',x.physical_device_accuracy_meters,
       'threshold',p.sustained_mismatch_distance_meters,'quality',x.quality,'outcome',x.outcome,
-      'policyVersion',x.policy_version,'synthetic',x.synthetic) order by x.phone_captured_at,x.physical_captured_at,x.pair_identity),'[]'::jsonb)
+      'policyVersion',s.policy_version,'synthetic',x.synthetic) order by x.phone_captured_at,x.physical_captured_at,x.pair_identity),'[]'::jsonb)
     into v_pairs
   from (select x.* from public.m23_comparison_pairs x
     where x.snapshot_id=s.id
@@ -2439,7 +2439,7 @@ end;
 $$;
 
 create or replace function public.admin_get_m23_comparison_technical_values_v1(
-  p_snapshot_id uuid,p_after_cursor text default null,p_limit integer default 100
+  p_snapshot_id uuid,p_after_cursor text,p_limit integer
 ) returns jsonb language plpgsql security definer set search_path = pg_catalog, public
 as $$
 declare v_actor uuid:=public.m20a_require_admin(); s public.m23_comparison_snapshots%rowtype;
@@ -2465,7 +2465,7 @@ begin
       'rawHaversineDistanceMeters',x.raw_haversine_distance_meters,'conservativeSeparationMeters',x.conservative_separation_meters,
       'phoneAccuracyMeters',x.phone_accuracy_meters,'physicalDeviceAccuracyMeters',x.physical_device_accuracy_meters,
       'threshold',p.sustained_mismatch_distance_meters,'quality',x.quality,'outcome',x.outcome,
-      'policyVersion',x.policy_version,'synthetic',x.synthetic) order by x.phone_captured_at,x.physical_captured_at,x.pair_identity),'[]'::jsonb)
+      'policyVersion',s.policy_version,'synthetic',x.synthetic) order by x.phone_captured_at,x.physical_captured_at,x.pair_identity),'[]'::jsonb)
     into v_pairs from (select x.* from public.m23_comparison_pairs x
       where x.snapshot_id=s.id
         and (p_after_cursor is null or x.phone_captured_at>v_cursor_at

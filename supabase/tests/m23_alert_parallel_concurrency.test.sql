@@ -42,6 +42,7 @@ select is((select count(*)::integer from public.m23_comparison_alert_context whe
 select dblink_disconnect('m23_alert_c1');
 select dblink_disconnect('m23_alert_c2');
 
+set session_replication_role=replica;
 delete from public.m23_comparison_alert_context where authority_scope_key=public.m22_safe_digest('m23-alert-parallel-scope');
 delete from public.alert_status_history where alert_id in (select id from public.alerts where source='comparison' and m23_comparison_snapshot_id='2c000000-0000-0000-0000-000000000003');
 delete from public.audit_logs where entity_type='alert' and entity_id in (select id from public.alerts where source='comparison' and m23_comparison_snapshot_id='2c000000-0000-0000-0000-000000000003');
@@ -49,3 +50,4 @@ delete from public.alerts where source='comparison' and m23_comparison_snapshot_
 delete from public.m23_comparison_snapshots where id='2c000000-0000-0000-0000-000000000003';
 delete from public.ad_work_days where id='2c000000-0000-0000-0000-000000000002';
 delete from public.ad_works where id='2c000000-0000-0000-0000-000000000001';
+set session_replication_role=origin;
