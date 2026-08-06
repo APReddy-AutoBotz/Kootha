@@ -22,9 +22,9 @@ values('28000000-0000-0000-0000-000000000008','28000000-0000-0000-0000-000000000
 insert into public.ad_work_days(id,ad_work_id,work_date,driver_id,vehicle_id,execution_status,execution_started_at)
 values('28000000-0000-0000-0000-000000000009','28000000-0000-0000-0000-000000000007','2026-07-31','28000000-0000-0000-0000-000000000001','28000000-0000-0000-0000-000000000002','running','2026-07-31 08:00+00');
 insert into public.m21_assignment_history(id,assignment_id,ad_work_id,driver_id,vehicle_id,assignment_status,effective_from,effective_until,history_origin)
-values('28000000-0000-0000-0000-000000000010','28000000-0000-0000-0000-000000000008','28000000-0000-0000-0000-000000000007','28000000-0000-0000-0000-000000000001','28000000-0000-0000-0000-000000000002','assigned','2026-07-31 08:00+00',null,'observed');
+values('28000000-0000-0000-0000-000000000010','28000000-0000-0000-0000-000000000008','28000000-0000-0000-0000-000000000007','28000000-0000-0000-0000-000000000001','28000000-0000-0000-0000-000000000002','assigned','2026-07-31 08:00+00','2026-07-31 11:00+00','observed');
 insert into public.m21_release_history(id,ad_work_id,release_status,effective_from,effective_until,history_origin)
-values('28000000-0000-0000-0000-000000000011','28000000-0000-0000-0000-000000000007','released_to_driver','2026-07-31 08:00+00',null,'observed');
+values('28000000-0000-0000-0000-000000000011','28000000-0000-0000-0000-000000000007','released_to_driver','2026-07-31 08:00+00','2026-07-31 11:00+00','observed');
 insert into public.m21_execution_history(id,ad_work_day_id,execution_status,effective_from,effective_until,history_origin)
 values('28000000-0000-0000-0000-000000000012','28000000-0000-0000-0000-000000000009','running','2026-07-31 08:00+00','2026-07-31 10:00+00','observed');
 insert into public.gps_device_vehicle_links(id,gps_device_id,vehicle_id,is_primary,effective_from,effective_until,change_reason,created_by_admin,closed_by_admin,closed_at)
