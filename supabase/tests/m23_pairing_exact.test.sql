@@ -53,6 +53,8 @@ create temp table m23_pairing_first_relationship on commit drop as
 select pair_identity from public.m23_comparison_pairs
 where snapshot_id=(select id from m23_pairing_first)
   and phone_point_id='29100000-0000-0000-0000-000000000001';
+grant select on m23_pairing_first to authenticated;
+grant select on m23_pairing_first_relationship to authenticated;
 select is((select pair_count from public.m23_comparison_snapshots order by created_at desc limit 1),5,'one-to-one pairing rematches a displaced phone and includes the inclusive boundary');
 select is((select physical_point_id from public.m23_comparison_pairs cp join public.m23_comparison_snapshots s on s.id=cp.snapshot_id where s.ad_work_day_id='29000000-0000-0000-0000-000000000005' and cp.phone_captured_at='2026-07-31 08:00:05+00'),'29300000-0000-0000-0000-000000000002','the second phone receives its next available candidate');
 select ok((select count(*)=count(distinct physical_point_id) from public.m23_comparison_pairs cp join public.m23_comparison_snapshots s on s.id=cp.snapshot_id where s.ad_work_day_id='29000000-0000-0000-0000-000000000005'),'physical points are never reused');

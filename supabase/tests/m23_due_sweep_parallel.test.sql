@@ -24,7 +24,7 @@ values('2b300000-0000-0000-0000-000000000000','2b100000-0000-0000-0000-000000000
 insert into public.m23_comparison_heads(authority_scope_key,policy_id,policy_version,snapshot_id,updated_at)
 select authority_scope_key,policy_id,policy_version,id,clock_timestamp()
 from public.m23_comparison_snapshots where id='2b300000-0000-0000-0000-000000000000';
-delete from public.m23_comparison_jobs where ad_work_day_id='2b100000-0000-0000-0000-000000000000';
+delete from public.m23_comparison_jobs where ad_work_id='2b000000-0000-0000-0000-000000000003';
 insert into public.m23_comparison_jobs(id,ad_work_day_id,ad_work_id,policy_id,policy_version,state,next_attempt_at,completed_at,processing_generation,completed_generation)
 select '2b400000-0000-0000-0000-000000000000','2b100000-0000-0000-0000-000000000000','2b000000-0000-0000-0000-000000000003','phone-device-comparison','m23-pilot-v1','completed','2026-08-02 00:00+00','2026-08-02 00:00+00',1,1;
 insert into public.m23_comparison_jobs(id,ad_work_day_id,ad_work_id,policy_id,policy_version,state,next_attempt_at)

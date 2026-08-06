@@ -176,6 +176,6 @@ select is((select overall_outcome from public.m23_comparison_snapshots where id=
 create temp table m23_episode_duration on commit drop as
 select public.m23_evaluate_scope('24000000-0000-0000-0000-000000000008','24000000-0000-0000-0000-000000000011','24000000-0000-0000-0000-000000000009','24000000-0000-0000-0000-000000000012','24000000-0000-0000-0000-000000000004','m23-episode-duration','v1','2026-07-31 08:22+00') snapshot_id;
 select is((select overall_outcome from public.m23_comparison_snapshots where id=(select snapshot_id from m23_episode_duration)),'isolated_mismatch','one instant below duration does not become sustained');
-select is((select count(*)::integer from public.m23_comparison_snapshots where policy_id='m23-episode-test'),3,'episode reruns add only deliberate phase snapshots');
+select is((select count(*)::integer from public.m23_comparison_snapshots where policy_id='m23-episode-test'),5,'episode reruns add only deliberate phase snapshots');
 select * from finish();
 rollback;
