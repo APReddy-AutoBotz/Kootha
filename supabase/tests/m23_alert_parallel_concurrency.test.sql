@@ -25,6 +25,8 @@ begin
 end;
 $$;
 
+\connect postgres supabase_admin
+
 select plan(4);
 select dblink_connect_u('m23_alert_c1','dbname=postgres');
 select dblink_connect_u('m23_alert_c2','dbname=postgres');

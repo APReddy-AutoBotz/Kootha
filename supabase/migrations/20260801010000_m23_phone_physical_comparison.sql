@@ -2385,7 +2385,7 @@ begin
       where ctx.authority_scope_key=s.authority_scope_key and ctx.policy_id=s.policy_id
         and ctx.policy_version=s.policy_version and ax.condition_active
         and ax.status::text not in ('resolved','false_alarm','ignored')
-      order by ax.episode_number desc,ax.created_at desc,ax.id desc limit 1 for update of c;
+      order by ax.episode_number desc,ax.created_at desc,ax.id desc limit 1 for update of ctx;
     if c.alert_id is not null then
       select * into a from public.alerts where id=c.alert_id for update;
       if a.condition_active and a.status::text not in ('resolved','false_alarm','ignored')

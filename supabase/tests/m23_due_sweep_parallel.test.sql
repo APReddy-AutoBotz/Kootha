@@ -13,7 +13,7 @@ select format('2b100000-0000-0000-0000-%s',lpad(n::text,12,'0'))::uuid,
   '2b000000-0000-0000-0000-000000000001','2b000000-0000-0000-0000-000000000002','planned',null
 from generate_series(0,4) n;
 insert into public.m21_execution_history(id,ad_work_day_id,execution_status,effective_from,effective_until,history_origin)
-values('2b200000-0000-0000-0000-000000000000','2b100000-0000-0000-0000-000000000000','running','2026-08-02 00:00+00','2026-08-02 01:00+00','synthetic_due_sweep');
+values('2b200000-0000-0000-0000-000000000000','2b100000-0000-0000-0000-000000000000','running','2026-08-02 00:00+00','2026-08-02 01:00+00','observed');
 insert into public.m23_comparison_snapshots(
   id,ad_work_day_id,ad_work_id,execution_history_id,policy_id,policy_version,authority_scope_key,input_hash,
   source_expectation,overall_outcome,finality,evaluation_phase,synthetic,build_complete)
@@ -41,6 +41,8 @@ begin
   return 1;
 end;
 $$;
+
+\connect postgres supabase_admin
 
 select plan(10);
 select dblink_connect_u('m23_due_1','dbname=postgres');
