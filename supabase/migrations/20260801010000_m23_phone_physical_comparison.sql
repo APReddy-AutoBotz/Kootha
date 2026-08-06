@@ -624,14 +624,17 @@ create or replace function public.m23_sync_mismatch_alert(
 ) returns void language plpgsql security definer set search_path = pg_catalog, public
 as $$
 declare s public.m23_comparison_snapshots%rowtype; w public.ad_work_days%rowtype;
-  a public.alerts%rowtype; v_key text; v_episode integer; v_alert_id uuid;
+  a public.alerts%rowtype; c public.m23_comparison_alert_context%rowtype;
+  v_key text; v_episode integer; v_alert_id uuid;
 begin
   select * into strict s from public.m23_comparison_snapshots where id=p_snapshot_id;
   select * into strict w from public.ad_work_days where id=s.ad_work_day_id;
   v_key:=public.m22_safe_digest(concat_ws('|','m23_comparison_mismatch',s.authority_scope_key,
     s.policy_id,s.policy_version));
+  perform pg_advisory_xact_lock(hashtextextended(v_key,0));
   select * into a from public.alerts where dedupe_key=v_key
-    and status::text not in ('resolved','false_alarm','ignored') for update;
+    and status::text not in ('resolved','false_alarm','ignored')
+    order by episode_number desc,created_at desc,id desc limit 1 for update;
   if p_outcome='sustained_mismatch' then
     if a.id is null then
       select coalesce(max(episode_number),0)+1 into v_episode from public.alerts where dedupe_key=v_key;
@@ -658,6 +661,10 @@ begin
         alert_id,policy_id,policy_version,first_snapshot_id,last_snapshot_id,authority_scope_key,synthetic
       ) values(v_alert_id,s.policy_id,s.policy_version,s.id,s.id,s.authority_scope_key,s.synthetic);
     else
+      select * into c from public.m23_comparison_alert_context
+        where alert_id=a.id and authority_scope_key=s.authority_scope_key
+          and policy_id=s.policy_id and policy_version=s.policy_version for update;
+      if c.alert_id is null then raise exception 'M23 comparison alert context missing' using errcode='P0002'; end if;
       update public.alerts set condition_active=true,condition_cleared_at=null,
         last_detected_at=greatest(last_detected_at,s.sustained_last_pair_at),occurrence_count=least(occurrence_count+1,1000000000),
         observed_value=p_max_separation,threshold_value=p_policy.sustained_mismatch_distance_meters,
@@ -668,13 +675,27 @@ begin
       update public.m23_comparison_alert_context set last_snapshot_id=s.id,updated_at=clock_timestamp()
         where alert_id=a.id;
     end if;
+  elsif p_outcome='paired_match' and s.acceptable_pair_count>=p_policy.minimum_pair_count
+    and s.mismatch_candidate_count=0 then
+    select ctx.* into c from public.m23_comparison_alert_context ctx
+      join public.alerts ax on ax.id=ctx.alert_id
+      where ctx.authority_scope_key=s.authority_scope_key and ctx.policy_id=s.policy_id
+        and ctx.policy_version=s.policy_version and ax.condition_active
+        and ax.status::text not in ('resolved','false_alarm','ignored')
+      order by ax.episode_number desc,ax.created_at desc,ax.id desc limit 1 for update of ctx;
+    if c.alert_id is not null then
+      select * into a from public.alerts where id=c.alert_id for update;
+      if s.generated_at>coalesce(a.last_detected_at,'-infinity'::timestamptz) then
+        update public.alerts set condition_active=false,condition_cleared_at=clock_timestamp(),
+          m23_comparison_snapshot_id=s.id,updated_at=clock_timestamp() where id=a.id;
+        update public.m23_comparison_alert_context set cleared_by_snapshot_id=s.id,updated_at=clock_timestamp()
+          where alert_id=a.id;
+      end if;
+    end if;
   else
-    update public.alerts set condition_active=false,condition_cleared_at=clock_timestamp(),
-      m23_comparison_snapshot_id=s.id,updated_at=clock_timestamp()
-    where dedupe_key=v_key and condition_active
-      and status::text not in ('resolved','false_alarm','ignored');
-    update public.m23_comparison_alert_context c set cleared_by_snapshot_id=s.id,updated_at=clock_timestamp()
-      where c.alert_id in (select al.id from public.alerts al where al.dedupe_key=v_key);
+    insert into public.audit_logs(actor_type,action,entity_type,entity_id,safe_details)
+      values('system','m23_comparison_inconclusive_observed', 'm23_comparison', s.id,
+        jsonb_build_object('outcome',p_outcome,'scope',s.authority_scope_key));
   end if;
 end;
 $$;
@@ -718,8 +739,8 @@ begin
       'sustainedPairCount',s.sustained_pair_count,'sustainedFirstPairAt',s.sustained_first_pair_at,
       'sustainedLastPairAt',s.sustained_last_pair_at,'synthetic',s.synthetic,'generatedAt',s.generated_at,
       'alertId',(select a.id from public.alerts a where a.m23_comparison_snapshot_id=s.id order by a.updated_at desc limit 1),
-      'technicalValuesAvailable',exists(select 1 from public.m23_comparison_pair_evidence x
-        where x.authority_scope_key=s.authority_scope_key and x.policy_id=s.policy_id and x.policy_version=s.policy_version)
+      'technicalValuesAvailable',exists(select 1 from public.m23_comparison_pairs x
+        where x.snapshot_id=s.id)
     ) row_value
     from public.m23_comparison_snapshots s join public.ad_work_days wd on wd.id=s.ad_work_day_id
       join public.ad_works aw on aw.id=s.ad_work_id left join public.m23_comparison_reviews rv on rv.snapshot_id=s.id
@@ -753,8 +774,7 @@ begin
       'sustainedPairCount',s.sustained_pair_count,'sustainedFirstPairAt',s.sustained_first_pair_at,
       'sustainedLastPairAt',s.sustained_last_pair_at,'synthetic',s.synthetic,'generatedAt',s.generated_at,
       'inputWatermark',s.input_watermark,'technicalValuesAvailable',exists(select 1
-        from public.m23_comparison_pair_evidence x where x.authority_scope_key=s.authority_scope_key
-          and x.policy_id=s.policy_id and x.policy_version=s.policy_version)
+        from public.m23_comparison_pairs x where x.snapshot_id=s.id)
     ),
     'reviewHistory',coalesce((select jsonb_agg(jsonb_build_object(
       'id',h.id,'previousStatus',h.previous_status,'newStatus',h.new_status,'reason',h.reason,
@@ -804,13 +824,13 @@ begin
       'threshold',p.sustained_mismatch_distance_meters,'quality',x.quality,'outcome',x.outcome,
       'policyVersion',x.policy_version,'synthetic',x.synthetic) order by x.phone_captured_at,x.physical_captured_at,x.pair_identity),'[]'::jsonb)
     into v_pairs
-  from (select x.* from public.m23_comparison_pair_evidence x
-    where x.authority_scope_key=s.authority_scope_key and x.policy_id=s.policy_id and x.policy_version=s.policy_version
-      and (s.input_watermark is null or (x.phone_captured_at<=s.input_watermark and x.physical_captured_at<=s.input_watermark))
+  from (select x.* from public.m23_comparison_pairs x
+    where x.snapshot_id=s.id
       and (p_after_cursor is null or (x.phone_captured_at>v_cursor_at
         or (x.phone_captured_at=v_cursor_at and x.physical_captured_at>v_cursor_physical)
         or (x.phone_captured_at=v_cursor_at and x.physical_captured_at=v_cursor_physical and x.pair_identity>v_cursor_id)))
-    order by x.phone_captured_at,x.physical_captured_at,x.pair_identity limit p_limit+1) x;
+    order by x.phone_captured_at,x.physical_captured_at,x.pair_identity
+    limit least(p_limit+1,s.pair_count+1)) x;
   v_count:=jsonb_array_length(v_pairs); v_has_more:=v_count>p_limit;
   if v_has_more then
     v_last:=v_pairs->(p_limit-1);
@@ -869,7 +889,7 @@ $$;
 create or replace function public.m23_compact_comparison_detail(p_batch_size integer default 100)
 returns jsonb language plpgsql security definer set search_path = pg_catalog, public
 as $$
-declare v_deleted integer:=0;
+declare v_deleted_pairs integer:=0; v_deleted_evidence integer:=0;
 begin
   if p_batch_size not between 1 and 100 then raise exception 'Invalid bounded M23 compaction batch' using errcode='22023'; end if;
   perform set_config('app.m23_compaction','on',true);
@@ -881,9 +901,34 @@ begin
       and not exists(select 1 from public.m23_comparison_review_history h where h.snapshot_id=s.id)
     order by x2.id limit p_batch_size
   );
-  get diagnostics v_deleted=row_count;
+  get diagnostics v_deleted_pairs=row_count;
+  delete from public.m23_comparison_pair_evidence ce where ce.id in (
+    select ce2.id
+    from public.m23_comparison_pair_evidence ce2
+    join public.m23_comparison_snapshots first_s on first_s.id=ce2.first_snapshot_id
+    where not exists(
+      select 1
+      from public.m23_comparison_pairs cp
+      join public.m23_comparison_snapshots selected_s on selected_s.id=cp.snapshot_id
+      where selected_s.authority_scope_key=ce2.authority_scope_key
+        and selected_s.policy_id=ce2.policy_id
+        and selected_s.policy_version=ce2.policy_version
+        and cp.pair_identity=ce2.pair_identity
+    )
+      and not first_s.is_latest
+      and first_s.finality<>'final_backfill_closed'
+      and not exists(select 1 from public.m23_comparison_reviews rv
+        where rv.snapshot_id=first_s.id and rv.status<>'not_reviewed')
+      and not exists(select 1 from public.m23_comparison_review_history rh
+        where rh.snapshot_id=first_s.id)
+      and not exists(select 1 from public.m23_comparison_alert_context ac
+        where ac.first_snapshot_id=first_s.id or ac.last_snapshot_id=first_s.id or ac.cleared_by_snapshot_id=first_s.id)
+    order by ce2.id limit p_batch_size
+  );
+  get diagnostics v_deleted_evidence=row_count;
   perform set_config('app.m23_compaction','off',true);
-  return jsonb_build_object('deletedDetailRows',v_deleted,'batchSize',p_batch_size);
+  return jsonb_build_object('deletedDetailRows',v_deleted_pairs,
+    'deletedEvidenceRows',v_deleted_evidence,'batchSize',p_batch_size);
 end;
 $$;
 
@@ -1111,8 +1156,6 @@ begin
       'insufficientQualityCount',s.insufficient_quality_count,'unpairedPhoneCount',s.unpaired_phone_count,
       'unpairedPhysicalCount',s.unpaired_physical_count,'sustainedPairCount',s.sustained_pair_count,
       'sustainedFirstPairAt',s.sustained_first_pair_at,'sustainedLastPairAt',s.sustained_last_pair_at,
-      'minimumConservativeSeparationMeters',s.minimum_conservative_separation_meters,
-      'maximumConservativeSeparationMeters',s.maximum_conservative_separation_meters,
       'synthetic',s.synthetic,'generatedAt',s.generated_at,
       'alertId',(select a.id from public.alerts a where a.m23_comparison_snapshot_id=s.id order by a.updated_at desc limit 1)
     ) row_value from public.m23_comparison_snapshots s
@@ -1145,8 +1188,6 @@ begin
       'insufficientQualityCount',s.insufficient_quality_count,'unpairedPhoneCount',s.unpaired_phone_count,
       'unpairedPhysicalCount',s.unpaired_physical_count,'sustainedPairCount',s.sustained_pair_count,
       'sustainedFirstPairAt',s.sustained_first_pair_at,'sustainedLastPairAt',s.sustained_last_pair_at,
-      'minimumConservativeSeparationMeters',s.minimum_conservative_separation_meters,
-      'maximumConservativeSeparationMeters',s.maximum_conservative_separation_meters,
       'synthetic',s.synthetic,'generatedAt',s.generated_at,'inputWatermark',s.input_watermark,
       'technicalValuesAvailable',exists(select 1 from public.m23_comparison_pairs p where p.snapshot_id=s.id)
     ),
@@ -1170,25 +1211,9 @@ $$;
 create or replace function public.admin_get_m23_comparison_technical_values_v1(p_snapshot_id uuid)
 returns jsonb language plpgsql security definer set search_path = pg_catalog, public
 as $$
-declare v_actor uuid:=public.m20a_require_admin(); v_result jsonb; s public.m23_comparison_snapshots%rowtype;
+declare v_result jsonb;
 begin
-  select * into strict s from public.m23_comparison_snapshots where id=p_snapshot_id and build_complete;
-  insert into public.audit_logs(actor_type,actor_id,action,entity_type,entity_id,safe_details)
-  values('admin',v_actor,'m23_comparison_technical_values_viewed','m23_comparison',p_snapshot_id,
-    jsonb_build_object('contract_version','m23-admin-v1','pair_count',s.pair_count));
-  select jsonb_build_object('contractVersion','m23-admin-v1','snapshotId',s.id,
-    'policyVersion',s.policy_version,'mismatchDistanceMeters',p.sustained_mismatch_distance_meters,
-    'accessedAt',clock_timestamp(),'pairs',coalesce((select jsonb_agg(jsonb_build_object(
-      'pairId',x.pair_identity,'phonePointId',x.phone_point_id,'physicalPointId',x.physical_point_id,
-      'phoneCapturedAt',x.phone_captured_at,'physicalCapturedAt',x.physical_captured_at,
-      'timeDifferenceMilliseconds',x.time_difference_milliseconds,'rawHaversineDistanceMeters',x.raw_haversine_distance_meters,
-      'phoneAccuracyMeters',x.phone_accuracy_meters,'physicalDeviceAccuracyMeters',x.physical_device_accuracy_meters,
-      'conservativeSeparationMeters',x.conservative_separation_meters,'quality',x.quality,
-      'outcome',x.outcome,'synthetic',x.synthetic) order by x.phone_captured_at,x.id)
-      from public.m23_comparison_pairs x where x.snapshot_id=s.id),'[]'::jsonb))
-  into v_result from public.m23_comparison_policies p
-  where p.policy_id=s.policy_id and p.policy_version=s.policy_version;
-  return v_result;
+  return public.admin_get_m23_comparison_technical_values_v1(p_snapshot_id,null,100);
 end;
 $$;
 
@@ -1453,6 +1478,9 @@ create or replace function public.m23_pair_evidence_immutable()
 returns trigger language plpgsql set search_path = pg_catalog, public
 as $$
 begin
+  if tg_op='DELETE' and current_setting('app.m23_compaction',true)='on' then
+    return old;
+  end if;
   raise exception 'M23 comparison pair evidence is immutable' using errcode='55000';
 end;
 $$;
@@ -2206,7 +2234,12 @@ begin
   if p_limit not between 1 and 100 or p_now is null then raise exception 'Invalid bounded M23 due sweep' using errcode='22023'; end if;
   select cursor_ad_work_day_id,cursor_policy_id,cursor_policy_version,cursor_job_id
     into v_cursor_work_day,v_cursor_policy,v_cursor_version,v_cursor_job
-    from public.m23_due_sweep_state where id=true for update;
+    from public.m23_due_sweep_state where id=true for update skip locked;
+  if not found then
+    -- Another queue RPC owns the singleton cursor.  Do not wait for its
+    -- transaction-scoped lock; this invocation can still claim pending work.
+    return 0;
+  end if;
   for v_pass in 1..2 loop
     for r in
       select j.* from public.m23_comparison_jobs j
@@ -2307,11 +2340,14 @@ create or replace function public.m23_sync_mismatch_alert(
 ) returns void language plpgsql security definer set search_path = pg_catalog, public
 as $$
 declare s public.m23_comparison_snapshots%rowtype; a public.alerts%rowtype; c public.m23_comparison_alert_context%rowtype;
-  v_key text; v_episode integer; v_alert_id uuid; v_cleared boolean:=false;
+  v_key text; v_episode integer; v_alert_id uuid;
 begin
   select * into strict s from public.m23_comparison_snapshots where id=p_snapshot_id;
   v_key:=public.m22_safe_digest(concat_ws('|','m23_comparison_mismatch',s.authority_scope_key,s.policy_id,s.policy_version));
-  select * into a from public.alerts where dedupe_key=v_key and status::text not in ('resolved','false_alarm','ignored') for update;
+  perform pg_advisory_xact_lock(hashtextextended(v_key,0));
+  select * into a from public.alerts
+    where dedupe_key=v_key and status::text not in ('resolved','false_alarm','ignored')
+    order by episode_number desc,created_at desc,id desc limit 1 for update;
   if p_outcome='sustained_mismatch' then
     if a.id is null then
       select coalesce(max(episode_number),0)+1 into v_episode from public.alerts where dedupe_key=v_key;
@@ -2331,8 +2367,12 @@ begin
       insert into public.audit_logs(actor_type,action,entity_type,entity_id,safe_details)
         values('system','m23_comparison_alert_opened','alert',v_alert_id,jsonb_build_object('snapshot_id',s.id,'policy_version',s.policy_version));
     else
+      select * into c from public.m23_comparison_alert_context
+        where alert_id=a.id and authority_scope_key=s.authority_scope_key
+          and policy_id=s.policy_id and policy_version=s.policy_version for update;
+      if c.alert_id is null then raise exception 'M23 comparison alert context missing' using errcode='P0002'; end if;
       update public.alerts set condition_active=true,condition_cleared_at=null,last_detected_at=greatest(last_detected_at,s.sustained_last_pair_at),
-        occurrence_count=least(occurrence_count+1,1000000000),m23_comparison_snapshot_id=s.id,synthetic=synthetic and s.synthetic,updated_at=clock_timestamp()
+        occurrence_count=least(occurrence_count+1,1000000000),m23_comparison_snapshot_id=s.id,synthetic=a.synthetic and s.synthetic,updated_at=clock_timestamp()
         where id=a.id;
       update public.m23_comparison_alert_context set last_snapshot_id=s.id,updated_at=clock_timestamp() where alert_id=a.id;
       insert into public.audit_logs(actor_type,action,entity_type,entity_id,safe_details)
@@ -2340,8 +2380,12 @@ begin
     end if;
   elsif p_outcome='paired_match' and s.acceptable_pair_count>=p_policy.minimum_pair_count
     and s.mismatch_candidate_count=0 then
-    select * into c from public.m23_comparison_alert_context where authority_scope_key=s.authority_scope_key
-      and policy_id=s.policy_id and policy_version=s.policy_version for update;
+    select ctx.* into c from public.m23_comparison_alert_context ctx
+      join public.alerts ax on ax.id=ctx.alert_id
+      where ctx.authority_scope_key=s.authority_scope_key and ctx.policy_id=s.policy_id
+        and ctx.policy_version=s.policy_version and ax.condition_active
+        and ax.status::text not in ('resolved','false_alarm','ignored')
+      order by ax.episode_number desc,ax.created_at desc,ax.id desc limit 1 for update of c;
     if c.alert_id is not null then
       select * into a from public.alerts where id=c.alert_id for update;
       if a.condition_active and a.status::text not in ('resolved','false_alarm','ignored')
@@ -2350,7 +2394,6 @@ begin
         update public.m23_comparison_alert_context set cleared_by_snapshot_id=s.id,updated_at=clock_timestamp() where alert_id=a.id;
         insert into public.audit_logs(actor_type,action,entity_type,entity_id,safe_details)
           values('system','m23_comparison_alert_condition_cleared','alert',a.id,jsonb_build_object('snapshot_id',s.id,'outcome','paired_match'));
-        v_cleared:=true;
       end if;
     end if;
   else
@@ -2380,8 +2423,8 @@ begin
     'unpairedPhoneCount',s.unpaired_phone_count,'unpairedPhysicalCount',s.unpaired_physical_count,
     'sustainedPairCount',s.sustained_pair_count,'sustainedFirstPairAt',s.sustained_first_pair_at,
     'sustainedLastPairAt',s.sustained_last_pair_at,'synthetic',s.synthetic,'generatedAt',s.generated_at,
-    'inputWatermark',s.input_watermark,'technicalValuesAvailable',exists(select 1 from public.m23_comparison_pair_evidence x
-      where x.authority_scope_key=s.authority_scope_key and x.policy_id=s.policy_id and x.policy_version=s.policy_version)),
+    'inputWatermark',s.input_watermark,'technicalValuesAvailable',exists(select 1 from public.m23_comparison_pairs x
+      where x.snapshot_id=s.id)),
     'reviewHistory',coalesce((select jsonb_agg(jsonb_build_object('id',h.id,'previousStatus',h.previous_status,
       'newStatus',h.new_status,'reason',h.reason,'note',h.note,'createdAt',h.created_at) order by h.created_at desc)
       from public.m23_comparison_review_history h where h.snapshot_id=s.id),'[]'::jsonb),
@@ -2411,7 +2454,7 @@ begin
       v_cursor_at:=split_part(convert_from(decode(p_after_cursor,'base64'),'utf8'),'|',1)::timestamptz;
       v_cursor_physical:=split_part(convert_from(decode(p_after_cursor,'base64'),'utf8'),'|',2)::timestamptz;
       v_cursor_id:=split_part(convert_from(decode(p_after_cursor,'base64'),'utf8'),'|',3);
-      if char_length(v_cursor_id)<>64 then raise exception 'bad cursor'; end if;
+      if v_cursor_at is null or v_cursor_physical is null or char_length(v_cursor_id)<>64 then raise exception 'bad cursor'; end if;
     exception when others then raise exception 'Invalid M23 technical-value cursor' using errcode='22023'; end;
   end if;
   insert into public.audit_logs(actor_type,actor_id,action,entity_type,entity_id,safe_details)
@@ -2423,13 +2466,13 @@ begin
       'phoneAccuracyMeters',x.phone_accuracy_meters,'physicalDeviceAccuracyMeters',x.physical_device_accuracy_meters,
       'threshold',p.sustained_mismatch_distance_meters,'quality',x.quality,'outcome',x.outcome,
       'policyVersion',x.policy_version,'synthetic',x.synthetic) order by x.phone_captured_at,x.physical_captured_at,x.pair_identity),'[]'::jsonb)
-    into v_pairs from (select x.* from public.m23_comparison_pair_evidence x
-      where x.authority_scope_key=s.authority_scope_key and x.policy_id=s.policy_id and x.policy_version=s.policy_version
-        and (s.input_watermark is null or (x.phone_captured_at<=s.input_watermark and x.physical_captured_at<=s.input_watermark))
+    into v_pairs from (select x.* from public.m23_comparison_pairs x
+      where x.snapshot_id=s.id
         and (p_after_cursor is null or x.phone_captured_at>v_cursor_at
           or (x.phone_captured_at=v_cursor_at and x.physical_captured_at>v_cursor_physical)
           or (x.phone_captured_at=v_cursor_at and x.physical_captured_at=v_cursor_physical and x.pair_identity>v_cursor_id))
-      order by x.phone_captured_at,x.physical_captured_at,x.pair_identity limit p_limit+1) x;
+      order by x.phone_captured_at,x.physical_captured_at,x.pair_identity
+      limit least(p_limit+1,s.pair_count+1)) x;
   if jsonb_array_length(v_pairs)>p_limit then
     v_more:=true; v_last:=v_pairs->(p_limit-1);
     v_next:=encode(convert_to((v_last->>'phoneCapturedAt')||'|'||(v_last->>'physicalCapturedAt')||'|'||(v_last->>'pairId'),'utf8'),'base64');

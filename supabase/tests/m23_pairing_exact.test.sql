@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(13);
+select plan(23);
 
 insert into public.drivers(id,name,phone,approval_status,onboarding_status)
 values('29000000-0000-0000-0000-000000000001','M23 Pairing Driver','9000000029','approved','approved');
@@ -45,6 +45,14 @@ select format('29300000-0000-0000-0000-%s',lpad(n::text,12,'0'))::uuid,'29000000
 from (values (1,'2026-07-31 08:00:04+00'::timestamptz),(2,'2026-07-31 08:00:50+00'),(3,'2026-07-31 08:03:05+00'),(4,'2026-07-31 08:04:50+00'),(5,'2026-07-31 08:05:10+00'),(6,'2026-07-31 08:08:00+00')) p(n,at);
 
 select public.m23_evaluate_scope('29000000-0000-0000-0000-000000000005','29000000-0000-0000-0000-000000000008','29000000-0000-0000-0000-000000000006','29000000-0000-0000-0000-000000000010','29000000-0000-0000-0000-000000000009','phone-device-comparison','m23-pilot-v1','2026-07-31 08:10+00');
+create temp table m23_pairing_first on commit drop as
+select id from public.m23_comparison_snapshots
+where ad_work_day_id='29000000-0000-0000-0000-000000000005'
+order by created_at,id limit 1;
+create temp table m23_pairing_first_relationship on commit drop as
+select pair_identity from public.m23_comparison_pairs
+where snapshot_id=(select id from m23_pairing_first)
+  and phone_point_id='29100000-0000-0000-0000-000000000001';
 select is((select pair_count from public.m23_comparison_snapshots order by created_at desc limit 1),5,'one-to-one pairing rematches a displaced phone and includes the inclusive boundary');
 select is((select physical_point_id from public.m23_comparison_pairs cp join public.m23_comparison_snapshots s on s.id=cp.snapshot_id where s.ad_work_day_id='29000000-0000-0000-0000-000000000005' and cp.phone_captured_at='2026-07-31 08:00:05+00'),'29300000-0000-0000-0000-000000000002','the second phone receives its next available candidate');
 select ok((select count(*)=count(distinct physical_point_id) from public.m23_comparison_pairs cp join public.m23_comparison_snapshots s on s.id=cp.snapshot_id where s.ad_work_day_id='29000000-0000-0000-0000-000000000005'),'physical points are never reused');
@@ -62,6 +70,50 @@ values('29500000-0000-0000-0000-000000000001','29000000-0000-0000-0000-000000000
 insert into public.location_points(id,tracking_session_id,source,device_id,driver_id,vehicle_id,recorded_at,received_at,lat,lng,accuracy_meters,quality,ad_work_id,ad_work_day_id,assignment_id,telemetry_receipt_id,synthetic,gps_device_vehicle_link_id,assignment_history_id,execution_history_id)
 values('29600000-0000-0000-0000-000000000001','29000000-0000-0000-0000-000000000012','phone',null,'29000000-0000-0000-0000-000000000001','29000000-0000-0000-0000-000000000002','2026-07-31 08:01:20+00','2026-07-31 08:10+00',17,78,10,'good','29000000-0000-0000-0000-000000000003','29000000-0000-0000-0000-000000000005','29000000-0000-0000-0000-000000000004',null,true,null,'29000000-0000-0000-0000-000000000006','29000000-0000-0000-0000-000000000008');
 select public.m23_evaluate_scope('29000000-0000-0000-0000-000000000005','29000000-0000-0000-0000-000000000008','29000000-0000-0000-0000-000000000006','29000000-0000-0000-0000-000000000010','29000000-0000-0000-0000-000000000009','phone-device-comparison','m23-pilot-v1','2026-07-31 08:10+00');
+set local role authenticated;
+select set_config('request.jwt.claims',json_build_object('sub','29000000-0000-0000-0000-000000000014')::text,true);
+create temp table m23_pairing_successor on commit drop as
+select id from public.m23_comparison_snapshots
+where ad_work_day_id='29000000-0000-0000-0000-000000000005'
+order by created_at desc,id desc limit 1;
+select is(jsonb_array_length(public.admin_get_m23_comparison_technical_values_v1((select id from m23_pairing_first))->'pairs'),
+  (select pair_count from public.m23_comparison_snapshots where id=(select id from m23_pairing_first)),
+  'first technical projection count equals first snapshot selected pair count');
+select is(jsonb_array_length(public.admin_get_m23_comparison_technical_values_v1((select id from m23_pairing_successor))->'pairs'),
+  (select pair_count from public.m23_comparison_snapshots where id=(select id from m23_pairing_successor)),
+  'successor technical projection count equals successor selected pair count');
+select ok((public.admin_get_m23_comparison_technical_values_v1((select id from m23_pairing_first)))::text like '%'||(select pair_identity from m23_pairing_first_relationship)||'%',
+  'first technical projection contains first-snapshot relationship A');
+select ok((public.admin_get_m23_comparison_technical_values_v1((select id from m23_pairing_successor)))::text not like '%'||(select pair_identity from m23_pairing_first_relationship)||'%',
+  'successor technical projection excludes superseded first relationship A');
+select ok((public.admin_get_m23_comparison_technical_values_v1((select id from m23_pairing_successor)))::text like '%'||(select pair_identity from public.m23_comparison_pairs where snapshot_id=(select id from m23_pairing_successor) and phone_point_id='29100000-0000-0000-0000-000000000001' and physical_point_id='29500000-0000-0000-0000-000000000001')||'%',
+  'successor technical projection contains delayed relationship B');
+select ok((public.admin_get_m23_comparison_technical_values_v1((select id from m23_pairing_first)))::text !~ 'phonePointId|physicalPointId|latitude|longitude|rawPayload|credential'
+  and (public.admin_get_m23_comparison_technical_values_v1((select id from m23_pairing_successor)))::text !~ 'phonePointId|physicalPointId|latitude|longitude|rawPayload|credential',
+  'technical projections contain no source identifiers or sensitive payload fields');
+select ok((public.admin_get_m23_comparison_detail_v1((select id from m23_pairing_first))->'comparison'->>'technicalValuesAvailable')::boolean
+  and (public.admin_get_m23_comparison_detail_v1((select id from m23_pairing_successor))->'comparison'->>'technicalValuesAvailable')::boolean,
+  'detail technical availability is selected-pair specific for each snapshot');
+reset role;
+
+insert into public.m23_comparison_pair_evidence(
+  first_snapshot_id,authority_scope_key,policy_id,policy_version,pair_identity,
+  phone_point_id,physical_point_id,phone_captured_at,physical_captured_at,
+  time_difference_milliseconds,raw_haversine_distance_meters,phone_accuracy_meters,
+  physical_device_accuracy_meters,conservative_separation_meters,quality,outcome,synthetic)
+select (select id from m23_pairing_first),s.authority_scope_key,s.policy_id,s.policy_version,
+  public.m22_safe_digest('m23-unselected-cache-row'),
+  '29100000-0000-0000-0000-000000000001','29300000-0000-0000-0000-000000000001',
+  '2026-07-31 08:00+00','2026-07-31 08:00:04+00',4000,0,10,10,0,'acceptable','match',true
+from public.m23_comparison_snapshots s where s.id=(select id from m23_pairing_first);
+select ok((public.m23_compact_comparison_detail(100)->>'deletedEvidenceRows')::integer>=1,
+  'service compaction removes superseded unselected cache rows in a fixed batch');
+select ok(not exists(select 1 from public.m23_comparison_pair_evidence where pair_identity=public.m22_safe_digest('m23-unselected-cache-row'))
+  and exists(select 1 from public.m23_comparison_pair_evidence ce join public.m23_comparison_pairs cp on cp.pair_identity=ce.pair_identity
+    where cp.snapshot_id=(select id from m23_pairing_successor)),
+  'compaction removes eligible cache rows while preserving latest selected evidence');
+select is((public.m23_compact_comparison_detail(100)->>'deletedEvidenceRows')::integer,0,
+  'evidence compaction is idempotent after eligible rows are removed');
 select is((select count(*)::integer from public.m23_comparison_snapshots where ad_work_day_id='29000000-0000-0000-0000-000000000005'),2,'delayed evidence creates an immutable successor snapshot');
 select is((select count(*)::integer from public.m23_comparison_pairs cp join public.m23_comparison_snapshots s on s.id=cp.snapshot_id where s.ad_work_day_id='29000000-0000-0000-0000-000000000005' and s.created_at=(select min(created_at) from public.m23_comparison_snapshots where ad_work_day_id='29000000-0000-0000-0000-000000000005')),5,'prior snapshot pair membership remains unchanged');
 select ok(exists(select 1 from public.m23_comparison_pairs cp join public.m23_comparison_snapshots s on s.id=cp.snapshot_id where s.ad_work_day_id='29000000-0000-0000-0000-000000000005' and s.created_at>(select min(created_at) from public.m23_comparison_snapshots where ad_work_day_id='29000000-0000-0000-0000-000000000005') and cp.phone_point_id='29100000-0000-0000-0000-000000000001' and cp.physical_point_id='29500000-0000-0000-0000-000000000001'),'delayed physical input rematches the earliest phone deterministically');

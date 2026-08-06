@@ -27,7 +27,7 @@ describe("M23 bounded comparison worker", () => {
       const request = { name: String(input).split("/").at(-1) ?? "", body: JSON.parse(String(init?.body)) };
       requests.push(request);
       if (request.name === "m23_compact_comparison_detail") {
-        return new Response(JSON.stringify({ deletedDetailRows: 7, batchSize: 100 }), { status: 200 });
+        return new Response(JSON.stringify({ deletedDetailRows: 7, deletedEvidenceRows: 3, batchSize: 100 }), { status: 200 });
       }
       const queueRequestCount = requests.filter((item) => item.name === "m23_process_comparison_queue").length;
       return new Response(JSON.stringify(
@@ -42,7 +42,7 @@ describe("M23 bounded comparison worker", () => {
     expect(requests.filter((item) => item.name === "m23_process_comparison_queue")).toHaveLength(10);
     expect(requests.at(-1)?.name).toBe("m23_compact_comparison_detail");
     expect(requests[0]?.body.p_batch_size).toBe(1);
-    expect(result).toMatchObject({ workerOk: true, workerStatus: "ok", queueClaimed: 5, queueCompleted: 5, queueRetryOrFailed: 0, compacted: 7, compactionFailed: false });
+    expect(result).toMatchObject({ workerOk: true, workerStatus: "ok", queueClaimed: 5, queueCompleted: 5, queueRetryOrFailed: 0, compacted: 7, evidenceCompacted: 3, compactionFailed: false });
     expect(JSON.stringify(requests)).not.toMatch(/latitude|longitude|raw_payload|credential/i);
   });
 
@@ -59,7 +59,7 @@ describe("M23 bounded comparison worker", () => {
     );
     expect(names.filter((name) => name === "m23_process_comparison_queue")).toHaveLength(5);
     expect(names.at(-1)).toBe("m23_compact_comparison_detail");
-    expect(result).toMatchObject({ workerOk: true, workerStatus: "ok", compacted: 0, compactionFailed: true });
+    expect(result).toMatchObject({ workerOk: true, workerStatus: "ok", compacted: 0, evidenceCompacted: 0, compactionFailed: true });
   });
 
   it("keeps comparison success when compaction is aborted", async () => {
@@ -86,6 +86,7 @@ describe("M23 bounded comparison worker", () => {
       queueCompleted: 5,
       queueRetryOrFailed: 0,
       compactionAttempted: true,
+      evidenceCompacted: 0,
       compactionFailed: true,
     });
   });
@@ -126,5 +127,22 @@ describe("M23 bounded comparison worker", () => {
     await expect(runM23ComparisonWorker(
       new M23ComparisonWorkerRuntime("https://example.invalid", "service-role-test-only"),
     )).rejects.toThrow("m23_queue_contract_invalid");
+  });
+
+  it("observes every sibling request before failing a rejected queue wave", async () => {
+    let queueCalls = 0;
+    let delayedSettled = 0;
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      queueCalls += 1;
+      if (queueCalls === 1) throw new Error("synthetic queue rejection");
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      delayedSettled += 1;
+      return new Response(JSON.stringify({ claimed: 1, completed: 1, retry_or_failed: 0 }), { status: 200 });
+    }));
+    await expect(runM23ComparisonWorker(
+      new M23ComparisonWorkerRuntime("https://example.invalid", "service-role-test-only"),
+    )).rejects.toThrow("m23_queue_wave_failed");
+    expect(queueCalls).toBe(M23_COMPARISON_WORKER_MAX_CONCURRENCY);
+    expect(delayedSettled).toBe(M23_COMPARISON_WORKER_MAX_CONCURRENCY - 1);
   });
 });

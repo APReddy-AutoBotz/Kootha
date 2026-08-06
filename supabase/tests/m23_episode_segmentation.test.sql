@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(19);
+select plan(29);
 
 insert into public.drivers(id,name,phone,approval_status,onboarding_status)
 values('24000000-0000-0000-0000-000000000001','M23 Episode Driver','9000000024','approved','approved');
@@ -59,6 +59,10 @@ select is((select sustained_first_pair_at from public.m23_comparison_snapshots w
 select is((select sustained_last_pair_at from public.m23_comparison_snapshots where id=(select snapshot_id from m23_episode_first)),'2026-07-31 08:07+00','gap above the configured boundary splits the later episode');
 select ok((select minimum_conservative_separation_meters>250 and maximum_conservative_separation_meters>=minimum_conservative_separation_meters from public.m23_comparison_snapshots where id=(select snapshot_id from m23_episode_first)),'episode stores conservative separation bounds');
 select ok((select condition_active from public.alerts where m23_comparison_snapshot_id=(select snapshot_id from m23_episode_first)),'sustained snapshot opens a comparison alert');
+create temp table m23_episode_key on commit drop as
+select a.dedupe_key from public.alerts a
+join public.m23_comparison_alert_context c on c.alert_id=a.id
+where c.first_snapshot_id=(select snapshot_id from m23_episode_first);
 insert into public.m23_comparison_snapshots(
   ad_work_day_id,ad_work_id,driver_id,vehicle_id,assignment_history_id,execution_history_id,
   gps_device_id,gps_device_vehicle_link_id,policy_id,policy_version,pairing_algorithm_version,
@@ -111,6 +115,59 @@ select diag(public.admin_transition_m23_comparison_review((select snapshot_id fr
 select is((select status from public.m23_comparison_reviews where snapshot_id=(select snapshot_id from m23_episode_first)),'dismissed_insufficient_evidence','dismissed_insufficient_evidence is a terminal review state');
 select throws_ok(format('select public.admin_transition_m23_comparison_review(%L,%L,%L,%L)',(select snapshot_id from m23_episode_first),'reviewing','reopen','Terminal review stays terminal.'),'55000','M23 review is terminal','terminal review cannot be silently reopened');
 reset role;
+set local role authenticated;
+select set_config('request.jwt.claims',json_build_object('sub','24000000-0000-0000-0000-000000000003')::text,true);
+select diag(public.admin_transition_alert((select id from public.alerts where dedupe_key=(select dedupe_key from m23_episode_key) order by episode_number desc limit 1),'resolved','terminal episode','Episode one is terminal synthetic evidence.'));
+select is((select status from public.alerts where dedupe_key=(select dedupe_key from m23_episode_key) and episode_number=1),'resolved','episode 1 is explicitly terminal before recurrence');
+reset role;
+
+insert into public.m23_comparison_snapshots(
+  ad_work_day_id,ad_work_id,driver_id,vehicle_id,assignment_history_id,execution_history_id,
+  gps_device_id,gps_device_vehicle_link_id,policy_id,policy_version,pairing_algorithm_version,
+  authority_scope_key,input_watermark,input_hash,generated_at,source_expectation,
+  phone_eligible_count,physical_eligible_count,pair_count,acceptable_pair_count,match_count,
+  mismatch_candidate_count,insufficient_quality_count,unpaired_phone_count,unpaired_physical_count,
+  sustained_pair_count,sustained_first_pair_at,sustained_last_pair_at,overall_outcome,finality,evaluation_phase,synthetic,build_complete)
+select s.ad_work_day_id,s.ad_work_id,s.driver_id,s.vehicle_id,s.assignment_history_id,s.execution_history_id,
+  s.gps_device_id,s.gps_device_vehicle_link_id,s.policy_id,s.policy_version,s.pairing_algorithm_version,
+  s.authority_scope_key,s.input_watermark,public.m22_safe_digest('episode-recurrence'),clock_timestamp()+interval '10 seconds','both_expected',
+  3,3,3,3,0,3,0,0,0,3,'2026-07-31 08:02+00','2026-07-31 08:07+00','sustained_mismatch','provisional_active_work','active_work',true,true
+from public.m23_comparison_snapshots s where s.id=(select snapshot_id from m23_episode_first);
+do $$ declare v_policy public.m23_comparison_policies%rowtype; v_snapshot uuid;
+begin
+  select * into v_policy from public.m23_comparison_policies where policy_id='m23-episode-test' and policy_version='v1';
+  select id into v_snapshot from public.m23_comparison_snapshots where input_hash=public.m22_safe_digest('episode-recurrence');
+  perform public.m23_sync_mismatch_alert(v_snapshot,'sustained_mismatch',300,v_policy);
+end $$;
+select is((select count(*)::integer from public.alerts where dedupe_key=(select dedupe_key from m23_episode_key)),2,'terminal recurrence creates exactly one episode 2');
+select is((select max(episode_number)::integer from public.alerts where dedupe_key=(select dedupe_key from m23_episode_key)),2,'recurrence episode number is deterministic');
+select is((select count(*)::integer from public.m23_comparison_alert_context where authority_scope_key=(select authority_scope_key from public.m23_comparison_snapshots where id=(select snapshot_id from m23_episode_first))),2,'both alert contexts remain historical evidence');
+select is((select status from public.alerts where episode_number=1 and dedupe_key=(select dedupe_key from m23_episode_key)),'resolved','episode 1 remains terminal and unchanged');
+select ok((select condition_active from public.alerts where episode_number=2 and dedupe_key=(select dedupe_key from m23_episode_key)),'episode 2 is the current active episode');
+
+insert into public.m23_comparison_snapshots(
+  ad_work_day_id,ad_work_id,driver_id,vehicle_id,assignment_history_id,execution_history_id,
+  gps_device_id,gps_device_vehicle_link_id,policy_id,policy_version,pairing_algorithm_version,
+  authority_scope_key,input_watermark,input_hash,generated_at,source_expectation,
+  phone_eligible_count,physical_eligible_count,pair_count,acceptable_pair_count,match_count,
+  mismatch_candidate_count,insufficient_quality_count,unpaired_phone_count,unpaired_physical_count,
+  sustained_pair_count,overall_outcome,finality,evaluation_phase,synthetic,build_complete)
+select s.ad_work_day_id,s.ad_work_id,s.driver_id,s.vehicle_id,s.assignment_history_id,s.execution_history_id,
+  s.gps_device_id,s.gps_device_vehicle_link_id,s.policy_id,s.policy_version,s.pairing_algorithm_version,
+  s.authority_scope_key,s.input_watermark,public.m22_safe_digest('episode-recurrence-recovery'),clock_timestamp()+interval '20 seconds','both_expected',
+  3,3,3,3,3,0,0,0,0,0,'paired_match','provisional_active_work','active_work',true,true
+from public.m23_comparison_snapshots s where s.id=(select id from public.m23_comparison_snapshots where input_hash=public.m22_safe_digest('episode-recurrence'));
+do $$ declare v_policy public.m23_comparison_policies%rowtype; v_snapshot uuid;
+begin
+  select * into v_policy from public.m23_comparison_policies where policy_id='m23-episode-test' and policy_version='v1';
+  select id into v_snapshot from public.m23_comparison_snapshots where input_hash=public.m22_safe_digest('episode-recurrence-recovery');
+  perform public.m23_sync_mismatch_alert(v_snapshot,'paired_match',0,v_policy);
+end $$;
+select ok(not (select condition_active from public.alerts where episode_number=2 and dedupe_key=(select dedupe_key from m23_episode_key)),'qualifying recovery clears episode 2 only');
+select is((select status from public.alerts where episode_number=1 and dedupe_key=(select dedupe_key from m23_episode_key)),'resolved','recovery cannot modify episode 1');
+select ok((select cleared_by_snapshot_id is not null from public.m23_comparison_alert_context c join public.alerts a on a.id=c.alert_id where a.episode_number=2 and a.dedupe_key=(select dedupe_key from m23_episode_key)),'episode 2 recovery context records its clearing snapshot');
+select is((select count(*)::integer from public.alerts where dedupe_key=(select dedupe_key from m23_episode_key) and status not in ('resolved','false_alarm','ignored')) ,1,'at most one nonterminal comparison episode exists');
+
 select is((select public.m23_evaluate_scope('24000000-0000-0000-0000-000000000008','24000000-0000-0000-0000-000000000011','24000000-0000-0000-0000-000000000009','24000000-0000-0000-0000-000000000012','24000000-0000-0000-0000-000000000004','m23-episode-test','v1','2026-07-31 08:20+00')),(select snapshot_id from m23_episode_first),'same inputs deterministically reuse the same snapshot');
 create temp table m23_episode_four on commit drop as
 select public.m23_evaluate_scope('24000000-0000-0000-0000-000000000008','24000000-0000-0000-0000-000000000011','24000000-0000-0000-0000-000000000009','24000000-0000-0000-0000-000000000012','24000000-0000-0000-0000-000000000004','m23-episode-four','v1','2026-07-31 08:21+00') snapshot_id;
