@@ -83,10 +83,14 @@ select ok(exists(select 1 from public.m23_comparison_pairs cp join public.m23_co
 -- trigger timestamps a new successor with wall-clock time, which would make
 -- this clock-controlled boundary nondeterministic.
 insert into public.m21_execution_history(
-  ad_work_day_id,execution_status,effective_from,history_origin
+  ad_work_day_id,execution_status,effective_from,effective_until,history_origin
 ) values(
   '28000000-0000-0000-0000-000000000009','completed',
-  '2026-07-31 10:00:00+00','observed'
+  '2026-07-31 10:00:00+00',
+  (select min(effective_from) from public.m21_execution_history
+   where ad_work_day_id='28000000-0000-0000-0000-000000000009'
+     and effective_from>'2026-07-31 10:00:00+00'),
+  'observed'
 );
 update public.ad_work_days
 set execution_completed_at='2026-07-31 10:00:00+00'
