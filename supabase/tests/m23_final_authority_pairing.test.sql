@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(14);
+select plan(29);
 
 insert into public.drivers(id,name,phone,approval_status,onboarding_status)
 values('28000000-0000-0000-0000-000000000001','M23 Replacement Driver','9000000028','approved','approved');
@@ -78,5 +78,33 @@ update public.gps_device_vehicle_links set effective_until='2026-07-31 09:30+00'
 insert into public.gps_device_vehicle_links(id,gps_device_id,vehicle_id,is_primary,effective_from,effective_until,change_reason,created_by_admin,closed_by_admin,closed_at)
 values('28000000-0000-0000-0000-000000000019','28000000-0000-0000-0000-000000000018','28000000-0000-0000-0000-000000000002',true,'2026-07-31 09:30+00','2026-07-31 10:00+00','M23 replacement C','28000000-0000-0000-0000-000000000003','28000000-0000-0000-0000-000000000003','2026-07-31 10:00+00');
 select ok((select state='pending' and requested_generation>completed_generation from public.m23_comparison_jobs where ad_work_day_id='28000000-0000-0000-0000-000000000009'),'link closure and replacement enqueue work without a new point');
+
+-- A synthetic/non-synthetic change is a new evidence classification for the
+-- same immutable authority scope.  It must not be paired or converted into a
+-- missing-source result, and a link closure must retain the same scope key.
+update public.location_points
+set synthetic=false
+where id='28100000-0000-0000-0000-000000000004';
+select public.m23_evaluate_scope('28000000-0000-0000-0000-000000000009','28000000-0000-0000-0000-000000000012','28000000-0000-0000-0000-000000000010','28000000-0000-0000-0000-000000000014','28000000-0000-0000-0000-000000000005','phone-device-comparison','m23-pilot-v1','2026-07-31 09:20+00');
+select is((select count(*)::integer from public.m23_comparison_snapshots where gps_device_vehicle_link_id='28000000-0000-0000-0000-000000000014'),2,'evidence classification successor remains in the same link scope');
+select is((select count(*)::integer from public.m23_comparison_snapshots where gps_device_vehicle_link_id='28000000-0000-0000-0000-000000000014' and overall_outcome='paired_match'),1,'the original all-synthetic snapshot remains paired');
+select is((select overall_outcome from public.m23_comparison_snapshots where gps_device_vehicle_link_id='28000000-0000-0000-0000-000000000014' order by created_at desc,id desc limit 1),'comparison_unavailable','mixed evidence fails closed');
+select is((select safe_reason_code from public.m23_comparison_snapshots where gps_device_vehicle_link_id='28000000-0000-0000-0000-000000000014' order by created_at desc,id desc limit 1),'mixed_evidence_classification','mixed evidence has a bounded safe reason');
+select is((select synthetic from public.m23_comparison_snapshots where gps_device_vehicle_link_id='28000000-0000-0000-0000-000000000014' order by created_at desc,id desc limit 1),false,'mixed evidence is not concealed as synthetic');
+select is((select pair_count from public.m23_comparison_snapshots where gps_device_vehicle_link_id='28000000-0000-0000-0000-000000000014' order by created_at desc,id desc limit 1),0,'mixed evidence creates no selected pairs');
+select is((select scope_effective_from from public.m23_comparison_snapshots where gps_device_vehicle_link_id='28000000-0000-0000-0000-000000000014' order by created_at desc,id desc limit 1),'2026-07-31 09:00+00'::timestamptz,'scope start is persisted exactly');
+select is((select scope_effective_until from public.m23_comparison_snapshots where gps_device_vehicle_link_id='28000000-0000-0000-0000-000000000014' order by created_at desc,id desc limit 1),'2026-07-31 09:30+00'::timestamptz,'scope closure is persisted exactly');
+select is((select count(distinct authority_scope_key)::integer from public.m23_comparison_snapshots where gps_device_vehicle_link_id='28000000-0000-0000-0000-000000000014'),1,'scope identity excludes interval closure');
+select ok(not exists(select 1 from public.alerts a join public.m23_comparison_snapshots s on s.id=a.m23_comparison_snapshot_id where s.gps_device_vehicle_link_id='28000000-0000-0000-0000-000000000014' and s.overall_outcome='comparison_unavailable'),'mixed evidence creates no false missing or mismatch alert');
+
+-- A supplied inactive/nonexistent assignment identity must fail closed even
+-- when the driver, vehicle, release, link and device values are otherwise
+-- valid.  The function must not compare by UUID-shaped input alone.
+select public.m23_evaluate_scope('28000000-0000-0000-0000-000000000009','28000000-0000-0000-0000-000000000012','28000000-0000-0000-0000-000000000023','28000000-0000-0000-0000-000000000014','28000000-0000-0000-0000-000000000005','phone-device-comparison','m23-pilot-v1','2026-07-31 09:20+00');
+select is((select overall_outcome from public.m23_comparison_snapshots where ad_work_day_id='28000000-0000-0000-0000-000000000009' and assignment_history_id is null order by created_at desc,id desc limit 1),'comparison_unavailable','inactive assignment fails closed');
+select is((select safe_reason_code from public.m23_comparison_snapshots where ad_work_day_id='28000000-0000-0000-0000-000000000009' and assignment_history_id is null order by created_at desc,id desc limit 1),'inactive_assignment','inactive assignment has a bounded safe reason');
+select ok(not exists(select 1 from public.m23_comparison_snapshots where ad_work_day_id='28000000-0000-0000-0000-000000000009' and assignment_history_id is null and overall_outcome in ('phone_missing','physical_device_missing','both_missing')),'inactive assignment does not produce a false missing-source outcome');
+select is((select pair_count from public.m23_comparison_snapshots where ad_work_day_id='28000000-0000-0000-0000-000000000009' and assignment_history_id is null order by created_at desc,id desc limit 1),0,'inactive assignment scope contains no pairs');
+select ok(not exists(select 1 from public.alerts a join public.m23_comparison_snapshots s on s.id=a.m23_comparison_snapshot_id where s.ad_work_day_id='28000000-0000-0000-0000-000000000009' and s.assignment_history_id is null),'inactive assignment has no customer-side alert effect');
 select * from finish();
 rollback;

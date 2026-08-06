@@ -22,12 +22,12 @@ select format('2a200000-0000-0000-0000-%s',lpad(n::text,12,'0'))::uuid,
 from generate_series(0,150) n;
 insert into public.m23_comparison_snapshots(
   id,ad_work_day_id,ad_work_id,execution_history_id,policy_id,policy_version,authority_scope_key,input_hash,
-  source_expectation,overall_outcome,finality,evaluation_phase,synthetic,build_complete)
+  source_expectation,scope_effective_from,scope_effective_until,overall_outcome,finality,evaluation_phase,synthetic,build_complete)
 select format('2a300000-0000-0000-0000-%s',lpad(n::text,12,'0'))::uuid,
   format('2a100000-0000-0000-0000-%s',lpad(n::text,12,'0'))::uuid,
   '2a000000-0000-0000-0000-000000000003',format('2a200000-0000-0000-0000-%s',lpad(n::text,12,'0'))::uuid,'phone-device-comparison','m23-pilot-v1',
   public.m22_safe_digest(format('m23-due-scope-%s',n)),public.m22_safe_digest(format('m23-due-input-%s',n)),
-  'both_expected','awaiting_sources','provisional_active_work','active_work',true,true
+  'both_expected','2026-08-01 00:00+00','2026-08-01 01:00+00','awaiting_sources','provisional_active_work','active_work',true,true
 from generate_series(0,150) n;
 insert into public.m23_comparison_heads(authority_scope_key,policy_id,policy_version,snapshot_id,updated_at)
 select s.authority_scope_key,s.policy_id,s.policy_version,s.id,'2026-08-01 00:00+00'

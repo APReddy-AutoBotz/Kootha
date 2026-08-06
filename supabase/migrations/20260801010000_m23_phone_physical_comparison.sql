@@ -599,9 +599,9 @@ begin
     sustained_last_pair_at=case when v_outcome='sustained_mismatch' then v_last end,
     minimum_conservative_separation_meters=case when v_mismatch_count>0 then v_min end,
     maximum_conservative_separation_meters=case when v_mismatch_count>0 then v_max end,
-    overall_outcome=v_outcome,synthetic=case when v_pair_count>0 then
-      (select bool_and(x.synthetic) from public.m23_comparison_pairs x where x.snapshot_id=s.id)
-      else false end,build_complete=true
+    overall_outcome=v_outcome,synthetic=case when v_pair_count>0 and not exists(
+      select 1 from public.m23_comparison_pairs x where x.snapshot_id=s.id and not x.synthetic
+    ) then true else false end,build_complete=true
   where id=s.id;
   perform set_config('app.m23_snapshot_build','off',true);
 
@@ -738,6 +738,7 @@ begin
       'unpairedPhoneCount',s.unpaired_phone_count,'unpairedPhysicalCount',s.unpaired_physical_count,
       'sustainedPairCount',s.sustained_pair_count,'sustainedFirstPairAt',s.sustained_first_pair_at,
       'sustainedLastPairAt',s.sustained_last_pair_at,'synthetic',s.synthetic,'generatedAt',s.generated_at,
+      'safeReasonCode',s.safe_reason_code,
       'alertId',(select a.id from public.alerts a where a.m23_comparison_snapshot_id=s.id order by a.updated_at desc limit 1),
       'technicalValuesAvailable',exists(select 1 from public.m23_comparison_pairs x
         where x.snapshot_id=s.id)
@@ -1156,7 +1157,7 @@ begin
       'insufficientQualityCount',s.insufficient_quality_count,'unpairedPhoneCount',s.unpaired_phone_count,
       'unpairedPhysicalCount',s.unpaired_physical_count,'sustainedPairCount',s.sustained_pair_count,
       'sustainedFirstPairAt',s.sustained_first_pair_at,'sustainedLastPairAt',s.sustained_last_pair_at,
-      'synthetic',s.synthetic,'generatedAt',s.generated_at,
+      'synthetic',s.synthetic,'generatedAt',s.generated_at,'safeReasonCode',s.safe_reason_code,
       'alertId',(select a.id from public.alerts a where a.m23_comparison_snapshot_id=s.id order by a.updated_at desc limit 1)
     ) row_value from public.m23_comparison_snapshots s
     join public.ad_work_days wd on wd.id=s.ad_work_day_id join public.ad_works aw on aw.id=s.ad_work_id
@@ -1407,7 +1408,15 @@ create index if not exists m23_job_due_fair_idx
 
 alter table public.m23_comparison_snapshots
   add column if not exists acceptable_pair_count integer not null default 0,
-  add column if not exists evaluation_phase text not null default 'active_work';
+  add column if not exists evaluation_phase text not null default 'active_work',
+  add column if not exists scope_effective_from timestamptz,
+  add column if not exists scope_effective_until timestamptz,
+  add column if not exists safe_reason_code text;
+
+alter table public.m23_comparison_snapshots
+  add constraint m23_snapshot_safe_reason_check check (
+    safe_reason_code is null or safe_reason_code ~ '^[a-z0-9_]{1,64}$'
+  );
 
 alter table public.m23_comparison_snapshots
   drop constraint if exists m23_snapshot_counts_check,
@@ -1594,18 +1603,29 @@ declare
   ah public.m21_assignment_history%rowtype; p public.m23_comparison_policies%rowtype;
   v_phone_count integer:=0; v_physical_count integer:=0;
   v_fast_pair_count integer:=0; v_fast_path_used boolean:=false;
+  v_allow_end_boundary boolean:=false;
 begin
   select * into strict w from public.ad_work_days where id=p_work_day_id;
   select * into strict e from public.m21_execution_history where id=p_execution_history_id;
   select * into strict ah from public.m21_assignment_history where id=p_assignment_history_id;
   select * into strict p from public.m23_comparison_policies
     where policy_id=p_policy_id and policy_version=p_policy_version;
+  v_allow_end_boundary:=e.effective_until is not null
+    and p_scope_until=e.effective_until
+    and exists(
+      select 1 from public.m21_execution_history next_execution
+      where next_execution.ad_work_day_id=e.ad_work_day_id
+        and next_execution.execution_status='completed'
+        and next_execution.effective_from=e.effective_until
+    )
+    and (ah.effective_until is null or ah.effective_until>e.effective_until);
   select count(*)::integer into v_phone_count
   from public.location_points lp join public.tracking_sessions ts on ts.id=lp.tracking_session_id
   where lp.ad_work_day_id=w.id and lp.source::text='phone'
     and ts.tracking_mode='phone_location' and lp.assignment_history_id=ah.id
     and lp.driver_id=ah.driver_id and lp.vehicle_id=ah.vehicle_id
-    and lp.recorded_at>=p_scope_from and (p_scope_until is null or lp.recorded_at<p_scope_until)
+    and lp.recorded_at>=p_scope_from and (p_scope_until is null or lp.recorded_at<p_scope_until
+      or (v_allow_end_boundary and lp.recorded_at=p_scope_until))
     and (ts.started_at is null or lp.recorded_at>=ts.started_at)
     and (ts.ended_at is null or lp.recorded_at<ts.ended_at);
   select count(*)::integer into v_physical_count
@@ -1616,7 +1636,8 @@ begin
     and q.assignment_history_id=ah.id and q.gps_device_vehicle_link_id=p_link_id
     and q.device_id=p_device_id
     and tr.disposition in ('accepted_live','accepted_delayed') and tr.quality in ('valid','degraded')
-    and q.recorded_at>=p_scope_from and (p_scope_until is null or q.recorded_at<p_scope_until)
+    and q.recorded_at>=p_scope_from and (p_scope_until is null or q.recorded_at<p_scope_until
+      or (v_allow_end_boundary and q.recorded_at=p_scope_until))
     and (ts.started_at is null or q.recorded_at>=ts.started_at)
     and (ts.ended_at is null or q.recorded_at<ts.ended_at);
 
@@ -1633,7 +1654,8 @@ begin
       where lp.ad_work_day_id=w.id and lp.source::text='phone'
         and ts.tracking_mode='phone_location' and lp.assignment_history_id=ah.id
         and lp.driver_id=ah.driver_id and lp.vehicle_id=ah.vehicle_id
-        and lp.recorded_at>=p_scope_from and (p_scope_until is null or lp.recorded_at<p_scope_until)
+        and lp.recorded_at>=p_scope_from and (p_scope_until is null or lp.recorded_at<p_scope_until
+          or (v_allow_end_boundary and lp.recorded_at=p_scope_until))
         and (ts.started_at is null or lp.recorded_at>=ts.started_at)
         and (ts.ended_at is null or lp.recorded_at<ts.ended_at)
     ), physical_points as (
@@ -1646,7 +1668,8 @@ begin
         and q.assignment_history_id=ah.id and q.gps_device_vehicle_link_id=p_link_id
         and q.device_id=p_device_id
         and tr.disposition in ('accepted_live','accepted_delayed') and tr.quality in ('valid','degraded')
-        and q.recorded_at>=p_scope_from and (p_scope_until is null or q.recorded_at<p_scope_until)
+        and q.recorded_at>=p_scope_from and (p_scope_until is null or q.recorded_at<p_scope_until
+          or (v_allow_end_boundary and q.recorded_at=p_scope_until))
         and (ts.started_at is null or q.recorded_at>=ts.started_at)
         and (ts.ended_at is null or q.recorded_at<ts.ended_at)
     )
@@ -1674,7 +1697,8 @@ begin
       where lp.ad_work_day_id=w.id and lp.source::text='phone'
         and ts.tracking_mode='phone_location' and lp.assignment_history_id=ah.id
         and lp.driver_id=ah.driver_id and lp.vehicle_id=ah.vehicle_id
-        and lp.recorded_at>=p_scope_from and (p_scope_until is null or lp.recorded_at<p_scope_until)
+        and lp.recorded_at>=p_scope_from and (p_scope_until is null or lp.recorded_at<p_scope_until
+          or (v_allow_end_boundary and lp.recorded_at=p_scope_until))
         and (ts.started_at is null or lp.recorded_at>=ts.started_at)
         and (ts.ended_at is null or lp.recorded_at<ts.ended_at)
     ), physical_points as (
@@ -1687,7 +1711,8 @@ begin
         and q.assignment_history_id=ah.id and q.gps_device_vehicle_link_id=p_link_id
         and q.device_id=p_device_id
         and tr.disposition in ('accepted_live','accepted_delayed') and tr.quality in ('valid','degraded')
-        and q.recorded_at>=p_scope_from and (p_scope_until is null or q.recorded_at<p_scope_until)
+        and q.recorded_at>=p_scope_from and (p_scope_until is null or q.recorded_at<p_scope_until
+          or (v_allow_end_boundary and q.recorded_at=p_scope_until))
         and (ts.started_at is null or q.recorded_at>=ts.started_at)
         and (ts.ended_at is null or q.recorded_at<ts.ended_at)
     ), measured as (
@@ -1729,7 +1754,8 @@ begin
       where lp.ad_work_day_id=w.id and lp.source::text='phone'
         and ts.tracking_mode='phone_location' and lp.assignment_history_id=ah.id
         and lp.driver_id=ah.driver_id and lp.vehicle_id=ah.vehicle_id
-        and lp.recorded_at>=p_scope_from and (p_scope_until is null or lp.recorded_at<p_scope_until)
+        and lp.recorded_at>=p_scope_from and (p_scope_until is null or lp.recorded_at<p_scope_until
+          or (v_allow_end_boundary and lp.recorded_at=p_scope_until))
         and (ts.started_at is null or lp.recorded_at>=ts.started_at)
         and (ts.ended_at is null or lp.recorded_at<ts.ended_at)
     ), physical_points as (
@@ -1741,7 +1767,8 @@ begin
         and q.assignment_history_id=ah.id and q.gps_device_vehicle_link_id=p_link_id
         and q.device_id=p_device_id
         and tr.disposition in ('accepted_live','accepted_delayed') and tr.quality in ('valid','degraded')
-        and q.recorded_at>=p_scope_from and (p_scope_until is null or q.recorded_at<p_scope_until)
+        and q.recorded_at>=p_scope_from and (p_scope_until is null or q.recorded_at<p_scope_until
+          or (v_allow_end_boundary and q.recorded_at=p_scope_until))
         and (ts.started_at is null or q.recorded_at>=ts.started_at)
         and (ts.ended_at is null or q.recorded_at<ts.ended_at)
     ), greedy(seq,phone_point_id,physical_point_id,used_physical_ids) as (
@@ -1841,6 +1868,9 @@ declare
   v_scope_key text; v_expectation text; v_phase text; v_finality text;
   v_phone_expected boolean:=false; v_physical_expected boolean:=false; v_ambiguous boolean:=false;
   v_grace_elapsed boolean:=false; v_synthetic boolean:=false; v_outcome text;
+  v_safe_reason text; v_mixed boolean:=false; v_allow_end_boundary boolean:=false;
+  v_phone_synthetic_count integer:=0; v_phone_non_synthetic_count integer:=0;
+  v_physical_synthetic_count integer:=0; v_physical_non_synthetic_count integer:=0;
   v_scope_from timestamptz; v_scope_until timestamptz; v_work_end timestamptz;
   v_raw numeric; v_conservative numeric; v_quality text; v_pair_outcome text;
   v_release_count integer:=0; v_link_count integer:=0;
@@ -1850,6 +1880,7 @@ declare
   v_current_count integer:=0; v_current_min numeric; v_current_max numeric; v_current_first_id text;
   v_best boolean:=false; v_best_first timestamptz; v_best_last timestamptz; v_best_count integer:=0;
   v_best_min numeric; v_best_max numeric; v_best_first_id text; v_pair_time timestamptz;
+  v_authority_current boolean:=false;
 begin
   select * into strict w from public.ad_work_days where id=p_ad_work_day_id;
   select * into strict a from public.ad_works where id=w.ad_work_id;
@@ -1860,31 +1891,61 @@ begin
   -- A non-running history row is never an active comparison scope.  The ended
   -- running row is reevaluated to close its grace/backfill phases.
   if e.execution_status <> 'running' then return null; end if;
+  v_authority_current:=e.effective_until is null or p_now<e.effective_until;
 
   if p_assignment_history_id is not null then
-    select * into ah from public.m21_assignment_history where id=p_assignment_history_id;
-    if ah.id is null then return null; end if;
+    select * into ah from public.m21_assignment_history x
+    where x.id=p_assignment_history_id and x.ad_work_id=a.id
+      and x.assignment_status in ('assigned','ready_for_execution')
+      and x.effective_from<=p_now
+      and x.effective_from<coalesce(e.effective_until,'infinity'::timestamptz)
+      and (x.effective_until is null or e.effective_from<x.effective_until)
+      and (not v_authority_current or x.effective_until is null or p_now<x.effective_until);
+    if not found then
+      v_ambiguous:=true; v_safe_reason:='inactive_assignment';
+    end if;
   end if;
   if p_gps_device_vehicle_link_id is not null then
-    select * into l from public.gps_device_vehicle_links where id=p_gps_device_vehicle_link_id;
-    if l.id is null then return null; end if;
+    select * into l from public.gps_device_vehicle_links x
+    where x.id=p_gps_device_vehicle_link_id and x.effective_from<=p_now
+      and x.effective_from<coalesce(e.effective_until,'infinity'::timestamptz)
+      and (x.effective_until is null or e.effective_from<x.effective_until)
+      and (not v_authority_current or x.effective_until is null or p_now<x.effective_until)
+      and (ah.id is null or x.vehicle_id=ah.vehicle_id);
+    if not found then
+      v_ambiguous:=true; v_safe_reason:=coalesce(v_safe_reason,'inactive_device_link');
+    end if;
   end if;
   if p_release_history_id is not null then
-    select * into rh from public.m21_release_history where id=p_release_history_id;
-    if rh.id is null or rh.release_status <> 'released_to_driver' then return null; end if;
+    select * into rh from public.m21_release_history x
+    where x.id=p_release_history_id and x.ad_work_id=a.id
+      and x.release_status='released_to_driver' and x.effective_from<=p_now
+      and x.effective_from<coalesce(e.effective_until,'infinity'::timestamptz)
+      and (x.effective_until is null or e.effective_from<x.effective_until)
+      and (not v_authority_current or x.effective_until is null or p_now<x.effective_until);
+    if not found then
+      v_ambiguous:=true; v_safe_reason:=coalesce(v_safe_reason,'inactive_release_authority');
+    end if;
   else
     select count(*)::integer into v_release_count from public.m21_release_history x
     where x.ad_work_id=a.id and x.release_status='released_to_driver'
-      and x.effective_from < coalesce(e.effective_until,p_now)
-      and (x.effective_until is null or e.effective_from < x.effective_until);
+      and x.effective_from<=p_now
+      and x.effective_from < coalesce(e.effective_until,'infinity'::timestamptz)
+      and (x.effective_until is null or e.effective_from < x.effective_until)
+      and (not v_authority_current or x.effective_until is null or p_now<x.effective_until);
     if v_release_count=1 then
       select * into rh from public.m21_release_history x where x.ad_work_id=a.id
         and x.release_status='released_to_driver'
-        and x.effective_from < coalesce(e.effective_until,p_now)
+        and x.effective_from<=p_now
+        and x.effective_from < coalesce(e.effective_until,'infinity'::timestamptz)
         and (x.effective_until is null or e.effective_from < x.effective_until)
+        and (not v_authority_current or x.effective_until is null or p_now<x.effective_until)
         order by x.effective_from desc limit 1;
     elsif v_release_count>1 then
       v_ambiguous:=true;
+      v_safe_reason:=coalesce(v_safe_reason,'ambiguous_release_authority');
+    else
+      v_safe_reason:=coalesce(v_safe_reason,'no_release_authority');
     end if;
   end if;
 
@@ -1895,9 +1956,16 @@ begin
   if a.tracking_type::text in ('device','both')
     and (p_gps_device_id is null or p_gps_device_vehicle_link_id is null) then
     v_ambiguous:=true;
+    v_safe_reason:=coalesce(v_safe_reason,'no_active_device_link');
   end if;
   if p_assignment_history_id is null and (v_phone_expected or v_physical_expected) then
     v_ambiguous:=true;
+    v_safe_reason:='no_active_assignment';
+  end if;
+  if p_release_history_id is null and (v_phone_expected or v_physical_expected)
+    and rh.id is null then
+    v_ambiguous:=true;
+    v_safe_reason:=coalesce(v_safe_reason,'no_release_authority');
   end if;
   v_expectation:=case when v_ambiguous then 'ambiguous'
     when v_phone_expected and v_physical_expected then 'both_expected'
@@ -1928,14 +1996,17 @@ begin
     -- exact execution/assignment/release/link intersection cannot poison this
     -- scope, while a genuine overlap still fails closed.
     select count(*)::integer into v_link_count from public.gps_device_vehicle_links x
-    where x.vehicle_id=l.vehicle_id and x.is_primary
+    where x.vehicle_id=l.vehicle_id and x.is_primary and x.effective_from<=p_now
       and x.effective_from < coalesce(v_scope_until,'infinity'::timestamptz)
-      and coalesce(x.effective_until,'infinity'::timestamptz)>v_scope_from;
-    if v_link_count>1 then v_ambiguous:=true; end if;
+      and coalesce(x.effective_until,'infinity'::timestamptz)>v_scope_from
+      and (not v_authority_current or x.effective_until is null or p_now<x.effective_until);
+    if v_link_count>1 then
+      v_ambiguous:=true; v_safe_reason:=coalesce(v_safe_reason,'ambiguous_device_link');
+    end if;
   end if;
   v_scope_key:=public.m22_safe_digest(concat_ws('|',w.id::text,e.id::text,
     coalesce(ah.id::text,''),coalesce(l.id::text,''),coalesce(p_gps_device_id::text,''),
-    coalesce(rh.id::text,''),v_scope_from::text,coalesce(v_scope_until::text,'')));
+    coalesce(rh.id::text,'')));
 
   v_work_end:=coalesce(v_scope_until,w.actual_end_time);
   v_finality:=case
@@ -1946,6 +2017,19 @@ begin
     else 'final_backfill_closed' end;
   v_phase:=case v_finality when 'provisional_active_work' then 'active_work'
     when 'provisional_backfill_open' then 'backfill_open' else 'backfill_closed' end;
+  if v_scope_from>p_now then return null; end if;
+  v_allow_end_boundary:=e.effective_until is not null
+    and v_scope_until=e.effective_until
+    and exists(
+      select 1 from public.m21_execution_history next_execution
+      where next_execution.ad_work_day_id=e.ad_work_day_id
+        and next_execution.execution_status='completed'
+        and next_execution.effective_from=e.effective_until
+    )
+    and ah.id is not null
+    and (ah.effective_until is null or ah.effective_until>e.effective_until)
+    and (rh.id is null or rh.effective_until is null or rh.effective_until>e.effective_until)
+    and (l.id is null or l.effective_until is null or l.effective_until>e.effective_until);
   v_grace_elapsed:=v_finality<>'provisional_active_work'
     or p_now>=v_scope_from+make_interval(secs=>p.missing_source_grace_seconds);
 
@@ -1956,7 +2040,8 @@ begin
     where lp.ad_work_day_id=w.id and lp.source::text='phone'
       and ts.tracking_mode='phone_location' and lp.assignment_history_id=ah.id
       and lp.driver_id=ah.driver_id and lp.vehicle_id=ah.vehicle_id
-      and lp.recorded_at>=v_scope_from and (v_scope_until is null or lp.recorded_at<v_scope_until)
+      and lp.recorded_at>=v_scope_from and (v_scope_until is null or lp.recorded_at<v_scope_until
+        or (v_allow_end_boundary and lp.recorded_at=v_scope_until))
       and (ts.started_at is null or lp.recorded_at>=ts.started_at)
       and (ts.ended_at is null or lp.recorded_at<ts.ended_at);
   else v_phone_count:=0; end if;
@@ -1969,13 +2054,51 @@ begin
       and lp.execution_history_id=e.id and lp.assignment_history_id=ah.id
       and lp.gps_device_vehicle_link_id=l.id and lp.device_id=p_gps_device_id
       and tr.disposition in ('accepted_live','accepted_delayed') and tr.quality in ('valid','degraded')
-      and lp.recorded_at>=v_scope_from and (v_scope_until is null or lp.recorded_at<v_scope_until)
+      and lp.recorded_at>=v_scope_from and (v_scope_until is null or lp.recorded_at<v_scope_until
+        or (v_allow_end_boundary and lp.recorded_at=v_scope_until))
       and (ts.started_at is null or lp.recorded_at>=ts.started_at)
       and (ts.ended_at is null or lp.recorded_at<ts.ended_at);
   else v_physical_count:=0; end if;
+  if v_phone_expected and ah.id is not null and rh.id is not null then
+    select count(*) filter(where coalesce(lp.synthetic,false))::integer,
+      count(*) filter(where not coalesce(lp.synthetic,false))::integer
+      into v_phone_synthetic_count,v_phone_non_synthetic_count
+    from public.location_points lp join public.tracking_sessions ts on ts.id=lp.tracking_session_id
+    where lp.ad_work_day_id=w.id and lp.source::text='phone'
+      and ts.tracking_mode='phone_location' and lp.assignment_history_id=ah.id
+      and lp.driver_id=ah.driver_id and lp.vehicle_id=ah.vehicle_id
+      and lp.recorded_at>=v_scope_from and (v_scope_until is null or lp.recorded_at<v_scope_until
+        or (v_allow_end_boundary and lp.recorded_at=v_scope_until))
+      and (ts.started_at is null or lp.recorded_at>=ts.started_at)
+      and (ts.ended_at is null or lp.recorded_at<ts.ended_at);
+  end if;
+  if v_physical_expected and ah.id is not null and rh.id is not null and l.id is not null then
+    select count(*) filter(where coalesce(lp.synthetic,false))::integer,
+      count(*) filter(where not coalesce(lp.synthetic,false))::integer
+      into v_physical_synthetic_count,v_physical_non_synthetic_count
+    from public.location_points lp join public.tracking_sessions ts on ts.id=lp.tracking_session_id
+      join public.telemetry_receipts tr on tr.id=lp.telemetry_receipt_id
+    where lp.ad_work_day_id=w.id and lp.source::text='physical_device'
+      and ts.tracking_mode='physical_device' and lp.execution_history_id=e.id
+      and lp.assignment_history_id=ah.id and lp.gps_device_vehicle_link_id=l.id
+      and lp.device_id=p_gps_device_id
+      and tr.disposition in ('accepted_live','accepted_delayed') and tr.quality in ('valid','degraded')
+      and lp.recorded_at>=v_scope_from and (v_scope_until is null or lp.recorded_at<v_scope_until
+        or (v_allow_end_boundary and lp.recorded_at=v_scope_until))
+      and (ts.started_at is null or lp.recorded_at>=ts.started_at)
+      and (ts.ended_at is null or lp.recorded_at<ts.ended_at);
+  end if;
+  v_mixed:=(v_phone_synthetic_count+v_physical_synthetic_count)>0
+    and (v_phone_non_synthetic_count+v_physical_non_synthetic_count)>0;
+  if v_mixed then
+    v_safe_reason:='mixed_evidence_classification';
+  end if;
+  v_synthetic:=(v_phone_synthetic_count+v_physical_synthetic_count)>0
+    and (v_phone_non_synthetic_count+v_physical_non_synthetic_count)=0;
   if v_watermark='-infinity'::timestamptz then v_watermark:=null; end if;
   v_input_hash:=public.m22_safe_digest(concat_ws('|',v_scope_key,p.policy_id,p.policy_version,
-    v_expectation,v_finality,v_grace_elapsed,v_phone_count,v_physical_count,
+    v_expectation,v_finality,v_phase,v_scope_from::text,coalesce(v_scope_until::text,''),
+    v_grace_elapsed,coalesce(v_safe_reason,''),v_phone_count,v_physical_count,
     coalesce(v_watermark::text,''),coalesce((select string_agg(
       concat_ws(':',z.id::text,z.recorded_at::text,coalesce(z.accuracy_meters::text,'null'),
         coalesce(z.quality::text,'null'),coalesce(z.synthetic::text,'false')),
@@ -1987,7 +2110,8 @@ begin
           and lp.ad_work_day_id=w.id and lp.source::text='phone'
           and ts.tracking_mode='phone_location' and lp.assignment_history_id=ah.id
           and lp.driver_id=ah.driver_id and lp.vehicle_id=ah.vehicle_id
-          and lp.recorded_at>=v_scope_from and (v_scope_until is null or lp.recorded_at<v_scope_until)
+          and lp.recorded_at>=v_scope_from and (v_scope_until is null or lp.recorded_at<v_scope_until
+            or (v_allow_end_boundary and lp.recorded_at=v_scope_until))
           and (ts.started_at is null or lp.recorded_at>=ts.started_at)
           and (ts.ended_at is null or lp.recorded_at<ts.ended_at)
         union all
@@ -2000,7 +2124,8 @@ begin
           and q.assignment_history_id=ah.id and q.gps_device_vehicle_link_id=l.id
           and q.device_id=p_gps_device_id
           and tr.disposition in ('accepted_live','accepted_delayed') and tr.quality in ('valid','degraded')
-          and q.recorded_at>=v_scope_from and (v_scope_until is null or q.recorded_at<v_scope_until)
+          and q.recorded_at>=v_scope_from and (v_scope_until is null or q.recorded_at<v_scope_until
+            or (v_allow_end_boundary and q.recorded_at=v_scope_until))
           and (ts.started_at is null or q.recorded_at>=ts.started_at)
           and (ts.ended_at is null or q.recorded_at<ts.ended_at)
       ) z),'')));
@@ -2014,16 +2139,19 @@ begin
     ad_work_day_id,ad_work_id,driver_id,vehicle_id,assignment_history_id,
     execution_history_id,gps_device_id,gps_device_vehicle_link_id,policy_id,
     policy_version,authority_scope_key,input_watermark,input_hash,source_expectation,
+    scope_effective_from,scope_effective_until,safe_reason_code,
     overall_outcome,finality,evaluation_phase,synthetic
   ) values (
     w.id,w.ad_work_id,coalesce(ah.driver_id,w.driver_id),coalesce(ah.vehicle_id,w.vehicle_id),
     ah.id,e.id,p_gps_device_id,p_gps_device_vehicle_link_id,p.policy_id,p.policy_version,
-    v_scope_key,v_watermark,v_input_hash,v_expectation,'comparison_unavailable',v_finality,v_phase,false
+    v_scope_key,v_watermark,v_input_hash,v_expectation,v_scope_from,v_scope_until,v_safe_reason,
+    'comparison_unavailable',v_finality,v_phase,v_synthetic
   ) returning * into s;
   insert into public.m23_comparison_reviews(snapshot_id,status) values(s.id,'not_reviewed')
     on conflict(snapshot_id) do nothing;
 
-  if v_phone_expected and v_physical_expected and not v_ambiguous and ah.id is not null and rh.id is not null then
+  if v_phone_expected and v_physical_expected and not v_ambiguous and not v_mixed
+    and ah.id is not null and rh.id is not null then
     perform public.m23_pair_scope_exact(w.id,e.id,ah.id,l.id,p_gps_device_id,
       p.policy_id,p.policy_version,v_scope_key,v_scope_from,v_scope_until,s.id);
   end if;
@@ -2085,6 +2213,7 @@ begin
     then v_best:=true; v_best_first:=v_current_first; v_best_last:=v_current_last; v_best_count:=v_current_count; v_best_min:=v_current_min; v_best_max:=v_current_max; v_best_first_id:=v_current_first_id; end if;
   end if;
   v_outcome:=case
+    when v_mixed then 'comparison_unavailable'
     when v_ambiguous then 'comparison_unavailable'
     when v_expectation in ('neither_expected','phone_only','physical_only') then 'not_expected'
     when not v_grace_elapsed and (v_phone_count=0 or v_physical_count=0) then 'awaiting_sources'
@@ -2109,7 +2238,7 @@ begin
     minimum_conservative_separation_meters=case when v_best then v_min end,
     maximum_conservative_separation_meters=case when v_best then v_max end,
     overall_outcome=v_outcome,
-    synthetic=case when v_pair_count>0 then (select bool_and(x.synthetic) from public.m23_comparison_pairs x where x.snapshot_id=s.id) else false end,
+    synthetic=v_synthetic,
     build_complete=true
   where id=s.id;
   perform set_config('app.m23_snapshot_build','off',true);
@@ -2144,22 +2273,51 @@ create or replace function public.m23_evaluate_work_day(
 ) returns integer language plpgsql security definer set search_path = pg_catalog, public
 as $$
 declare e record; ah record; rh record; l record; v_count integer:=0; v_link_count integer;
+  v_release_count integer:=0; v_active_assignment_count integer:=0;
+  v_authority_current boolean:=false;
   v_from timestamptz; v_until timestamptz;
 begin
   for e in select * from public.m21_execution_history where ad_work_day_id=p_ad_work_day_id
     and execution_status='running' and effective_from<=p_now order by effective_from,id
   loop
+    v_authority_current:=e.effective_until is null or p_now<e.effective_until;
+    select count(*)::integer into v_active_assignment_count
+    from public.m21_assignment_history x
+    where x.ad_work_id=(select ad_work_id from public.ad_work_days where id=p_ad_work_day_id)
+      and x.assignment_status in ('assigned','ready_for_execution')
+      and x.effective_from<=p_now
+      and x.effective_from<coalesce(e.effective_until,'infinity'::timestamptz)
+      and (x.effective_until is null or e.effective_from<x.effective_until)
+      and (not v_authority_current or x.effective_until is null or p_now<x.effective_until);
+    if v_active_assignment_count=0 then
+      perform public.m23_evaluate_scope_authority(p_ad_work_day_id,e.id,null,null,null,null,
+        p_policy_id,p_policy_version,p_now);
+      v_count:=v_count+1;
+      continue;
+    end if;
     for ah in select * from public.m21_assignment_history x
       where x.ad_work_id=(select ad_work_id from public.ad_work_days where id=p_ad_work_day_id)
-        and x.effective_from<coalesce(e.effective_until,p_now)
+        and x.assignment_status in ('assigned','ready_for_execution')
+        and x.effective_from<=p_now
+        and x.effective_from<coalesce(e.effective_until,'infinity'::timestamptz)
         and (x.effective_until is null or e.effective_from<x.effective_until)
+        and (not v_authority_current or x.effective_until is null or p_now<x.effective_until)
       order by x.effective_from,x.id
     loop
+      select count(*)::integer into v_release_count
+      from public.m21_release_history x
+      where x.ad_work_id=(select ad_work_id from public.ad_work_days where id=p_ad_work_day_id)
+        and x.release_status='released_to_driver' and x.effective_from<=p_now
+        and x.effective_from<coalesce(e.effective_until,'infinity'::timestamptz)
+        and (x.effective_until is null or e.effective_from<x.effective_until)
+        and (not v_authority_current or x.effective_until is null or p_now<x.effective_until);
       for rh in select * from public.m21_release_history x
         where x.ad_work_id=(select ad_work_id from public.ad_work_days where id=p_ad_work_day_id)
           and x.release_status='released_to_driver'
-          and x.effective_from<coalesce(e.effective_until,p_now)
+          and v_release_count=1 and x.effective_from<=p_now
+          and x.effective_from<coalesce(e.effective_until,'infinity'::timestamptz)
           and (x.effective_until is null or e.effective_from<x.effective_until)
+          and (not v_authority_current or x.effective_until is null or p_now<x.effective_until)
         order by x.effective_from,x.id
       loop
         v_from:=greatest(e.effective_from,ah.effective_from,rh.effective_from);
@@ -2170,19 +2328,23 @@ begin
         if (select tracking_type::text from public.ad_works where id=(select ad_work_id from public.ad_work_days where id=p_ad_work_day_id)) in ('device','both') then
           select count(*)::integer into v_link_count
           from public.gps_device_vehicle_links x
-          where x.vehicle_id=ah.vehicle_id and x.is_primary
-            and x.effective_from<coalesce(v_until,p_now)
-            and (x.effective_until is null or v_from<x.effective_until);
+          where x.vehicle_id=ah.vehicle_id and x.is_primary and x.effective_from<=p_now
+            and x.effective_from<coalesce(v_until,'infinity'::timestamptz)
+            and (x.effective_until is null or v_from<x.effective_until)
+            and (not v_authority_current or x.effective_until is null or p_now<x.effective_until);
           if exists(
             select 1
             from public.gps_device_vehicle_links x
             join public.gps_device_vehicle_links y
               on y.vehicle_id=x.vehicle_id and y.is_primary and y.id<>x.id
-            where x.vehicle_id=ah.vehicle_id and x.is_primary
+            where x.vehicle_id=ah.vehicle_id and x.is_primary and x.effective_from<=p_now
               and x.effective_from<coalesce(v_until,'infinity'::timestamptz)
               and coalesce(x.effective_until,'infinity'::timestamptz)>v_from
+              and (not v_authority_current or x.effective_until is null or p_now<x.effective_until)
+              and y.effective_from<=p_now
               and y.effective_from<coalesce(v_until,'infinity'::timestamptz)
               and coalesce(y.effective_until,'infinity'::timestamptz)>v_from
+              and (not v_authority_current or y.effective_until is null or p_now<y.effective_until)
               and x.effective_from<coalesce(y.effective_until,'infinity'::timestamptz)
               and coalesce(x.effective_until,'infinity'::timestamptz)>y.effective_from
           ) then
@@ -2194,9 +2356,10 @@ begin
             select x.id,x.gps_device_id,x.vehicle_id,x.effective_from,x.effective_until
               into l
             from public.gps_device_vehicle_links x
-            where x.vehicle_id=ah.vehicle_id and x.is_primary
-              and x.effective_from<coalesce(v_until,p_now)
+            where x.vehicle_id=ah.vehicle_id and x.is_primary and x.effective_from<=p_now
+              and x.effective_from<coalesce(v_until,'infinity'::timestamptz)
               and (x.effective_until is null or v_from<x.effective_until)
+              and (not v_authority_current or x.effective_until is null or p_now<x.effective_until)
             order by x.effective_from,x.id limit 1;
             perform public.m23_evaluate_scope_authority(p_ad_work_day_id,e.id,ah.id,l.id,l.gps_device_id,rh.id,p_policy_id,p_policy_version,p_now); v_count:=v_count+1;
           elsif v_link_count=0 then
@@ -2204,9 +2367,10 @@ begin
           else
             for l in select x.id,x.gps_device_id,x.vehicle_id,x.effective_from,x.effective_until
               from public.gps_device_vehicle_links x
-              where x.vehicle_id=ah.vehicle_id and x.is_primary
-                and x.effective_from<coalesce(v_until,p_now)
+              where x.vehicle_id=ah.vehicle_id and x.is_primary and x.effective_from<=p_now
+                and x.effective_from<coalesce(v_until,'infinity'::timestamptz)
                 and (x.effective_until is null or v_from<x.effective_until)
+                and (not v_authority_current or x.effective_until is null or p_now<x.effective_until)
               order by x.effective_from,x.id
             loop
               perform public.m23_evaluate_scope_authority(p_ad_work_day_id,e.id,ah.id,l.id,l.gps_device_id,rh.id,p_policy_id,p_policy_version,p_now); v_count:=v_count+1;
@@ -2216,6 +2380,14 @@ begin
           perform public.m23_evaluate_scope_authority(p_ad_work_day_id,e.id,ah.id,null,null,rh.id,p_policy_id,p_policy_version,p_now); v_count:=v_count+1;
         end if;
       end loop;
+      if v_release_count<>1 then
+        -- A running execution with no single released-to-driver authority is
+        -- represented once as an unavailable scope, never as a missing-source
+        -- conclusion and never as several competing release scopes.
+        perform public.m23_evaluate_scope_authority(p_ad_work_day_id,e.id,ah.id,null,null,null,
+          p_policy_id,p_policy_version,p_now);
+        v_count:=v_count+1;
+      end if;
     end loop;
   end loop;
   return v_count;
@@ -2255,18 +2427,12 @@ begin
           where h.policy_id=j.policy_id and h.policy_version=j.policy_version
             and s.ad_work_day_id=j.ad_work_day_id
             and (
-              (s.overall_outcome='awaiting_sources' and exists(
-                select 1 from public.m21_execution_history e
-                where e.id=s.execution_history_id
-                  and p_now>=e.effective_from+make_interval(secs=>p.missing_source_grace_seconds)))
-              or (s.finality='provisional_active_work' and exists(
-                select 1 from public.m21_execution_history e
-                where e.id=s.execution_history_id and e.effective_until is not null
-                  and p_now>=e.effective_until))
-              or (s.finality='provisional_backfill_open' and exists(
-                select 1 from public.m21_execution_history e
-                where e.id=s.execution_history_id and e.effective_until is not null
-                  and p_now>=e.effective_until+make_interval(secs=>p.backfill_window_seconds)))
+              (s.overall_outcome='awaiting_sources' and s.scope_effective_from is not null
+                and p_now>=s.scope_effective_from+make_interval(secs=>p.missing_source_grace_seconds))
+              or (s.finality='provisional_active_work' and s.scope_effective_until is not null
+                and p_now>=s.scope_effective_until)
+              or (s.finality='provisional_backfill_open' and s.scope_effective_until is not null
+                and p_now>=s.scope_effective_until+make_interval(secs=>p.backfill_window_seconds))
             )
         )
       order by j.ad_work_day_id,j.policy_id,j.policy_version,j.id
@@ -2423,7 +2589,7 @@ begin
     'unpairedPhoneCount',s.unpaired_phone_count,'unpairedPhysicalCount',s.unpaired_physical_count,
     'sustainedPairCount',s.sustained_pair_count,'sustainedFirstPairAt',s.sustained_first_pair_at,
     'sustainedLastPairAt',s.sustained_last_pair_at,'synthetic',s.synthetic,'generatedAt',s.generated_at,
-    'inputWatermark',s.input_watermark,'technicalValuesAvailable',exists(select 1 from public.m23_comparison_pairs x
+    'safeReasonCode',s.safe_reason_code,'inputWatermark',s.input_watermark,'technicalValuesAvailable',exists(select 1 from public.m23_comparison_pairs x
       where x.snapshot_id=s.id)),
     'reviewHistory',coalesce((select jsonb_agg(jsonb_build_object('id',h.id,'previousStatus',h.previous_status,
       'newStatus',h.new_status,'reason',h.reason,'note',h.note,'createdAt',h.created_at) order by h.created_at desc)

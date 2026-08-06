@@ -16,11 +16,11 @@ insert into public.m21_execution_history(id,ad_work_day_id,execution_status,effe
 values('2b200000-0000-0000-0000-000000000000','2b100000-0000-0000-0000-000000000000','running','2026-08-02 00:00+00','2026-08-02 01:00+00','observed');
 insert into public.m23_comparison_snapshots(
   id,ad_work_day_id,ad_work_id,execution_history_id,policy_id,policy_version,authority_scope_key,input_hash,
-  source_expectation,overall_outcome,finality,evaluation_phase,synthetic,build_complete)
+  source_expectation,scope_effective_from,scope_effective_until,overall_outcome,finality,evaluation_phase,synthetic,build_complete)
 values('2b300000-0000-0000-0000-000000000000','2b100000-0000-0000-0000-000000000000','2b000000-0000-0000-0000-000000000003',
   '2b200000-0000-0000-0000-000000000000','phone-device-comparison','m23-pilot-v1',
   public.m22_safe_digest('m23-due-parallel-scope'),public.m22_safe_digest('m23-due-parallel-input'),
-  'both_expected','awaiting_sources','provisional_active_work','active_work',true,true);
+  'both_expected','2026-08-02 00:00+00','2026-08-02 01:00+00','awaiting_sources','provisional_active_work','active_work',true,true);
 insert into public.m23_comparison_heads(authority_scope_key,policy_id,policy_version,snapshot_id,updated_at)
 select authority_scope_key,policy_id,policy_version,id,clock_timestamp()
 from public.m23_comparison_snapshots where id='2b300000-0000-0000-0000-000000000000';
