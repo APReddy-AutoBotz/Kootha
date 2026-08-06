@@ -119,6 +119,7 @@ create table public.m23_comparison_snapshots (
   driver_id uuid references public.drivers(id) on delete restrict,
   vehicle_id uuid references public.vehicles(id) on delete restrict,
   assignment_history_id uuid references public.m21_assignment_history(id) on delete restrict,
+  release_history_id uuid references public.m21_release_history(id) on delete restrict,
   execution_history_id uuid references public.m21_execution_history(id) on delete restrict,
   gps_device_id uuid references public.gps_devices(id) on delete restrict,
   gps_device_vehicle_link_id uuid references public.gps_device_vehicle_links(id) on delete restrict,
@@ -1595,7 +1596,8 @@ on public.gps_device_vehicle_links for each row execute function public.m23_enqu
 create or replace function public.m23_pair_scope_exact(
   p_work_day_id uuid,p_execution_history_id uuid,p_assignment_history_id uuid,
   p_link_id uuid,p_device_id uuid,p_policy_id text,p_policy_version text,
-  p_scope_key text,p_scope_from timestamptz,p_scope_until timestamptz,p_snapshot_id uuid
+  p_scope_key text,p_scope_from timestamptz,p_scope_until timestamptz,p_snapshot_id uuid,
+  p_allow_end_boundary boolean
 ) returns void language plpgsql security definer set search_path = pg_catalog, public
 as $$
 declare
@@ -1603,22 +1605,13 @@ declare
   ah public.m21_assignment_history%rowtype; p public.m23_comparison_policies%rowtype;
   v_phone_count integer:=0; v_physical_count integer:=0;
   v_fast_pair_count integer:=0; v_fast_path_used boolean:=false;
-  v_allow_end_boundary boolean:=false;
+  v_allow_end_boundary boolean:=p_allow_end_boundary;
 begin
   select * into strict w from public.ad_work_days where id=p_work_day_id;
   select * into strict e from public.m21_execution_history where id=p_execution_history_id;
   select * into strict ah from public.m21_assignment_history where id=p_assignment_history_id;
   select * into strict p from public.m23_comparison_policies
     where policy_id=p_policy_id and policy_version=p_policy_version;
-  v_allow_end_boundary:=e.effective_until is not null
-    and p_scope_until=e.effective_until
-    and exists(
-      select 1 from public.m21_execution_history next_execution
-      where next_execution.ad_work_day_id=e.ad_work_day_id
-        and next_execution.execution_status='completed'
-        and next_execution.effective_from=e.effective_until
-    )
-    and (ah.effective_until is null or ah.effective_until>e.effective_until);
   select count(*)::integer into v_phone_count
   from public.location_points lp join public.tracking_sessions ts on ts.id=lp.tracking_session_id
   where lp.ad_work_day_id=w.id and lp.source::text='phone'
@@ -1840,7 +1833,7 @@ begin
   on conflict(authority_scope_key,policy_id,policy_version,pair_identity) do nothing;
 end;
 $$;
-revoke all on function public.m23_pair_scope_exact(uuid,uuid,uuid,uuid,uuid,text,text,text,timestamptz,timestamptz,uuid) from public,anon,authenticated;
+revoke all on function public.m23_pair_scope_exact(uuid,uuid,uuid,uuid,uuid,text,text,text,timestamptz,timestamptz,uuid,boolean) from public,anon,authenticated;
 
 create or replace function public.m23_evaluate_scope_authority(
   p_ad_work_day_id uuid,
@@ -1869,11 +1862,13 @@ declare
   v_phone_expected boolean:=false; v_physical_expected boolean:=false; v_ambiguous boolean:=false;
   v_grace_elapsed boolean:=false; v_synthetic boolean:=false; v_outcome text;
   v_safe_reason text; v_mixed boolean:=false; v_allow_end_boundary boolean:=false;
+  v_gap_category text; v_gap_start timestamptz;
+  v_current_execution_active boolean:=false; v_current_authority_count integer:=0;
   v_phone_synthetic_count integer:=0; v_phone_non_synthetic_count integer:=0;
   v_physical_synthetic_count integer:=0; v_physical_non_synthetic_count integer:=0;
   v_scope_from timestamptz; v_scope_until timestamptz; v_work_end timestamptz;
   v_raw numeric; v_conservative numeric; v_quality text; v_pair_outcome text;
-  v_release_count integer:=0; v_link_count integer:=0;
+  v_link_count integer:=0; v_current_release_count integer:=0; v_current_link_count integer:=0;
   v_fast_pair_count integer:=0;
   v_fast_path_used boolean:=false;
   v_current boolean:=false; v_current_first timestamptz; v_current_last timestamptz;
@@ -1890,6 +1885,7 @@ begin
   -- A non-running history row is never an active comparison scope.  The ended
   -- running row is reevaluated to close its grace/backfill phases.
   if e.execution_status <> 'running' then return null; end if;
+  v_current_execution_active:=e.effective_until is null or p_now<e.effective_until;
   if p_assignment_history_id is not null then
     select * into ah from public.m21_assignment_history x
     where x.id=p_assignment_history_id and x.ad_work_id=a.id
@@ -1906,6 +1902,8 @@ begin
     where x.id=p_gps_device_vehicle_link_id and x.effective_from<=p_now
       and x.effective_from<coalesce(e.effective_until,'infinity'::timestamptz)
       and (x.effective_until is null or e.effective_from<x.effective_until)
+      and (ah.id is null or (x.effective_from<coalesce(ah.effective_until,'infinity'::timestamptz)
+        and coalesce(x.effective_until,'infinity'::timestamptz)>ah.effective_from))
       and (ah.id is null or x.vehicle_id=ah.vehicle_id);
     if not found then
       v_ambiguous:=true; v_safe_reason:=coalesce(v_safe_reason,'inactive_device_link');
@@ -1916,48 +1914,118 @@ begin
     where x.id=p_release_history_id and x.ad_work_id=a.id
       and x.release_status='released_to_driver' and x.effective_from<=p_now
       and x.effective_from<coalesce(e.effective_until,'infinity'::timestamptz)
-      and (x.effective_until is null or e.effective_from<x.effective_until);
+      and (x.effective_until is null or e.effective_from<x.effective_until)
+      and (ah.id is null or (x.effective_from<coalesce(ah.effective_until,'infinity'::timestamptz)
+        and coalesce(x.effective_until,'infinity'::timestamptz)>ah.effective_from));
     if not found then
       v_ambiguous:=true; v_safe_reason:=coalesce(v_safe_reason,'inactive_release_authority');
-    end if;
-  else
-    select count(*)::integer into v_release_count from public.m21_release_history x
-    where x.ad_work_id=a.id and x.release_status='released_to_driver'
-      and x.effective_from<=p_now
-      and x.effective_from < coalesce(e.effective_until,'infinity'::timestamptz)
-      and (x.effective_until is null or e.effective_from < x.effective_until);
-    if v_release_count=1 then
-      select * into rh from public.m21_release_history x where x.ad_work_id=a.id
-        and x.release_status='released_to_driver'
-        and x.effective_from<=p_now
-        and x.effective_from < coalesce(e.effective_until,'infinity'::timestamptz)
-        and (x.effective_until is null or e.effective_from < x.effective_until)
-        order by x.effective_from desc limit 1;
-    elsif v_release_count>1 then
-      v_ambiguous:=true;
-      v_safe_reason:=coalesce(v_safe_reason,'ambiguous_release_authority');
-    else
-      v_safe_reason:=coalesce(v_safe_reason,'no_release_authority');
     end if;
   end if;
 
   v_phone_expected := coalesce(a.mobile_location_proof_required,false)
     and a.tracking_type::text in ('mobile','both');
-  v_physical_expected := a.tracking_type::text in ('device','both')
-    and p_gps_device_id is not null and p_gps_device_vehicle_link_id is not null;
+  v_physical_expected := a.tracking_type::text in ('device','both');
+  -- Current authority is assessed independently from the historical scopes.
+  -- A null authority input is a current gap only when the still-running
+  -- execution has no single authority row covering p_now.
+  if v_current_execution_active and p_assignment_history_id is null then
+    select count(*)::integer into v_current_authority_count
+    from public.m21_assignment_history x
+    where x.ad_work_id=a.id
+      and x.assignment_status in ('assigned','ready_for_execution')
+      and x.effective_from<=p_now
+      and (x.effective_until is null or p_now<x.effective_until)
+      and x.effective_from<coalesce(e.effective_until,'infinity'::timestamptz)
+      and coalesce(x.effective_until,'infinity'::timestamptz)>e.effective_from;
+    if v_current_authority_count=0 then
+      v_gap_category:='no_current_assignment';
+    elsif v_current_authority_count>1 then
+      v_gap_category:='ambiguous_current_assignment';
+    end if;
+  elsif v_current_execution_active and p_assignment_history_id is not null
+    and ah.id is not null and p_release_history_id is null then
+    select count(*)::integer into v_current_release_count
+    from public.m21_release_history x
+    where x.ad_work_id=a.id and x.release_status='released_to_driver'
+      and x.effective_from<=p_now
+      and (x.effective_until is null or p_now<x.effective_until)
+      and x.effective_from<coalesce(e.effective_until,'infinity'::timestamptz)
+      and coalesce(x.effective_until,'infinity'::timestamptz)>e.effective_from
+      and x.effective_from<coalesce(ah.effective_until,'infinity'::timestamptz)
+      and coalesce(x.effective_until,'infinity'::timestamptz)>ah.effective_from;
+    if v_current_release_count=0 then
+      v_gap_category:='no_current_release';
+    elsif v_current_release_count>1 then
+      v_gap_category:='ambiguous_current_release';
+    end if;
+  elsif v_current_execution_active and p_assignment_history_id is not null
+    and ah.id is not null and p_release_history_id is not null and rh.id is not null
+    and v_physical_expected and p_gps_device_vehicle_link_id is null then
+    select count(*)::integer into v_current_link_count
+    from public.gps_device_vehicle_links x
+    where x.vehicle_id=ah.vehicle_id and x.is_primary
+      and x.effective_from<=p_now
+      and (x.effective_until is null or p_now<x.effective_until)
+      and x.effective_from<coalesce(e.effective_until,'infinity'::timestamptz)
+      and coalesce(x.effective_until,'infinity'::timestamptz)>e.effective_from
+      and x.effective_from<coalesce(ah.effective_until,'infinity'::timestamptz)
+      and coalesce(x.effective_until,'infinity'::timestamptz)>ah.effective_from
+      and x.effective_from<coalesce(rh.effective_until,'infinity'::timestamptz)
+      and coalesce(x.effective_until,'infinity'::timestamptz)>rh.effective_from;
+    if v_current_link_count=0 then
+      v_gap_category:='no_current_device_link';
+    elsif v_current_link_count>1 then
+      v_gap_category:='ambiguous_current_device_link';
+    end if;
+  end if;
+  if v_gap_category is not null then
+    v_ambiguous:=true;
+    v_safe_reason:=v_gap_category;
+    if v_gap_category in ('no_current_assignment','ambiguous_current_assignment') then
+      select greatest(e.effective_from,coalesce(max(x.effective_until),e.effective_from))
+        into v_gap_start
+      from public.m21_assignment_history x
+      where x.ad_work_id=a.id and x.effective_until is not null
+        and x.effective_until<=p_now and x.effective_until>e.effective_from
+        and x.effective_until<=coalesce(e.effective_until,'infinity'::timestamptz);
+    elsif v_gap_category in ('no_current_release','ambiguous_current_release') then
+      select greatest(e.effective_from,ah.effective_from,
+        coalesce(max(x.effective_until),greatest(e.effective_from,ah.effective_from)))
+        into v_gap_start
+      from public.m21_release_history x
+      where x.ad_work_id=a.id and x.effective_until is not null
+        and x.effective_until<=p_now and x.effective_until>e.effective_from
+        and x.effective_until<=coalesce(e.effective_until,'infinity'::timestamptz);
+    else
+      select greatest(e.effective_from,ah.effective_from,rh.effective_from,
+        coalesce(max(x.effective_until),greatest(e.effective_from,ah.effective_from,rh.effective_from)))
+        into v_gap_start
+      from public.gps_device_vehicle_links x
+      where x.vehicle_id=ah.vehicle_id and x.is_primary
+        and x.effective_until is not null
+        and x.effective_until<=p_now and x.effective_until>e.effective_from
+        and x.effective_until<=coalesce(e.effective_until,'infinity'::timestamptz);
+    end if;
+  end if;
   if a.tracking_type::text in ('device','both')
     and (p_gps_device_id is null or p_gps_device_vehicle_link_id is null) then
-    v_ambiguous:=true;
-    v_safe_reason:=coalesce(v_safe_reason,'no_active_device_link');
+    if v_gap_category is null then
+      v_ambiguous:=true;
+      v_safe_reason:=coalesce(v_safe_reason,'no_active_device_link');
+    end if;
   end if;
   if p_assignment_history_id is null and (v_phone_expected or v_physical_expected) then
-    v_ambiguous:=true;
-    v_safe_reason:='no_active_assignment';
+    if v_gap_category is null then
+      v_ambiguous:=true;
+      v_safe_reason:='no_active_assignment';
+    end if;
   end if;
   if p_release_history_id is null and (v_phone_expected or v_physical_expected)
     and rh.id is null then
-    v_ambiguous:=true;
-    v_safe_reason:=coalesce(v_safe_reason,'no_release_authority');
+    if v_gap_category is null then
+      v_ambiguous:=true;
+      v_safe_reason:=coalesce(v_safe_reason,'no_release_authority');
+    end if;
   end if;
   v_expectation:=case when v_ambiguous then 'ambiguous'
     when v_phone_expected and v_physical_expected then 'both_expected'
@@ -1997,7 +2065,7 @@ begin
   end if;
   v_scope_key:=public.m22_safe_digest(concat_ws('|',w.id::text,e.id::text,
     coalesce(ah.id::text,''),coalesce(l.id::text,''),coalesce(p_gps_device_id::text,''),
-    coalesce(rh.id::text,'')));
+    coalesce(rh.id::text,''),coalesce(v_gap_category,''),coalesce(v_gap_start::text,'')));
 
   v_work_end:=coalesce(v_scope_until,w.actual_end_time);
   v_finality:=case
@@ -2019,8 +2087,10 @@ begin
     )
     and ah.id is not null
     and (ah.effective_until is null or ah.effective_until>e.effective_until)
-    and (rh.id is null or rh.effective_until is null or rh.effective_until>e.effective_until)
-    and (l.id is null or l.effective_until is null or l.effective_until>e.effective_until);
+    and rh.id is not null
+    and (rh.effective_until is null or rh.effective_until>e.effective_until)
+    and (a.tracking_type::text not in ('device','both')
+      or (l.id is not null and (l.effective_until is null or l.effective_until>e.effective_until)));
   v_grace_elapsed:=v_finality<>'provisional_active_work'
     or p_now>=v_scope_from+make_interval(secs=>p.missing_source_grace_seconds);
 
@@ -2128,13 +2198,13 @@ begin
 
   insert into public.m23_comparison_snapshots(
     ad_work_day_id,ad_work_id,driver_id,vehicle_id,assignment_history_id,
-    execution_history_id,gps_device_id,gps_device_vehicle_link_id,policy_id,
+    release_history_id,execution_history_id,gps_device_id,gps_device_vehicle_link_id,policy_id,
     policy_version,authority_scope_key,input_watermark,input_hash,source_expectation,
     scope_effective_from,scope_effective_until,safe_reason_code,
     overall_outcome,finality,evaluation_phase,synthetic
   ) values (
     w.id,w.ad_work_id,coalesce(ah.driver_id,w.driver_id),coalesce(ah.vehicle_id,w.vehicle_id),
-    ah.id,e.id,p_gps_device_id,p_gps_device_vehicle_link_id,p.policy_id,p.policy_version,
+    ah.id,rh.id,e.id,p_gps_device_id,p_gps_device_vehicle_link_id,p.policy_id,p.policy_version,
     v_scope_key,v_watermark,v_input_hash,v_expectation,v_scope_from,v_scope_until,v_safe_reason,
     'comparison_unavailable',v_finality,v_phase,v_synthetic
   ) returning * into s;
@@ -2144,7 +2214,8 @@ begin
   if v_phone_expected and v_physical_expected and not v_ambiguous and not v_mixed
     and ah.id is not null and rh.id is not null then
     perform public.m23_pair_scope_exact(w.id,e.id,ah.id,l.id,p_gps_device_id,
-      p.policy_id,p.policy_version,v_scope_key,v_scope_from,v_scope_until,s.id);
+      p.policy_id,p.policy_version,v_scope_key,v_scope_from,v_scope_until,s.id,
+      v_allow_end_boundary);
   end if;
 
   select count(*)::integer,count(*) filter(where x.quality='acceptable')::integer,
@@ -2251,9 +2322,40 @@ create or replace function public.m23_evaluate_scope(
   p_policy_version text,p_now timestamptz
 ) returns uuid language plpgsql security definer set search_path = pg_catalog, public
 as $$
+declare
+  v_ad_work_id uuid; v_release_count integer:=0; v_release_id uuid;
 begin
+  select ad_work_id into v_ad_work_id from public.ad_work_days where id=p_ad_work_day_id;
+  -- The compatibility wrapper may fill the current release only when exactly
+  -- one release episode covers p_now.  It never performs the old broad
+  -- historical count, so sequential releases remain distinct scopes.
+  select count(*)::integer into v_release_count
+  from public.m21_release_history rh
+  join public.m21_execution_history e on e.id=p_execution_history_id
+  left join public.m21_assignment_history ah on ah.id=p_assignment_history_id
+  where rh.ad_work_id=v_ad_work_id and rh.release_status='released_to_driver'
+    and rh.effective_from<=p_now
+    and (rh.effective_until is null or p_now<rh.effective_until)
+    and rh.effective_from<coalesce(e.effective_until,'infinity'::timestamptz)
+    and coalesce(rh.effective_until,'infinity'::timestamptz)>e.effective_from
+    and (ah.id is null or (rh.effective_from<coalesce(ah.effective_until,'infinity'::timestamptz)
+      and coalesce(rh.effective_until,'infinity'::timestamptz)>ah.effective_from));
+  if v_release_count=1 then
+    select rh.id into v_release_id
+    from public.m21_release_history rh
+    join public.m21_execution_history e on e.id=p_execution_history_id
+    left join public.m21_assignment_history ah on ah.id=p_assignment_history_id
+    where rh.ad_work_id=v_ad_work_id and rh.release_status='released_to_driver'
+      and rh.effective_from<=p_now
+      and (rh.effective_until is null or p_now<rh.effective_until)
+      and rh.effective_from<coalesce(e.effective_until,'infinity'::timestamptz)
+      and coalesce(rh.effective_until,'infinity'::timestamptz)>e.effective_from
+      and (ah.id is null or (rh.effective_from<coalesce(ah.effective_until,'infinity'::timestamptz)
+        and coalesce(rh.effective_until,'infinity'::timestamptz)>ah.effective_from))
+    order by rh.effective_from,rh.id limit 1;
+  end if;
   return public.m23_evaluate_scope_authority(p_ad_work_day_id,p_execution_history_id,
-    p_assignment_history_id,p_gps_device_vehicle_link_id,p_gps_device_id,null,
+    p_assignment_history_id,p_gps_device_vehicle_link_id,p_gps_device_id,v_release_id,
     p_policy_id,p_policy_version,p_now);
 end;
 $$;
@@ -2263,46 +2365,37 @@ create or replace function public.m23_evaluate_work_day(
   p_now timestamptz default clock_timestamp()
 ) returns integer language plpgsql security definer set search_path = pg_catalog, public
 as $$
-declare e record; ah record; rh record; l record; v_count integer:=0; v_link_count integer;
-  v_release_count integer:=0; v_active_assignment_count integer:=0;
+declare e record; ah record; rh record; l record; current_ah record;
+  v_count integer:=0; v_link_count integer; v_release_count integer;
+  v_active_assignment_count integer:=0; v_current_link_count integer:=0;
   v_from timestamptz; v_until timestamptz;
+  v_tracking_type text; v_ad_work_id uuid;
 begin
+  select d.ad_work_id,w.tracking_type::text into v_ad_work_id,v_tracking_type
+  from public.ad_work_days d join public.ad_works w on w.id=d.ad_work_id
+  where d.id=p_ad_work_day_id;
   for e in select * from public.m21_execution_history where ad_work_day_id=p_ad_work_day_id
     and execution_status='running' and effective_from<=p_now order by effective_from,id
   loop
-    select count(*)::integer into v_active_assignment_count
-    from public.m21_assignment_history x
-    where x.ad_work_id=(select ad_work_id from public.ad_work_days where id=p_ad_work_day_id)
-      and x.assignment_status in ('assigned','ready_for_execution')
-      and x.effective_from<=p_now
-      and x.effective_from<coalesce(e.effective_until,'infinity'::timestamptz)
-      and (x.effective_until is null or e.effective_from<x.effective_until);
-    if v_active_assignment_count=0 then
-      perform public.m23_evaluate_scope_authority(p_ad_work_day_id,e.id,null,null,null,null,
-        p_policy_id,p_policy_version,p_now);
-      v_count:=v_count+1;
-      continue;
-    end if;
+    -- Historical segmentation: every valid authority episode that began by
+    -- p_now is evaluated independently.  Current p_now coverage is not used
+    -- to discard a scope that may still receive delayed/backfill evidence.
     for ah in select * from public.m21_assignment_history x
-      where x.ad_work_id=(select ad_work_id from public.ad_work_days where id=p_ad_work_day_id)
+      where x.ad_work_id=v_ad_work_id
         and x.assignment_status in ('assigned','ready_for_execution')
         and x.effective_from<=p_now
         and x.effective_from<coalesce(e.effective_until,'infinity'::timestamptz)
-        and (x.effective_until is null or e.effective_from<x.effective_until)
+        and coalesce(x.effective_until,'infinity'::timestamptz)>e.effective_from
       order by x.effective_from,x.id
     loop
-      select count(*)::integer into v_release_count
-      from public.m21_release_history x
-      where x.ad_work_id=(select ad_work_id from public.ad_work_days where id=p_ad_work_day_id)
-        and x.release_status='released_to_driver' and x.effective_from<=p_now
-        and x.effective_from<coalesce(e.effective_until,'infinity'::timestamptz)
-        and (x.effective_until is null or e.effective_from<x.effective_until);
       for rh in select * from public.m21_release_history x
-        where x.ad_work_id=(select ad_work_id from public.ad_work_days where id=p_ad_work_day_id)
+        where x.ad_work_id=v_ad_work_id
           and x.release_status='released_to_driver'
-          and v_release_count=1 and x.effective_from<=p_now
+          and x.effective_from<=p_now
           and x.effective_from<coalesce(e.effective_until,'infinity'::timestamptz)
-          and (x.effective_until is null or e.effective_from<x.effective_until)
+          and coalesce(x.effective_until,'infinity'::timestamptz)>e.effective_from
+          and x.effective_from<coalesce(ah.effective_until,'infinity'::timestamptz)
+          and coalesce(x.effective_until,'infinity'::timestamptz)>ah.effective_from
         order by x.effective_from,x.id
       loop
         v_from:=greatest(e.effective_from,ah.effective_from,rh.effective_from);
@@ -2310,7 +2403,7 @@ begin
           when ah.effective_until is null then least(e.effective_until,coalesce(rh.effective_until,e.effective_until))
           when rh.effective_until is null then least(e.effective_until,ah.effective_until)
           else least(e.effective_until,ah.effective_until,rh.effective_until) end;
-        if (select tracking_type::text from public.ad_works where id=(select ad_work_id from public.ad_work_days where id=p_ad_work_day_id)) in ('device','both') then
+        if v_tracking_type in ('device','both') then
           select count(*)::integer into v_link_count
           from public.gps_device_vehicle_links x
           where x.vehicle_id=ah.vehicle_id and x.is_primary and x.effective_from<=p_now
@@ -2360,15 +2453,74 @@ begin
           perform public.m23_evaluate_scope_authority(p_ad_work_day_id,e.id,ah.id,null,null,rh.id,p_policy_id,p_policy_version,p_now); v_count:=v_count+1;
         end if;
       end loop;
-      if v_release_count<>1 then
-        -- A running execution with no single released-to-driver authority is
-        -- represented once as an unavailable scope, never as a missing-source
-        -- conclusion and never as several competing release scopes.
-        perform public.m23_evaluate_scope_authority(p_ad_work_day_id,e.id,ah.id,null,null,null,
+    end loop;
+
+    -- Current authority: a running execution gets one deterministic gap scope
+    -- only when assignment, release, or physical link coverage at p_now is
+    -- absent/ambiguous.  A valid current scope was already emitted by the
+    -- historical segmentation above, so it is not evaluated twice.
+    if e.effective_until is null or p_now<e.effective_until then
+      select count(*)::integer into v_active_assignment_count
+      from public.m21_assignment_history x
+      where x.ad_work_id=v_ad_work_id
+        and x.assignment_status in ('assigned','ready_for_execution')
+        and x.effective_from<=p_now
+        and (x.effective_until is null or p_now<x.effective_until)
+        and x.effective_from<coalesce(e.effective_until,'infinity'::timestamptz)
+        and coalesce(x.effective_until,'infinity'::timestamptz)>e.effective_from;
+      if v_active_assignment_count<>1 then
+        perform public.m23_evaluate_scope_authority(p_ad_work_day_id,e.id,null,null,null,null,
           p_policy_id,p_policy_version,p_now);
         v_count:=v_count+1;
+      else
+        select * into current_ah
+        from public.m21_assignment_history x
+        where x.ad_work_id=v_ad_work_id
+          and x.assignment_status in ('assigned','ready_for_execution')
+          and x.effective_from<=p_now
+          and (x.effective_until is null or p_now<x.effective_until)
+          and x.effective_from<coalesce(e.effective_until,'infinity'::timestamptz)
+          and coalesce(x.effective_until,'infinity'::timestamptz)>e.effective_from
+        order by x.effective_from,x.id limit 1;
+        select count(*)::integer into v_release_count
+        from public.m21_release_history x
+        where x.ad_work_id=v_ad_work_id and x.release_status='released_to_driver'
+          and x.effective_from<=p_now
+          and (x.effective_until is null or p_now<x.effective_until)
+          and x.effective_from<coalesce(e.effective_until,'infinity'::timestamptz)
+          and coalesce(x.effective_until,'infinity'::timestamptz)>e.effective_from
+          and x.effective_from<coalesce(current_ah.effective_until,'infinity'::timestamptz)
+          and coalesce(x.effective_until,'infinity'::timestamptz)>current_ah.effective_from;
+        if v_release_count<>1 then
+          perform public.m23_evaluate_scope_authority(p_ad_work_day_id,e.id,current_ah.id,null,null,null,
+            p_policy_id,p_policy_version,p_now);
+          v_count:=v_count+1;
+        elsif v_tracking_type in ('device','both') then
+          select count(*)::integer into v_current_link_count
+          from public.gps_device_vehicle_links x
+          where x.vehicle_id=current_ah.vehicle_id and x.is_primary
+            and x.effective_from<=p_now
+            and (x.effective_until is null or p_now<x.effective_until)
+            and x.effective_from<coalesce(e.effective_until,'infinity'::timestamptz)
+            and coalesce(x.effective_until,'infinity'::timestamptz)>e.effective_from
+            and x.effective_from<coalesce(current_ah.effective_until,'infinity'::timestamptz)
+            and coalesce(x.effective_until,'infinity'::timestamptz)>current_ah.effective_from;
+          if v_current_link_count<>1 then
+            perform public.m23_evaluate_scope_authority(p_ad_work_day_id,e.id,current_ah.id,null,null,
+              (select x.id from public.m21_release_history x
+               where x.ad_work_id=v_ad_work_id and x.release_status='released_to_driver'
+                 and x.effective_from<=p_now
+                 and (x.effective_until is null or p_now<x.effective_until)
+                 and x.effective_from<coalesce(e.effective_until,'infinity'::timestamptz)
+                 and coalesce(x.effective_until,'infinity'::timestamptz)>e.effective_from
+                 and x.effective_from<coalesce(current_ah.effective_until,'infinity'::timestamptz)
+                 and coalesce(x.effective_until,'infinity'::timestamptz)>current_ah.effective_from
+               order by x.effective_from,x.id limit 1),p_policy_id,p_policy_version,p_now);
+            v_count:=v_count+1;
+          end if;
+        end if;
       end if;
-    end loop;
+    end if;
   end loop;
   return v_count;
 end;
