@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(32);
+select plan(36);
 
 insert into public.drivers(id,name,phone,approval_status,onboarding_status)
 values('28000000-0000-0000-0000-000000000001','M23 Replacement Driver','9000000028','approved','approved');
@@ -31,12 +31,12 @@ insert into public.gps_device_vehicle_links(id,gps_device_id,vehicle_id,is_prima
 values
   ('28000000-0000-0000-0000-000000000013','28000000-0000-0000-0000-000000000004','28000000-0000-0000-0000-000000000002',true,'2026-07-31 08:00+00','2026-07-31 09:00+00','M23 replacement A','28000000-0000-0000-0000-000000000003','28000000-0000-0000-0000-000000000003','2026-07-31 09:00+00'),
   ('28000000-0000-0000-0000-000000000014','28000000-0000-0000-0000-000000000005','28000000-0000-0000-0000-000000000002',true,'2026-07-31 09:00+00',null,'M23 replacement B','28000000-0000-0000-0000-000000000003',null,null);
-insert into public.tracking_sessions(id,ad_work_day_id,ad_work_id,source_type,status,started_at,tracking_mode,driver_id,vehicle_id,synthetic)
-values('28000000-0000-0000-0000-000000000015','28000000-0000-0000-0000-000000000009','28000000-0000-0000-0000-000000000007','mobile','running','2026-07-31 08:00+00','phone_location','28000000-0000-0000-0000-000000000001','28000000-0000-0000-0000-000000000002',true);
-insert into public.tracking_sessions(id,ad_work_day_id,ad_work_id,assignment_id,source_type,status,started_at,tracking_mode,driver_id,vehicle_id,gps_device_id,gps_device_vehicle_link_id,assignment_history_id,execution_history_id,synthetic)
+insert into public.tracking_sessions(id,ad_work_day_id,ad_work_id,source_type,status,started_at,ended_at,tracking_mode,driver_id,vehicle_id,synthetic)
+values('28000000-0000-0000-0000-000000000015','28000000-0000-0000-0000-000000000009','28000000-0000-0000-0000-000000000007','mobile','running','2026-07-31 08:00+00','2026-07-31 10:00+00','phone_location','28000000-0000-0000-0000-000000000001','28000000-0000-0000-0000-000000000002',true);
+insert into public.tracking_sessions(id,ad_work_day_id,ad_work_id,assignment_id,source_type,status,started_at,ended_at,tracking_mode,driver_id,vehicle_id,gps_device_id,gps_device_vehicle_link_id,assignment_history_id,execution_history_id,synthetic)
 values
-  ('28000000-0000-0000-0000-000000000016','28000000-0000-0000-0000-000000000009','28000000-0000-0000-0000-000000000007','28000000-0000-0000-0000-000000000008','device','running','2026-07-31 08:00+00','physical_device','28000000-0000-0000-0000-000000000001','28000000-0000-0000-0000-000000000002','28000000-0000-0000-0000-000000000004','28000000-0000-0000-0000-000000000013','28000000-0000-0000-0000-000000000010','28000000-0000-0000-0000-000000000012',true),
-  ('28000000-0000-0000-0000-000000000017','28000000-0000-0000-0000-000000000009','28000000-0000-0000-0000-000000000007','28000000-0000-0000-0000-000000000008','device','running','2026-07-31 09:00+00','physical_device','28000000-0000-0000-0000-000000000001','28000000-0000-0000-0000-000000000002','28000000-0000-0000-0000-000000000005','28000000-0000-0000-0000-000000000014','28000000-0000-0000-0000-000000000010','28000000-0000-0000-0000-000000000012',true);
+  ('28000000-0000-0000-0000-000000000016','28000000-0000-0000-0000-000000000009','28000000-0000-0000-0000-000000000007','28000000-0000-0000-0000-000000000008','device','running','2026-07-31 08:00+00','2026-07-31 09:00+00','physical_device','28000000-0000-0000-0000-000000000001','28000000-0000-0000-0000-000000000002','28000000-0000-0000-0000-000000000004','28000000-0000-0000-0000-000000000013','28000000-0000-0000-0000-000000000010','28000000-0000-0000-0000-000000000012',true),
+  ('28000000-0000-0000-0000-000000000017','28000000-0000-0000-0000-000000000009','28000000-0000-0000-0000-000000000007','28000000-0000-0000-0000-000000000008','device','running','2026-07-31 09:00+00','2026-07-31 10:00+00','physical_device','28000000-0000-0000-0000-000000000001','28000000-0000-0000-0000-000000000002','28000000-0000-0000-0000-000000000005','28000000-0000-0000-0000-000000000014','28000000-0000-0000-0000-000000000010','28000000-0000-0000-0000-000000000012',true);
 insert into public.location_points(id,tracking_session_id,source,driver_id,vehicle_id,recorded_at,received_at,lat,lng,accuracy_meters,quality,ad_work_id,ad_work_day_id,assignment_id,assignment_history_id,execution_history_id,synthetic)
 values
   ('28100000-0000-0000-0000-000000000001','28000000-0000-0000-0000-000000000015','phone','28000000-0000-0000-0000-000000000001','28000000-0000-0000-0000-000000000002','2026-07-31 08:10+00','2026-07-31 08:10+00',17,78,10,'good','28000000-0000-0000-0000-000000000007','28000000-0000-0000-0000-000000000009','28000000-0000-0000-0000-000000000008','28000000-0000-0000-0000-000000000010','28000000-0000-0000-0000-000000000012',true),
@@ -100,6 +100,10 @@ select is(public.m23_evaluate_work_day('28000000-0000-0000-0000-000000000009','p
 select ok(exists(select 1 from public.m23_comparison_pairs where physical_point_id='28300000-0000-0000-0000-000000000005'),'one microsecond before End Work remains eligible');
 select ok(exists(select 1 from public.m23_comparison_pairs where physical_point_id='28300000-0000-0000-0000-000000000006'),'exact End Work boundary is eligible only with continuing assignment, release and link authority');
 select ok(not exists(select 1 from public.m23_comparison_pairs where physical_point_id='28300000-0000-0000-0000-000000000007'),'capture after End Work is excluded');
+select ok(exists(select 1 from public.m23_comparison_pairs where phone_point_id='28100000-0000-0000-0000-000000000006' and physical_point_id='28300000-0000-0000-0000-000000000006'),'phone and physical exact End Work boundary points share the same selected pair');
+select ok(not exists(select 1 from public.m23_comparison_pairs where phone_point_id='28100000-0000-0000-0000-000000000007'),'phone capture after its ended_at is excluded');
+select ok(public.m23_point_in_session_scope('2026-07-31 10:00+00','2026-07-31 08:00+00','2026-07-31 10:00+00','2026-07-31 10:00+00',true),'session End Work equality is allowed only for the unified boundary predicate');
+select ok(not public.m23_point_in_session_scope('2026-07-31 10:00.000001+00','2026-07-31 08:00+00','2026-07-31 10:00+00','2026-07-31 10:00+00',true),'one microsecond after session End Work is excluded by the unified predicate');
 select is((select count(distinct execution_history_id)::integer from public.m23_comparison_snapshots where ad_work_day_id='28000000-0000-0000-0000-000000000009'),1,'ended running history remains the only snapshot authority through finality');
 select ok(not exists(select 1 from public.m23_comparison_snapshots where ad_work_day_id='28000000-0000-0000-0000-000000000009' and overall_outcome in ('comparison_unavailable','phone_missing','physical_device_missing','both_missing')),'completed history does not introduce missing or unavailable outcomes');
 select public.m23_evaluate_scope('28000000-0000-0000-0000-000000000009','28000000-0000-0000-0000-000000000012','28000000-0000-0000-0000-000000000010',null,null,'phone-device-comparison','m23-pilot-v1','2026-07-31 10:30+00');
