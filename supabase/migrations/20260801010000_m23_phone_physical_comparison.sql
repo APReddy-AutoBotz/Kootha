@@ -1880,7 +1880,6 @@ declare
   v_current_count integer:=0; v_current_min numeric; v_current_max numeric; v_current_first_id text;
   v_best boolean:=false; v_best_first timestamptz; v_best_last timestamptz; v_best_count integer:=0;
   v_best_min numeric; v_best_max numeric; v_best_first_id text; v_pair_time timestamptz;
-  v_authority_current boolean:=false;
 begin
   select * into strict w from public.ad_work_days where id=p_ad_work_day_id;
   select * into strict a from public.ad_works where id=w.ad_work_id;
@@ -1891,16 +1890,13 @@ begin
   -- A non-running history row is never an active comparison scope.  The ended
   -- running row is reevaluated to close its grace/backfill phases.
   if e.execution_status <> 'running' then return null; end if;
-  v_authority_current:=e.effective_until is null or p_now<e.effective_until;
-
   if p_assignment_history_id is not null then
     select * into ah from public.m21_assignment_history x
     where x.id=p_assignment_history_id and x.ad_work_id=a.id
       and x.assignment_status in ('assigned','ready_for_execution')
       and x.effective_from<=p_now
       and x.effective_from<coalesce(e.effective_until,'infinity'::timestamptz)
-      and (x.effective_until is null or e.effective_from<x.effective_until)
-      and (not v_authority_current or x.effective_until is null or p_now<x.effective_until);
+      and (x.effective_until is null or e.effective_from<x.effective_until);
     if not found then
       v_ambiguous:=true; v_safe_reason:='inactive_assignment';
     end if;
@@ -1910,7 +1906,6 @@ begin
     where x.id=p_gps_device_vehicle_link_id and x.effective_from<=p_now
       and x.effective_from<coalesce(e.effective_until,'infinity'::timestamptz)
       and (x.effective_until is null or e.effective_from<x.effective_until)
-      and (not v_authority_current or x.effective_until is null or p_now<x.effective_until)
       and (ah.id is null or x.vehicle_id=ah.vehicle_id);
     if not found then
       v_ambiguous:=true; v_safe_reason:=coalesce(v_safe_reason,'inactive_device_link');
@@ -1921,8 +1916,7 @@ begin
     where x.id=p_release_history_id and x.ad_work_id=a.id
       and x.release_status='released_to_driver' and x.effective_from<=p_now
       and x.effective_from<coalesce(e.effective_until,'infinity'::timestamptz)
-      and (x.effective_until is null or e.effective_from<x.effective_until)
-      and (not v_authority_current or x.effective_until is null or p_now<x.effective_until);
+      and (x.effective_until is null or e.effective_from<x.effective_until);
     if not found then
       v_ambiguous:=true; v_safe_reason:=coalesce(v_safe_reason,'inactive_release_authority');
     end if;
@@ -1931,15 +1925,13 @@ begin
     where x.ad_work_id=a.id and x.release_status='released_to_driver'
       and x.effective_from<=p_now
       and x.effective_from < coalesce(e.effective_until,'infinity'::timestamptz)
-      and (x.effective_until is null or e.effective_from < x.effective_until)
-      and (not v_authority_current or x.effective_until is null or p_now<x.effective_until);
+      and (x.effective_until is null or e.effective_from < x.effective_until);
     if v_release_count=1 then
       select * into rh from public.m21_release_history x where x.ad_work_id=a.id
         and x.release_status='released_to_driver'
         and x.effective_from<=p_now
         and x.effective_from < coalesce(e.effective_until,'infinity'::timestamptz)
         and (x.effective_until is null or e.effective_from < x.effective_until)
-        and (not v_authority_current or x.effective_until is null or p_now<x.effective_until)
         order by x.effective_from desc limit 1;
     elsif v_release_count>1 then
       v_ambiguous:=true;
@@ -1998,8 +1990,7 @@ begin
     select count(*)::integer into v_link_count from public.gps_device_vehicle_links x
     where x.vehicle_id=l.vehicle_id and x.is_primary and x.effective_from<=p_now
       and x.effective_from < coalesce(v_scope_until,'infinity'::timestamptz)
-      and coalesce(x.effective_until,'infinity'::timestamptz)>v_scope_from
-      and (not v_authority_current or x.effective_until is null or p_now<x.effective_until);
+      and coalesce(x.effective_until,'infinity'::timestamptz)>v_scope_from;
     if v_link_count>1 then
       v_ambiguous:=true; v_safe_reason:=coalesce(v_safe_reason,'ambiguous_device_link');
     end if;
@@ -2274,21 +2265,18 @@ create or replace function public.m23_evaluate_work_day(
 as $$
 declare e record; ah record; rh record; l record; v_count integer:=0; v_link_count integer;
   v_release_count integer:=0; v_active_assignment_count integer:=0;
-  v_authority_current boolean:=false;
   v_from timestamptz; v_until timestamptz;
 begin
   for e in select * from public.m21_execution_history where ad_work_day_id=p_ad_work_day_id
     and execution_status='running' and effective_from<=p_now order by effective_from,id
   loop
-    v_authority_current:=e.effective_until is null or p_now<e.effective_until;
     select count(*)::integer into v_active_assignment_count
     from public.m21_assignment_history x
     where x.ad_work_id=(select ad_work_id from public.ad_work_days where id=p_ad_work_day_id)
       and x.assignment_status in ('assigned','ready_for_execution')
       and x.effective_from<=p_now
       and x.effective_from<coalesce(e.effective_until,'infinity'::timestamptz)
-      and (x.effective_until is null or e.effective_from<x.effective_until)
-      and (not v_authority_current or x.effective_until is null or p_now<x.effective_until);
+      and (x.effective_until is null or e.effective_from<x.effective_until);
     if v_active_assignment_count=0 then
       perform public.m23_evaluate_scope_authority(p_ad_work_day_id,e.id,null,null,null,null,
         p_policy_id,p_policy_version,p_now);
@@ -2301,7 +2289,6 @@ begin
         and x.effective_from<=p_now
         and x.effective_from<coalesce(e.effective_until,'infinity'::timestamptz)
         and (x.effective_until is null or e.effective_from<x.effective_until)
-        and (not v_authority_current or x.effective_until is null or p_now<x.effective_until)
       order by x.effective_from,x.id
     loop
       select count(*)::integer into v_release_count
@@ -2309,15 +2296,13 @@ begin
       where x.ad_work_id=(select ad_work_id from public.ad_work_days where id=p_ad_work_day_id)
         and x.release_status='released_to_driver' and x.effective_from<=p_now
         and x.effective_from<coalesce(e.effective_until,'infinity'::timestamptz)
-        and (x.effective_until is null or e.effective_from<x.effective_until)
-        and (not v_authority_current or x.effective_until is null or p_now<x.effective_until);
+        and (x.effective_until is null or e.effective_from<x.effective_until);
       for rh in select * from public.m21_release_history x
         where x.ad_work_id=(select ad_work_id from public.ad_work_days where id=p_ad_work_day_id)
           and x.release_status='released_to_driver'
           and v_release_count=1 and x.effective_from<=p_now
           and x.effective_from<coalesce(e.effective_until,'infinity'::timestamptz)
           and (x.effective_until is null or e.effective_from<x.effective_until)
-          and (not v_authority_current or x.effective_until is null or p_now<x.effective_until)
         order by x.effective_from,x.id
       loop
         v_from:=greatest(e.effective_from,ah.effective_from,rh.effective_from);
@@ -2330,8 +2315,7 @@ begin
           from public.gps_device_vehicle_links x
           where x.vehicle_id=ah.vehicle_id and x.is_primary and x.effective_from<=p_now
             and x.effective_from<coalesce(v_until,'infinity'::timestamptz)
-            and (x.effective_until is null or v_from<x.effective_until)
-            and (not v_authority_current or x.effective_until is null or p_now<x.effective_until);
+            and (x.effective_until is null or v_from<x.effective_until);
           if exists(
             select 1
             from public.gps_device_vehicle_links x
@@ -2340,11 +2324,9 @@ begin
             where x.vehicle_id=ah.vehicle_id and x.is_primary and x.effective_from<=p_now
               and x.effective_from<coalesce(v_until,'infinity'::timestamptz)
               and coalesce(x.effective_until,'infinity'::timestamptz)>v_from
-              and (not v_authority_current or x.effective_until is null or p_now<x.effective_until)
               and y.effective_from<=p_now
               and y.effective_from<coalesce(v_until,'infinity'::timestamptz)
               and coalesce(y.effective_until,'infinity'::timestamptz)>v_from
-              and (not v_authority_current or y.effective_until is null or p_now<y.effective_until)
               and x.effective_from<coalesce(y.effective_until,'infinity'::timestamptz)
               and coalesce(x.effective_until,'infinity'::timestamptz)>y.effective_from
           ) then
@@ -2359,7 +2341,6 @@ begin
             where x.vehicle_id=ah.vehicle_id and x.is_primary and x.effective_from<=p_now
               and x.effective_from<coalesce(v_until,'infinity'::timestamptz)
               and (x.effective_until is null or v_from<x.effective_until)
-              and (not v_authority_current or x.effective_until is null or p_now<x.effective_until)
             order by x.effective_from,x.id limit 1;
             perform public.m23_evaluate_scope_authority(p_ad_work_day_id,e.id,ah.id,l.id,l.gps_device_id,rh.id,p_policy_id,p_policy_version,p_now); v_count:=v_count+1;
           elsif v_link_count=0 then
@@ -2370,7 +2351,6 @@ begin
               where x.vehicle_id=ah.vehicle_id and x.is_primary and x.effective_from<=p_now
                 and x.effective_from<coalesce(v_until,'infinity'::timestamptz)
                 and (x.effective_until is null or v_from<x.effective_until)
-                and (not v_authority_current or x.effective_until is null or p_now<x.effective_until)
               order by x.effective_from,x.id
             loop
               perform public.m23_evaluate_scope_authority(p_ad_work_day_id,e.id,ah.id,l.id,l.gps_device_id,rh.id,p_policy_id,p_policy_version,p_now); v_count:=v_count+1;

@@ -27,7 +27,8 @@ select format('2a300000-0000-0000-0000-%s',lpad(n::text,12,'0'))::uuid,
   format('2a100000-0000-0000-0000-%s',lpad(n::text,12,'0'))::uuid,
   '2a000000-0000-0000-0000-000000000003',format('2a200000-0000-0000-0000-%s',lpad(n::text,12,'0'))::uuid,'phone-device-comparison','m23-pilot-v1',
   public.m22_safe_digest(format('m23-due-scope-%s',n)),public.m22_safe_digest(format('m23-due-input-%s',n)),
-  'both_expected','2026-08-01 00:00+00','2026-08-01 01:00+00','awaiting_sources','provisional_active_work','active_work',true,true
+  'both_expected',case when n=0 then '2026-08-01 00:04+00'::timestamptz else '2026-08-01 00:00+00'::timestamptz end,
+  '2026-08-01 01:00+00','awaiting_sources','provisional_active_work','active_work',true,true
 from generate_series(0,150) n;
 insert into public.m23_comparison_heads(authority_scope_key,policy_id,policy_version,snapshot_id,updated_at)
 select s.authority_scope_key,s.policy_id,s.policy_version,s.id,'2026-08-01 00:00+00'
