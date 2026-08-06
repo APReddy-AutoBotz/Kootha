@@ -1597,7 +1597,7 @@ create or replace function public.m23_pair_scope_exact(
   p_work_day_id uuid,p_execution_history_id uuid,p_assignment_history_id uuid,
   p_link_id uuid,p_device_id uuid,p_policy_id text,p_policy_version text,
   p_scope_key text,p_scope_from timestamptz,p_scope_until timestamptz,p_snapshot_id uuid,
-  p_allow_end_boundary boolean
+  p_allow_end_boundary boolean,p_now timestamptz
 ) returns void language plpgsql security definer set search_path = pg_catalog, public
 as $$
 declare
@@ -1617,7 +1617,8 @@ begin
   where lp.ad_work_day_id=w.id and lp.source::text='phone'
     and ts.tracking_mode='phone_location' and lp.assignment_history_id=ah.id
     and lp.driver_id=ah.driver_id and lp.vehicle_id=ah.vehicle_id
-    and lp.recorded_at>=p_scope_from and (p_scope_until is null or lp.recorded_at<p_scope_until
+    and lp.recorded_at>=p_scope_from and lp.recorded_at<=p_now
+    and (p_scope_until is null or lp.recorded_at<p_scope_until
       or (v_allow_end_boundary and lp.recorded_at=p_scope_until))
     and (ts.started_at is null or lp.recorded_at>=ts.started_at)
     and (ts.ended_at is null or lp.recorded_at<ts.ended_at);
@@ -1629,7 +1630,8 @@ begin
     and q.assignment_history_id=ah.id and q.gps_device_vehicle_link_id=p_link_id
     and q.device_id=p_device_id
     and tr.disposition in ('accepted_live','accepted_delayed') and tr.quality in ('valid','degraded')
-    and q.recorded_at>=p_scope_from and (p_scope_until is null or q.recorded_at<p_scope_until
+    and q.recorded_at>=p_scope_from and q.recorded_at<=p_now
+    and (p_scope_until is null or q.recorded_at<p_scope_until
       or (v_allow_end_boundary and q.recorded_at=p_scope_until))
     and (ts.started_at is null or q.recorded_at>=ts.started_at)
     and (ts.ended_at is null or q.recorded_at<ts.ended_at);
@@ -1647,7 +1649,8 @@ begin
       where lp.ad_work_day_id=w.id and lp.source::text='phone'
         and ts.tracking_mode='phone_location' and lp.assignment_history_id=ah.id
         and lp.driver_id=ah.driver_id and lp.vehicle_id=ah.vehicle_id
-        and lp.recorded_at>=p_scope_from and (p_scope_until is null or lp.recorded_at<p_scope_until
+        and lp.recorded_at>=p_scope_from and lp.recorded_at<=p_now
+        and (p_scope_until is null or lp.recorded_at<p_scope_until
           or (v_allow_end_boundary and lp.recorded_at=p_scope_until))
         and (ts.started_at is null or lp.recorded_at>=ts.started_at)
         and (ts.ended_at is null or lp.recorded_at<ts.ended_at)
@@ -1661,7 +1664,8 @@ begin
         and q.assignment_history_id=ah.id and q.gps_device_vehicle_link_id=p_link_id
         and q.device_id=p_device_id
         and tr.disposition in ('accepted_live','accepted_delayed') and tr.quality in ('valid','degraded')
-        and q.recorded_at>=p_scope_from and (p_scope_until is null or q.recorded_at<p_scope_until
+        and q.recorded_at>=p_scope_from and q.recorded_at<=p_now
+        and (p_scope_until is null or q.recorded_at<p_scope_until
           or (v_allow_end_boundary and q.recorded_at=p_scope_until))
         and (ts.started_at is null or q.recorded_at>=ts.started_at)
         and (ts.ended_at is null or q.recorded_at<ts.ended_at)
@@ -1690,7 +1694,8 @@ begin
       where lp.ad_work_day_id=w.id and lp.source::text='phone'
         and ts.tracking_mode='phone_location' and lp.assignment_history_id=ah.id
         and lp.driver_id=ah.driver_id and lp.vehicle_id=ah.vehicle_id
-        and lp.recorded_at>=p_scope_from and (p_scope_until is null or lp.recorded_at<p_scope_until
+        and lp.recorded_at>=p_scope_from and lp.recorded_at<=p_now
+        and (p_scope_until is null or lp.recorded_at<p_scope_until
           or (v_allow_end_boundary and lp.recorded_at=p_scope_until))
         and (ts.started_at is null or lp.recorded_at>=ts.started_at)
         and (ts.ended_at is null or lp.recorded_at<ts.ended_at)
@@ -1704,7 +1709,8 @@ begin
         and q.assignment_history_id=ah.id and q.gps_device_vehicle_link_id=p_link_id
         and q.device_id=p_device_id
         and tr.disposition in ('accepted_live','accepted_delayed') and tr.quality in ('valid','degraded')
-        and q.recorded_at>=p_scope_from and (p_scope_until is null or q.recorded_at<p_scope_until
+        and q.recorded_at>=p_scope_from and q.recorded_at<=p_now
+        and (p_scope_until is null or q.recorded_at<p_scope_until
           or (v_allow_end_boundary and q.recorded_at=p_scope_until))
         and (ts.started_at is null or q.recorded_at>=ts.started_at)
         and (ts.ended_at is null or q.recorded_at<ts.ended_at)
@@ -1747,7 +1753,8 @@ begin
       where lp.ad_work_day_id=w.id and lp.source::text='phone'
         and ts.tracking_mode='phone_location' and lp.assignment_history_id=ah.id
         and lp.driver_id=ah.driver_id and lp.vehicle_id=ah.vehicle_id
-        and lp.recorded_at>=p_scope_from and (p_scope_until is null or lp.recorded_at<p_scope_until
+        and lp.recorded_at>=p_scope_from and lp.recorded_at<=p_now
+        and (p_scope_until is null or lp.recorded_at<p_scope_until
           or (v_allow_end_boundary and lp.recorded_at=p_scope_until))
         and (ts.started_at is null or lp.recorded_at>=ts.started_at)
         and (ts.ended_at is null or lp.recorded_at<ts.ended_at)
@@ -1760,7 +1767,8 @@ begin
         and q.assignment_history_id=ah.id and q.gps_device_vehicle_link_id=p_link_id
         and q.device_id=p_device_id
         and tr.disposition in ('accepted_live','accepted_delayed') and tr.quality in ('valid','degraded')
-        and q.recorded_at>=p_scope_from and (p_scope_until is null or q.recorded_at<p_scope_until
+        and q.recorded_at>=p_scope_from and q.recorded_at<=p_now
+        and (p_scope_until is null or q.recorded_at<p_scope_until
           or (v_allow_end_boundary and q.recorded_at=p_scope_until))
         and (ts.started_at is null or q.recorded_at>=ts.started_at)
         and (ts.ended_at is null or q.recorded_at<ts.ended_at)
@@ -1833,7 +1841,7 @@ begin
   on conflict(authority_scope_key,policy_id,policy_version,pair_identity) do nothing;
 end;
 $$;
-revoke all on function public.m23_pair_scope_exact(uuid,uuid,uuid,uuid,uuid,text,text,text,timestamptz,timestamptz,uuid,boolean) from public,anon,authenticated;
+revoke all on function public.m23_pair_scope_exact(uuid,uuid,uuid,uuid,uuid,text,text,text,timestamptz,timestamptz,uuid,boolean,timestamptz) from public,anon,authenticated;
 
 create or replace function public.m23_evaluate_scope_authority(
   p_ad_work_day_id uuid,
@@ -2101,7 +2109,8 @@ begin
     where lp.ad_work_day_id=w.id and lp.source::text='phone'
       and ts.tracking_mode='phone_location' and lp.assignment_history_id=ah.id
       and lp.driver_id=ah.driver_id and lp.vehicle_id=ah.vehicle_id
-      and lp.recorded_at>=v_scope_from and (v_scope_until is null or lp.recorded_at<v_scope_until
+      and lp.recorded_at>=v_scope_from and lp.recorded_at<=p_now
+      and (v_scope_until is null or lp.recorded_at<v_scope_until
         or (v_allow_end_boundary and lp.recorded_at=v_scope_until))
       and (ts.started_at is null or lp.recorded_at>=ts.started_at)
       and (ts.ended_at is null or lp.recorded_at<ts.ended_at);
@@ -2115,7 +2124,8 @@ begin
       and lp.execution_history_id=e.id and lp.assignment_history_id=ah.id
       and lp.gps_device_vehicle_link_id=l.id and lp.device_id=p_gps_device_id
       and tr.disposition in ('accepted_live','accepted_delayed') and tr.quality in ('valid','degraded')
-      and lp.recorded_at>=v_scope_from and (v_scope_until is null or lp.recorded_at<v_scope_until
+      and lp.recorded_at>=v_scope_from and lp.recorded_at<=p_now
+      and (v_scope_until is null or lp.recorded_at<v_scope_until
         or (v_allow_end_boundary and lp.recorded_at=v_scope_until))
       and (ts.started_at is null or lp.recorded_at>=ts.started_at)
       and (ts.ended_at is null or lp.recorded_at<ts.ended_at);
@@ -2128,7 +2138,8 @@ begin
     where lp.ad_work_day_id=w.id and lp.source::text='phone'
       and ts.tracking_mode='phone_location' and lp.assignment_history_id=ah.id
       and lp.driver_id=ah.driver_id and lp.vehicle_id=ah.vehicle_id
-      and lp.recorded_at>=v_scope_from and (v_scope_until is null or lp.recorded_at<v_scope_until
+      and lp.recorded_at>=v_scope_from and lp.recorded_at<=p_now
+      and (v_scope_until is null or lp.recorded_at<v_scope_until
         or (v_allow_end_boundary and lp.recorded_at=v_scope_until))
       and (ts.started_at is null or lp.recorded_at>=ts.started_at)
       and (ts.ended_at is null or lp.recorded_at<ts.ended_at);
@@ -2144,7 +2155,8 @@ begin
       and lp.assignment_history_id=ah.id and lp.gps_device_vehicle_link_id=l.id
       and lp.device_id=p_gps_device_id
       and tr.disposition in ('accepted_live','accepted_delayed') and tr.quality in ('valid','degraded')
-      and lp.recorded_at>=v_scope_from and (v_scope_until is null or lp.recorded_at<v_scope_until
+      and lp.recorded_at>=v_scope_from and lp.recorded_at<=p_now
+      and (v_scope_until is null or lp.recorded_at<v_scope_until
         or (v_allow_end_boundary and lp.recorded_at=v_scope_until))
       and (ts.started_at is null or lp.recorded_at>=ts.started_at)
       and (ts.ended_at is null or lp.recorded_at<ts.ended_at);
@@ -2171,7 +2183,8 @@ begin
           and lp.ad_work_day_id=w.id and lp.source::text='phone'
           and ts.tracking_mode='phone_location' and lp.assignment_history_id=ah.id
           and lp.driver_id=ah.driver_id and lp.vehicle_id=ah.vehicle_id
-          and lp.recorded_at>=v_scope_from and (v_scope_until is null or lp.recorded_at<v_scope_until
+          and lp.recorded_at>=v_scope_from and lp.recorded_at<=p_now
+          and (v_scope_until is null or lp.recorded_at<v_scope_until
             or (v_allow_end_boundary and lp.recorded_at=v_scope_until))
           and (ts.started_at is null or lp.recorded_at>=ts.started_at)
           and (ts.ended_at is null or lp.recorded_at<ts.ended_at)
@@ -2185,7 +2198,8 @@ begin
           and q.assignment_history_id=ah.id and q.gps_device_vehicle_link_id=l.id
           and q.device_id=p_gps_device_id
           and tr.disposition in ('accepted_live','accepted_delayed') and tr.quality in ('valid','degraded')
-          and q.recorded_at>=v_scope_from and (v_scope_until is null or q.recorded_at<v_scope_until
+          and q.recorded_at>=v_scope_from and q.recorded_at<=p_now
+          and (v_scope_until is null or q.recorded_at<v_scope_until
             or (v_allow_end_boundary and q.recorded_at=v_scope_until))
           and (ts.started_at is null or q.recorded_at>=ts.started_at)
           and (ts.ended_at is null or q.recorded_at<ts.ended_at)
@@ -2215,7 +2229,7 @@ begin
     and ah.id is not null and rh.id is not null then
     perform public.m23_pair_scope_exact(w.id,e.id,ah.id,l.id,p_gps_device_id,
       p.policy_id,p.policy_version,v_scope_key,v_scope_from,v_scope_until,s.id,
-      v_allow_end_boundary);
+      v_allow_end_boundary,p_now);
   end if;
 
   select count(*)::integer,count(*) filter(where x.quality='acceptable')::integer,
