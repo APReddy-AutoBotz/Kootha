@@ -2798,7 +2798,14 @@ begin
       end if;
 
       if v_category is not null then
-        if v_group_category is distinct from v_category then
+        -- A gap may coalesce across unrelated event boundaries, but release
+        -- and link gaps remain scoped to the exact enclosing authority rows.
+        if v_group_category is distinct from v_category
+          or (v_category in ('no_current_release','ambiguous_current_release',
+              'no_current_device_link','ambiguous_current_device_link')
+            and v_group_assignment_id is distinct from v_assignment_id)
+          or (v_category in ('no_current_device_link','ambiguous_current_device_link')
+            and v_group_release_id is distinct from v_release_id) then
           if v_group_category is not null and v_group_from<=p_now then
             perform public.m23_evaluate_scope_authority(p_ad_work_day_id,e.id,
               v_group_assignment_id,null,null,v_group_release_id,p_policy_id,p_policy_version,
