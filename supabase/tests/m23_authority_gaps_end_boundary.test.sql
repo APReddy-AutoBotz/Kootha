@@ -118,7 +118,7 @@ values('2a000000-0000-0000-0000-000000000043','2a000000-0000-0000-0000-000000000
 insert into public.m21_release_history(id,ad_work_id,release_status,effective_from,effective_until,history_origin)
 values
   ('2a000000-0000-0000-0000-000000000044','2a000000-0000-0000-0000-000000000040','released_to_driver','2026-07-31 08:00+00','2026-07-31 09:00+00','observed'),
-  ('2a000000-0000-0000-0000-000000000045','2a000000-0000-0000-0000-000000000040','access_revoked','2026-07-31 09:00+00',null,'observed');
+  ('2a000000-0000-0000-0000-000000000045','2a000000-0000-0000-0000-000000000040','access_revoked','2026-07-31 09:00+00','2026-07-31 11:00+00','observed');
 insert into public.m21_execution_history(id,ad_work_day_id,execution_status,effective_from,effective_until,history_origin)
 values
   ('2a000000-0000-0000-0000-000000000046','2a000000-0000-0000-0000-000000000042','running','2026-07-31 08:00+00','2026-07-31 11:00+00','observed'),
