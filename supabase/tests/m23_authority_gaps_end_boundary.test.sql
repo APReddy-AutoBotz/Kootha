@@ -122,7 +122,10 @@ values
 insert into public.m21_execution_history(id,ad_work_day_id,execution_status,effective_from,effective_until,history_origin)
 values
   ('2a000000-0000-0000-0000-000000000046','2a000000-0000-0000-0000-000000000042','running','2026-07-31 08:00+00','2026-07-31 11:00+00','observed'),
-  ('2a000000-0000-0000-0000-000000000047','2a000000-0000-0000-0000-000000000042','completed','2026-07-31 11:00+00',null,'observed');
+  ('2a000000-0000-0000-0000-000000000047','2a000000-0000-0000-0000-000000000042','completed','2026-07-31 11:00+00',
+    (select effective_from from public.m21_execution_history
+     where ad_work_day_id='2a000000-0000-0000-0000-000000000042'
+     order by effective_from desc limit 1), 'observed');
 select ok(exists(select 1 from public.m21_execution_history where id='2a000000-0000-0000-0000-000000000047' and execution_status='completed'),'open-gap fixture has an End Work successor');
 select is(public.m23_evaluate_work_day('2a000000-0000-0000-0000-000000000042','phone-device-comparison','m23-pilot-v1','2026-07-31 09:30+00'),2,'open release gap is emitted with its preceding valid scope');
 select is((select scope_effective_from from public.m23_comparison_snapshots where ad_work_day_id='2a000000-0000-0000-0000-000000000042' and safe_reason_code='no_current_release'),'2026-07-31 09:00+00'::timestamptz,'open release gap starts at revocation');
