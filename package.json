@@ -22,7 +22,13 @@
         "test:m22-rules": "vitest run packages/shared/src/physicalTelemetry/m22Contracts.test.ts packages/shared/src/physicalTelemetry/m22ScenarioSemantics.test.ts --reporter=verbose",
         "evidence:m22-rules": "vitest run tests/m22-rule-evidence.test.ts --reporter=verbose",
         "test:m22-admin-worker": "vitest run tests/m22-admin-worker-security.test.ts --reporter=verbose",
-        "test:m22-upgrade": "node scripts/m22-upgrade-test.mjs"
+        "test:m22-upgrade": "node scripts/m22-upgrade-test.mjs",
+        "test:m24f-adapter-certification": "vitest run tests/m24f-adapter-certification.test.ts --reporter=verbose",
+        "evidence:m24f-adapter-certification": "vitest run tests/m24f-adapter-certification.test.ts --reporter=verbose",
+        "test:m25-features": "vitest run tests/m25-statistical-intelligence.test.ts --reporter=verbose",
+    "evidence:m25-statistical-intelligence": "vitest run tests/m25-statistical-intelligence.test.ts --reporter=verbose",
+    "evidence:m25-scale": "vitest run tests/m25-scale-evidence.test.ts --reporter=verbose",
+    "test:m25-worker": "vitest run tests/m25-worker.test.ts --reporter=verbose"
     },
     "devDependencies": {
         "@testing-library/react": "16.3.0",

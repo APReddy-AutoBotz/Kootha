@@ -475,7 +475,7 @@ describe("M20A physical device registry and history", () => {
     }
     for (const taskId of ["T001", "T002", "T003"]) {
       expect(currentAndFutureTasks).toMatch(
-        new RegExp(`- \\[~\\] M23-${taskId}\\b`),
+        new RegExp(`- \\[x\\] M23-${taskId}\\b`),
       );
     }
     expect(currentAndFutureTasks).toMatch(

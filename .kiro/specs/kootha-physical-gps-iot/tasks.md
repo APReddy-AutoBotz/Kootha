@@ -90,6 +90,19 @@ M18 remains incomplete and in progress. M20A, M20B, M21, M22, and M23 are comple
 - [x] M23-T003 Add admin review status and synthetic comparison tests.
   - Requirements: ADMIN-002, COMPARE-001
 
+## M24F — Vendor-Neutral Adapter Certification Foundation (software-only)
+
+M24F is In Progress pending merge and post-merge verification. It prepares a
+future selected adapter without selecting a vendor, storing credentials,
+connecting hardware, or claiming physical evidence.
+
+- [~] M24F-T001 Add versioned adapter capability manifests and safe candidate decision metadata.
+  - Requirements: ADAPTER-001, ING-SEC-002, ADMIN-001
+- [~] M24F-T002 Add the explicitly synthetic reference vendor-cloud webhook adapter and conformance harness.
+  - Requirements: ADAPTER-001, ING-SEC-001, ING-SEC-004, PRIVACY-001 through PRIVACY-004
+- [~] M24F-T003 Add certification evidence, server-only secret boundary, admin readiness, and audit behavior.
+  - Requirements: ING-SEC-002, ADMIN-001, RETENTION-001
+
 ## M24 — Selected Vendor or Device Adapter
 
 - [?] M24-T001 AP selects device/vendor, protocol, SIM, installation, compliance position, and cost.
@@ -100,11 +113,11 @@ M18 remains incomplete and in progress. M20A, M20B, M21, M22, and M23 are comple
 
 ## M25 — Statistical and AI/ML Readiness
 
-- [ ] M25-T001 Assess observed event quality, label availability, anomaly targets, and provisional data assumptions.
+- [~] M25-T001 Assess observed event quality, label availability, anomaly targets, and provisional data assumptions.
   - Requirements: AI-READY-001, AI-READY-002
-- [ ] M25-T002 Add explainable statistical signals before any production ML claim.
+- [~] M25-T002 Add explainable statistical signals before any production ML claim.
   - Requirements: AI-READY-001
-- [ ] M25-T003 Add model/version/confidence/explanation, rule fallback, and human-review evidence only when justified.
+- [~] M25-T003 Add model/version/confidence/explanation, rule fallback, and human-review evidence only when justified.
   - Requirements: AI-READY-001
 
 ## M26 — Real Physical Device Pilot Evidence
