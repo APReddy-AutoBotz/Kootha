@@ -51,7 +51,7 @@ M19 is a planning-only stream. M18 real-device Phone Location Proof evidence rem
 - [x] M20B-T004 Prove synthetic marking and absence of real routes, people, and production credentials.
   - Requirements: SIM-001, PRIVACY-004
 
-M18 remains incomplete and in progress. M20A, M20B, M21, and M22 are complete. M23 is In Progress. M24 through M26 remain Not Started.
+M18 remains incomplete and in progress. M20A, M20B, M21, M22, and M23 are complete. M24 through M26 remain Not Started.
 
 ## M21 — Generic Secure HTTP Ingestion
 
@@ -83,11 +83,11 @@ M18 remains incomplete and in progress. M20A, M20B, M21, and M22 are complete. M
 
 ## M23 — Phone Versus Device Comparison
 
-- [~] M23-T001 Implement active-work, accuracy-aware time pairing and Haversine distance.
+- [x] M23-T001 Implement active-work, accuracy-aware time pairing and Haversine distance.
   - Requirements: COMPARE-001
-- [~] M23-T002 Add sustained mismatch, missing-source, and comparison-unavailable rules.
+- [x] M23-T002 Add sustained mismatch, missing-source, and comparison-unavailable rules.
   - Requirements: COMPARE-001
-- [~] M23-T003 Add admin review status and synthetic comparison tests.
+- [x] M23-T003 Add admin review status and synthetic comparison tests.
   - Requirements: ADMIN-002, COMPARE-001
 
 ## M24 — Selected Vendor or Device Adapter
