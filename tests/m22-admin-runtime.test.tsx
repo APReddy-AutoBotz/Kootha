@@ -50,7 +50,7 @@ describe("M22 rendered admin contracts", () => {
     expect(screen.getByText("Phone Location Proof health")).toBeTruthy();
     expect(screen.getByText("Latest accepted-live update")).toBeTruthy();
     expect(screen.getByText("3 / 2")).toBeTruthy();
-    expect(screen.getByText("Planned For M23")).toBeTruthy();
+    expect(screen.getAllByText("Planned For M23").length).toBeGreaterThan(0);
     expect(requests).toHaveLength(1);
     expect(requests[0]?.url).toContain("admin_get_m22_tracking_health_v1");
     expect(JSON.stringify(requests)).not.toMatch(/latitude|longitude|\blat\b|\blng\b/i);

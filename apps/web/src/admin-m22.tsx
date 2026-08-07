@@ -19,7 +19,8 @@ type TrackingHealthRow = {
   heartbeatAgeSeconds: number | null; physicalLocationUpdateAgeSeconds: number | null;
   activeAlertCount: number; highestActiveSeverity: AlertSeverity | null;
   latestHealthEpisode: { alertId: string; ruleId: string; status: AlertStatus; severity: AlertSeverity; lastDetectedAt: string } | null;
-  comparisonStatus: "not_evaluated" | "not_available" | "planned_for_m23";
+  comparisonSnapshotId?: string | null;
+  comparisonStatus: "not_evaluated" | "not_available" | "planned_for_m23" | string;
 };
 
 type AlertRow = {
@@ -71,8 +72,80 @@ function label(value: string | null | undefined): string {
 function time(value: string | null | undefined): string { return value ? new Date(value).toLocaleString() : "Not recorded"; }
 function age(value: number | null): string { return value === null ? "Not available" : `${Math.floor(value / 60)} minute(s)`; }
 
+type M23ComparisonSummary = {
+  snapshotId: string; adWorkDayId: string; adWorkId: string; workLabel: string;
+  policyVersion: string; pairingAlgorithmVersion: string; sourceExpectation: string;
+  overallOutcome: string; reviewStatus: string; finality: string;
+  phoneEligibleCount: number; physicalEligibleCount: number; pairCount: number;
+  acceptablePairCount: number; matchCount: number; mismatchCandidateCount: number; insufficientQualityCount: number;
+  unpairedPhoneCount: number; unpairedPhysicalCount: number; sustainedPairCount: number;
+  sustainedFirstPairAt: string | null; sustainedLastPairAt: string | null;
+  synthetic: boolean;
+  generatedAt: string; inputWatermark?: string | null; technicalValuesAvailable?: boolean;
+};
+type M23ComparisonDetail = {
+  contractVersion: "m23-admin-v1"; comparison: M23ComparisonSummary;
+  reviewHistory: Array<{ id: string; previousStatus: string | null; newStatus: string; reason: string; note: string; createdAt: string }>;
+  alert: { id: string; status: AlertStatus; conditionActive: boolean; occurrenceCount: number } | null;
+};
+type M23TechnicalValues = {
+  contractVersion: "m23-admin-v1"; snapshotId: string; policyVersion: string;
+  threshold: number; accessedAt: string; hasMore: boolean; nextCursor: string | null;
+  pairs: Array<{ pairId: string; phoneCapturedAt: string; physicalCapturedAt: string; timeDifferenceMilliseconds: number; rawHaversineDistanceMeters: number | null; conservativeSeparationMeters: number | null; phoneAccuracyMeters: number | null; physicalDeviceAccuracyMeters: number | null; threshold: number; quality: string; outcome: string; policyVersion: string; synthetic: boolean }>;
+};
+
+function requireM23Contract<T extends { contractVersion: string }>(value: T): T {
+  if (value.contractVersion !== "m23-admin-v1") throw new Error("The M23 comparison response contract is not supported.");
+  return value;
+}
+
+function M23ComparisonDetailPanel({ connection, snapshotId, onChanged }: { connection: M22AdminConnection; snapshotId: string; onChanged: () => void }) {
+  const [detail, setDetail] = useState<M23ComparisonDetail | null>(null);
+  const [technical, setTechnical] = useState<M23TechnicalValues | null>(null);
+  const [showTechnical, setShowTechnical] = useState(false);
+  const [status, setStatus] = useState(""); const [reason, setReason] = useState(""); const [note, setNote] = useState("");
+  const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
+  async function load() {
+    setError("");
+    try { setDetail(requireM23Contract(await callRpc<M23ComparisonDetail>(connection, "admin_get_m23_comparison_detail_v1", { p_snapshot_id: snapshotId }))); }
+    catch (loadError) { setError(loadError instanceof Error ? loadError.message : "Comparison detail could not be loaded."); }
+  }
+  useEffect(() => { setDetail(null); setTechnical(null); setShowTechnical(false); void load(); }, [snapshotId, connection.accessToken]);
+  async function toggleTechnical() {
+    if (showTechnical) { setShowTechnical(false); return; }
+    if (!technical) {
+      try { setTechnical(requireM23Contract(await callRpc<M23TechnicalValues>(connection, "admin_get_m23_comparison_technical_values_v1", { p_snapshot_id: snapshotId, p_after_cursor: null, p_limit: 100 }))); }
+      catch (loadError) { setError(loadError instanceof Error ? loadError.message : "Comparison technical values could not be loaded."); return; }
+    }
+    setShowTechnical(true);
+  }
+  async function submit(event: FormEvent) {
+    event.preventDefault(); const safeReason = reason.trim(); const safeNote = note.trim();
+    if (!status || !safeReason || !safeNote) { setError("A review status, reason, and note are required."); return; }
+    setBusy(true); setError("");
+    try { await callRpc(connection, "admin_transition_m23_comparison_review", { p_snapshot_id: snapshotId, p_new_status: status, p_reason: safeReason, p_note: safeNote }); setReason(""); setNote(""); await load(); onChanged(); }
+    catch (actionError) { setError(actionError instanceof Error ? actionError.message : "Comparison review could not be saved."); }
+    finally { setBusy(false); }
+  }
+  if (!detail) return <section className="m22-alert-detail"><p role={error ? "alert" : undefined}>{error || "Loading comparison detail..."}</p></section>;
+  const comparison = detail.comparison;
+  const terminal = comparison.reviewStatus === "dismissed_insufficient_evidence";
+  return <section className="m22-alert-detail m23-comparison-detail" aria-labelledby="m23-comparison-detail-title">
+    <h3 id="m23-comparison-detail-title">Comparison detail</h3>
+    <p>{label(comparison.overallOutcome)} · {label(comparison.finality)}</p>
+    <dl className="detail-grid"><div><dt>Source expectation</dt><dd>{label(comparison.sourceExpectation)}</dd></div><div><dt>Review status</dt><dd>{label(comparison.reviewStatus)}</dd></div><div><dt>Policy</dt><dd>{comparison.policyVersion}</dd></div><div><dt>Pairing</dt><dd>{comparison.pairingAlgorithmVersion}</dd></div><div><dt>Eligible points</dt><dd>{comparison.phoneEligibleCount} phone / {comparison.physicalEligibleCount} physical</dd></div><div><dt>Pairs</dt><dd>{comparison.pairCount} ({comparison.acceptablePairCount} acceptable, {comparison.matchCount} match, {comparison.mismatchCandidateCount} isolated candidates)</dd></div><div><dt>Insufficient quality</dt><dd>{comparison.insufficientQualityCount}</dd></div><div><dt>Unpaired points</dt><dd>{comparison.unpairedPhoneCount} phone / {comparison.unpairedPhysicalCount} physical</dd></div><div><dt>Sustained evidence</dt><dd>{comparison.sustainedPairCount} pair(s) · {time(comparison.sustainedFirstPairAt)} to {time(comparison.sustainedLastPairAt)}</dd></div></dl>
+    {comparison.technicalValuesAvailable && <button className="secondary-button" type="button" aria-expanded={showTechnical} onClick={() => void toggleTechnical()}>{showTechnical ? "Hide technical values" : "Show technical values"}</button>}
+    {showTechnical && technical && <div className="m22-technical-values"><p>Explicit technical access was recorded for this comparison.</p>{technical.pairs.map((pair) => <article key={pair.pairId}><strong>{label(pair.outcome)}</strong><span>{time(pair.phoneCapturedAt)} · {pair.conservativeSeparationMeters ?? "Not recorded"} metres · {label(pair.quality)}</span></article>)}</div>}
+    <p className="quiet-note">Coordinates, maps, raw payloads, customer fields, and source-attribution conclusions are not available in this view.</p>
+    {!terminal && <form className="form-section" onSubmit={submit}><h4>Comparison review</h4><label>Status<select value={status} onChange={(event) => setStatus(event.target.value)}><option value="">Choose status</option><option value="reviewing">Reviewing</option><option value="reviewed_consistent">Reviewed as consistent</option><option value="reviewed_needs_follow_up">Needs operational follow-up</option><option value="dismissed_insufficient_evidence">Dismissed; insufficient evidence</option></select></label><label>Reason<input value={reason} maxLength={160} onChange={(event) => setReason(event.target.value)} required /></label><label>Safe admin note<textarea value={note} maxLength={500} onChange={(event) => setNote(event.target.value)} required /></label>{error && <p className="form-alert" role="alert">{error}</p>}<button className="primary-button" disabled={busy}>{busy ? "Saving..." : "Save comparison review"}</button></form>}
+    {terminal && <p className="quiet-note">This comparison review is terminal. No further review transitions are allowed.</p>}
+    <section><h4>Review history</h4>{detail.reviewHistory.map((entry) => <article key={entry.id}><strong>{label(entry.newStatus)}</strong><span>{time(entry.createdAt)}</span><p>{entry.reason}: {entry.note}</p></article>)}</section>
+  </section>;
+}
+
 export function TrackingHealthView({ connection }: { connection: M22AdminConnection }) {
   const [rows, setRows] = useState<TrackingHealthRow[]>([]);
+  const [selectedSnapshotId, setSelectedSnapshotId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   async function load() {
@@ -93,15 +166,16 @@ export function TrackingHealthView({ connection }: { connection: M22AdminConnect
     alerts: sum.alerts + row.activeAlertCount,
     critical: sum.critical + (row.highestActiveSeverity === "critical" ? row.activeAlertCount : 0),
   }), { phone: 0, physical: 0, alerts: 0, critical: 0 });
+  const comparisonRows = rows.filter((row) => row.comparisonSnapshotId);
   return <section className="m22-admin-view" aria-labelledby="tracking-health-title">
     <div className="panel-heading"><div><h2 id="tracking-health-title">Tracking Health</h2><p>Phone and physical-device evidence stay source-specific by work day.</p></div><button className="secondary-button" type="button" onClick={() => void load()} disabled={loading}><RefreshCw size={18} /> Refresh</button></div>
     <div className="m22-health-summary" aria-label="Tracking Health summary">
       <article><span>Physical sessions</span><strong>{totals.physical}</strong><small>Current device health only</small></article>
       <article><span>Phone sessions</span><strong>{totals.phone}</strong><small>Phone Location Proof only</small></article>
       <article><span>Active alerts</span><strong>{totals.alerts}</strong><small>{totals.critical} critical</small></article>
-      <article><span>Comparison</span><strong>Not evaluated</strong><small>Planned for M23</small></article>
+      <article><span>Comparison</span><strong>{rows[0] ? label(rows[0].comparisonStatus) : "Not evaluated"}</strong><small>{comparisonRows.length} comparison snapshot(s)</small></article>
     </div>
-    <p className="m22-boundary"><ShieldCheck size={18} /> Sources are not paired. No phone/device distance or mismatch is calculated in M22.</p>
+    <p className="m22-boundary"><ShieldCheck size={18} /> {comparisonRows.length === 0 ? "Sources are not paired until a bounded M23 comparison is evaluated." : "Comparison is admin-only, source-separated, and never a misconduct or route conclusion."}</p>
     {error && <p className="form-alert" role="alert">{error}</p>}
     <div className="m22-source-grid">{rows.map((row) => <article className="m22-health-row" key={row.adWorkDayId}>
       <div><strong>{row.workLabel}</strong><span className="status-pill">{label(row.comparisonStatus)}</span></div>
@@ -119,8 +193,9 @@ export function TrackingHealthView({ connection }: { connection: M22AdminConnect
         <div><dt>Current source health</dt><dd>{label(row.phoneHealth)}</dd></div>
         <div><dt>Active alerts</dt><dd>{row.activeAlertCount}</dd></div>
         <div><dt>Latest alert episode</dt><dd>{row.latestHealthEpisode ? `${label(row.latestHealthEpisode.ruleId)} · ${time(row.latestHealthEpisode.lastDetectedAt)}` : "None"}</dd></div>
-      </dl>
+      </dl><h3>Phone versus physical-device comparison</h3><dl><div><dt>Status</dt><dd>{label(row.comparisonStatus)}</dd></div><div><dt>Snapshot</dt><dd>{row.comparisonSnapshotId ? <button className="text-button" type="button" onClick={() => setSelectedSnapshotId(row.comparisonSnapshotId ?? null)}>Review comparison</button> : "Not evaluated"}</dd></div></dl>
     </article>)}{!loading && rows.length === 0 && <p className="empty-state">No bounded Tracking Health rows are available.</p>}</div>
+    {selectedSnapshotId && <M23ComparisonDetailPanel connection={connection} snapshotId={selectedSnapshotId} onChanged={() => void load()} />}
   </section>;
 }
 
@@ -196,7 +271,7 @@ export function AlertsView({ connection }: { connection: M22AdminConnection }) {
   const queues = useMemo(() => ({ new: alerts.filter((row) => row.status === "new").length, critical: alerts.filter((row) => row.severity === "critical" && row.conditionActive).length, investigating: alerts.filter((row) => row.status === "investigating").length, cleared: alerts.filter((row) => !row.conditionActive && !["resolved", "false_alarm", "ignored"].includes(row.status)).length, recent: alerts.filter((row) => row.status === "resolved").length }), [alerts]);
   return <section className="m22-admin-view" aria-labelledby="alerts-title"><div className="panel-heading"><div><h2 id="alerts-title">Alerts</h2><p>Internal deterministic operational review. No customer notification is sent.</p></div><button className="secondary-button" type="button" onClick={() => void load()} disabled={loading}><RefreshCw size={18} /> Refresh</button></div>
     <div className="m22-alert-queues" aria-label="Alert queues"><article><span>New</span><strong>{queues.new}</strong></article><article><span>Critical active</span><strong>{queues.critical}</strong></article><article><span>Investigating</span><strong>{queues.investigating}</strong></article><article><span>Cleared, awaiting review</span><strong>{queues.cleared}</strong></article><article><span>Resolved recently</span><strong>{queues.recent}</strong></article></div>
-    <div className="admin-filter-grid" aria-label="Alert filters"><label>Status<select value={status} onChange={(event) => setStatus(event.target.value)}><option value="all">All</option>{statusOptions.map((item) => <option key={item} value={item}>{label(item)}</option>)}</select></label><label>Severity<select value={severity} onChange={(event) => setSeverity(event.target.value)}><option value="all">All</option>{severityOptions.map((item) => <option key={item} value={item}>{label(item)}</option>)}</select></label><label>Rule/type<input value={rule} onChange={(event) => setRule(event.target.value)} onBlur={() => void load()} placeholder="Rule ID" /></label><label>Source<select value={source} onChange={(event) => setSource(event.target.value)}><option value="all">All</option><option value="physical_device_live">Physical device · live</option><option value="physical_device_delayed">Physical device · delayed/historical</option><option value="health_sweep">Health sweep</option><option value="adapter_rejection">Adapter rejection</option><option value="authentication_failure">Authentication failure</option></select></label><label>Condition<select value={condition} onChange={(event) => setCondition(event.target.value)}><option value="all">All</option><option value="active">Active</option><option value="cleared">Cleared</option></select></label><label>Evidence<select value={synthetic} onChange={(event) => setSynthetic(event.target.value)}><option value="all">All</option><option value="no">Non-synthetic</option><option value="yes">Synthetic</option></select></label></div>
+    <div className="admin-filter-grid" aria-label="Alert filters"><label>Status<select value={status} onChange={(event) => setStatus(event.target.value)}><option value="all">All</option>{statusOptions.map((item) => <option key={item} value={item}>{label(item)}</option>)}</select></label><label>Severity<select value={severity} onChange={(event) => setSeverity(event.target.value)}><option value="all">All</option>{severityOptions.map((item) => <option key={item} value={item}>{label(item)}</option>)}</select></label><label>Rule/type<input value={rule} onChange={(event) => setRule(event.target.value)} onBlur={() => void load()} placeholder="Rule ID" /></label><label>Source<select value={source} onChange={(event) => setSource(event.target.value)}><option value="all">All</option><option value="comparison">Phone versus physical comparison</option><option value="physical_device_live">Physical device · live</option><option value="physical_device_delayed">Physical device · delayed/historical</option><option value="health_sweep">Health sweep</option><option value="adapter_rejection">Adapter rejection</option><option value="authentication_failure">Authentication failure</option></select></label><label>Condition<select value={condition} onChange={(event) => setCondition(event.target.value)}><option value="all">All</option><option value="active">Active</option><option value="cleared">Cleared</option></select></label><label>Evidence<select value={synthetic} onChange={(event) => setSynthetic(event.target.value)}><option value="all">All</option><option value="no">Non-synthetic</option><option value="yes">Synthetic</option></select></label></div>
     {error && <p className="form-alert" role="alert">{error}</p>}<div className="m22-alert-layout"><section className="m22-alert-list">{alerts.map((row) => <button key={row.id} className={selectedId === row.id ? "is-selected" : ""} type="button" onClick={() => setSelectedId(row.id)}><div><AlertTriangle size={17} /><strong>{row.title || label(row.ruleId)}</strong><span className={`m22-severity ${row.severity}`}>{label(row.severity)}</span></div><p>{label(row.source)} · {row.deviceLabel || "Device not recorded"} · {row.vehicleLabel || "Vehicle not recorded"}</p><small>{label(row.status)} · {row.conditionActive ? "Condition active" : "Condition cleared"} · {row.occurrenceCount} occurrence(s) · {row.ruleVersion || "Legacy"}</small><time>{time(row.lastDetectedAt)}</time></button>)}{!loading && alerts.length === 0 && <p className="empty-state">No alerts match these filters.</p>}</section>{selectedId ? <AlertDetailPanel connection={connection} alertId={selectedId} onChanged={() => void load()} /> : <section className="m22-alert-detail empty-state">Select an alert to review it.</section>}</div>
   </section>;
 }

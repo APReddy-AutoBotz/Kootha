@@ -32,4 +32,4 @@ The impossible-speed fixture uses two independently valid canonical events whose
 
 Validation returns safe typed failures without raw payloads. Provenance and sensor observations are bounded, and fixtures contain no real identity, route, or secret. M20B adds no Supabase migration or telemetry endpoint, no `location_points` write or tracking-session creation, no credential runtime, vendor adapter, hardware connection, maps, customer live tracking, operational alert runtime, production phone/device comparison, or AI runtime. Existing Phone Location Proof and M20A security controls are unchanged.
 
-M18 remains incomplete and in progress. M20A and M20B are complete. M21 is In Progress. M22 through M26 remain Not Started.
+M18 remains incomplete and in progress. M20A, M20B, M21, and M22 are complete. M23 is In Progress. M24 through M26 remain Not Started.
