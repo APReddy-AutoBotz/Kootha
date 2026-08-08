@@ -75,7 +75,12 @@ export function computeM25RobustBaselineV1(
   input: M25BaselineComputationInputV1,
 ): M25BaselineVersionV1 {
   const observations = input.observations
-    .filter((item) => item.synthetic === input.cohort.synthetic && Number.isFinite(item.value))
+    .filter((item) => item.synthetic === input.cohort.synthetic
+      && item.deviceModel === input.cohort.deviceModel
+      && item.adapterVersion === input.cohort.adapterVersion
+      && item.workCategory === input.cohort.workCategory
+      && (input.cohort.source === "mixed" || item.source === input.cohort.source)
+      && Number.isFinite(item.value))
     .sort((left, right) => left.capturedAt.localeCompare(right.capturedAt) || left.scopeKeyHash.localeCompare(right.scopeKeyHash));
   const values = observations.map((item) => item.value);
   const supported = values.length >= (input.minimumSupport ?? 3);

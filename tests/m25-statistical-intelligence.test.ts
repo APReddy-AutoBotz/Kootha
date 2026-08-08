@@ -46,6 +46,9 @@ describe("M25 feature extraction and deterministic statistical intelligence", ()
     expect(scored.status).toBe("insufficient_variation");
     expect(selectM25BaselineV1([baseline], cohort).fallback).toBe("exact_supported_cohort");
     expect(selectM25BaselineV1([{ ...baseline, cohort: { ...cohort, synthetic: false }, synthetic: false }], cohort).fallback).toBe("insufficient_data");
+    const mixed = computeM25RobustBaselineV1({ ...({ baselineId: "mixed", baselineVersion: "mixed-v1", metric: "rejection_rate", cohort, observations } as const), observations: [...observations, { ...observations[0], deviceModel: "model-b", value: 999 }] });
+    expect(mixed.sampleCount).toBe(observations.length);
+    expect(mixed.maximum).toBe(1);
   });
 
   it("scores a signal with direction, support, and deterministic explanation", () => {
