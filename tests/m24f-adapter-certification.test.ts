@@ -20,6 +20,18 @@ describe("M24F synthetic adapter certification", () => {
     }
   });
 
+  it("keeps forward closure migrations portable to the managed migration role", () => {
+    const closurePaths = [
+      "supabase/migrations/20260808010000_m24f_m25_release_closure.sql",
+      "supabase/migrations/20260808030000_m24f_m25_compatibility_closure.sql",
+    ];
+    const superuserOnlyDdl = /\b(?:leakproof|superuser|bypassrls|alter\s+system|event\s+trigger|language\s+c)\b/i;
+
+    for (const path of closurePaths) {
+      expect(readFileSync(path, "utf8"), path).not.toMatch(superuserOnlyDdl);
+    }
+  });
+
   it("runs the complete synthetic certification matrix without a production claim", () => {
     const result = runM24fAdapterCertificationV1();
     expect(M24F_CERTIFICATION_COMMAND).toBe("test:m24f-adapter-certification");

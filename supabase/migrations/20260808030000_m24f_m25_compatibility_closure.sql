@@ -1,7 +1,7 @@
 -- Final M24F/M25 integrity and retained-alert compatibility closure.
 
 create or replace function public.m24f_is_safe_metadata(p_value text)
-returns boolean language sql immutable leakproof parallel safe
+returns boolean language sql immutable parallel safe
 set search_path = pg_catalog, public
 as $$
   select p_value is null or (
