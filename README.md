@@ -1,8 +1,10 @@
 # Kootha
 
-Kootha is a field advertisement planning and proof platform. The repository currently includes M0 foundation, M1 public website and enquiries, M2 admin lead management, M3 campaign planning and scheduling, M4 driver and vehicle onboarding, M5 driver and vehicle assignment to ad work, M6 ad work execution without GPS, M7 proof upload and customer update sharing, M8 final proof summary and campaign closure, M9 mobile GPS tracking foundation, M10 mobile GPS reliability and offline buffer, M11 admin tracking review without maps, M12 location proof in final summary, M13 pilot readiness and deployment preparation, M14 controlled pilot dry run preparation, M15 real device pilot setup and deployment preparation, M16 real device pilot execution evidence, M17 real device pilot blocker remediation, M18 real-device pilot evidence retry preflight, M20A registry/history, M20B deterministic simulator, M21 secure physical telemetry ingestion, M22 Tracking Health and alerts, and M23 phone-versus-physical-device comparison. M18 remains incomplete/in progress; M20A–M22 are completed; M23 is in progress pending merge; M24 through M26 are not started.
+Kootha is a field advertisement planning and proof platform. The repository currently includes M0 foundation, M1 public website and enquiries, M2 admin lead management, M3 campaign planning and scheduling, M4 driver and vehicle onboarding, M5 driver and vehicle assignment to ad work, M6 ad work execution without GPS, M7 proof upload and customer update sharing, M8 final proof summary and campaign closure, M9 mobile GPS tracking foundation, M10 mobile GPS reliability and offline buffer, M11 admin tracking review without maps, M12 location proof in final summary, M13 pilot readiness and deployment preparation, M14 controlled pilot dry run preparation, M15 real device pilot setup and deployment preparation, M16 real device pilot execution evidence, M17 real device pilot blocker remediation, M18 real-device pilot evidence retry preflight, M20A registry/history, M20B deterministic simulator, M21 secure physical telemetry ingestion, M22 Tracking Health and alerts, and M23 phone-versus-physical-device comparison. M18 remains incomplete/in progress; M20A–M23 are completed on the verified M23 baseline; M24F and M25 are in progress; the original M24 remains AP-gated; M26 has not started.
 
 ## Current Scope
+
+Current milestone status on this branch: M18 remains incomplete; M20A–M23 are completed on the verified M23 baseline; M24F and M25 are in progress; the original M24 physical selection remains AP-gated; M26 has not started. No hosted migration, deployment, hardware, real vendor credential, or production ML action is included.
 
 - React + Vite public website at /.
 - Public enquiry form with server-side validation through a protected Netlify/Turnstile intake endpoint.
@@ -430,6 +432,24 @@ M18 does not add product behavior, Google Maps, customer live tracking links, pu
 M23 adds an admin-only, hardware-independent comparison of existing Phone Location Proof and physical-device evidence. The additive migration is `supabase/migrations/20260801010000_m23_phone_physical_comparison.sql`; its provisional pilot policy uses a ±60-second pairing window, a 250-metre conservative separation threshold, a five-minute sustained episode, and three qualifying mismatch pairs. PostgreSQL owns historical active-work eligibility, source expectation, deterministic `m23-pairing-v1` one-to-one pairing, reuse of the M22 Haversine helper, accuracy subtraction, snapshots, alert transactions, and bounded queue processing. TypeScript exports safe contracts and a clearly labelled test oracle only.
 
 Tracking Health shows neutral comparison outcomes, finality, pair counts, and a bounded detail/review surface. Technical pair values require an explicit audited admin action and never include coordinates, maps, raw payloads, customer fields, or source-attribution conclusions. Only sustained comparison mismatch uses the existing M22 `alerts` lifecycle; isolated, missing-source, insufficient-quality, and unavailable outcomes do not create noisy dedicated alerts. M23 is synthetic-only, disabled by default, not customer-facing, not a fraud decision, and has no hosted migration, deployment, hardware, vendor protocol, notification, or AI/ML work.
+## M24F Vendor-Neutral Adapter Certification and M25 Statistical Intelligence
+
+M24F does not select a physical GPS vendor. It adds bounded capability manifests, safe admin-only candidate decisions,
+an explicitly synthetic `reference-vendor-webhook-v1`, HMAC/signature conformance checks, and a certification harness
+that normalizes only through the existing M21 `TelemetryAdapterV1` boundary. No real credentials, vendor endpoint,
+hardware, coordinates, or production adapter are used. The original M24 selection, purchase, installation, compliance,
+and physical-evidence tasks remain AP-gated.
+
+M25 adds a typed feature catalog and deterministic feature extraction, median/MAD robust baselines with IQR fallback,
+explicit cohort fallback, explainable statistical signals, immutable human review, readiness assessment, and analysis
+governance. Support means coverage/data quality; it is not a probability of wrongdoing. Statistical signals stay in an
+admin review queue until an admin explicitly promotes one to the existing alert platform. They never suspend devices,
+stop work, notify customers or drivers, accuse a driver, alter M22/M23 evidence, or change Final Proof Summary.
+
+M25 production ML is explicitly not authorized. No model artifact, training, production inference endpoint, or
+point-by-point LLM coordinate processing is present. The statistical worker is server-only, bounded, disabled by
+default, and returns count-only status. See [the M24F/M25 implementation note](docs/planning/m24f-m25-statistical-intelligence.md).
+
 ## M19 Physical GPS and IoT planning
 
 M19 is a separate, completed planning stream for portable physical-device telemetry ingestion, live-versus-delayed event-time handling, simulator-first delivery, and future hardware validation. See the [architecture](docs/architecture/physical-gps-iot-device-integration.md), [implementation plan](docs/planning/m19-physical-gps-iot-implementation-plan.md), [threat model](docs/security/physical-gps-iot-threat-model.md), and [Kiro requirements](.kiro/specs/kootha-physical-gps-iot/requirements.md). This milestone adds documentation and a guardrail test only: it does not add migrations, ingestion endpoints, credentials, maps, device connections, or any runtime physical-device feature. M18 remains incomplete and in progress.
@@ -444,7 +464,7 @@ M20A extends the existing `gps_devices` master with an admin-only Device Registr
 
 M20B is completed after merge and post-merge baseline verification. It adds host-neutral, versioned TypeScript telemetry contracts, deterministic identity and event-time decision helpers, runtime validation, and a manual-clock synthetic simulator with a typed scenario catalog. See the [concise M20B guide](docs/planning/m20b-canonical-contracts-deterministic-simulator.md).
 
-M20B itself added no migration, endpoint, persistence, real credential, vendor or physical-device connection, maps, customer live tracking, operational alert runtime, production phone/device comparison, or AI/ML runtime. M21 adds the separate generic secure HTTP ingestion runtime described above. Existing Phone Location Proof is unchanged; M18 remains incomplete and in progress, M20A, M20B, M21, and M22 are complete, M23 is In Progress, and M24 through M26 remain Not Started.
+M20B itself added no migration, endpoint, persistence, real credential, vendor or physical-device connection, maps, customer live tracking, operational alert runtime, production phone/device comparison, or AI/ML runtime. M21 adds the separate generic secure HTTP ingestion runtime described above. Existing Phone Location Proof is unchanged; M18 remains incomplete and in progress, M20A–M23 are complete on the verified M23 baseline, M24F and M25 are in progress, the original M24 remains AP-gated, and M26 has not started.
 
 ## Run Driver
 
