@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   M24F_CERTIFICATION_COMMAND,
   REFERENCE_VENDOR_ADAPTER_ID,
@@ -8,6 +9,17 @@ import {
 } from "../netlify/functions/_m24f/certification";
 
 describe("M24F synthetic adapter certification", () => {
+  it("enforces the safe-metadata predicate at persistent write constraints", () => {
+    const migration = readFileSync("supabase/migrations/20260807010000_m24f_adapter_certification_foundation.sql", "utf8");
+    expect(migration).toContain("create or replace function public.m24f_is_safe_metadata");
+    for (const prohibitedPattern of ["bearer", "api[_ -]?key", "https?", "raw[_ -]?payload"]) {
+      expect(migration).toContain(prohibitedPattern);
+    }
+    for (const field of ["data_residency_note", "support_escalation_note", "blocking_reason", "safe_notes", "safe_summary", "safe_note"]) {
+      expect(migration).toContain(`public.m24f_is_safe_metadata(${field})`);
+    }
+  });
+
   it("runs the complete synthetic certification matrix without a production claim", () => {
     const result = runM24fAdapterCertificationV1();
     expect(M24F_CERTIFICATION_COMMAND).toBe("test:m24f-adapter-certification");

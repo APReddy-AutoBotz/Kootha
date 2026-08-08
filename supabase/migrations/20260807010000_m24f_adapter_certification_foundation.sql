@@ -2,6 +2,22 @@
 -- This migration is synthetic/software-only. It does not select a vendor,
 -- store credentials, provision hardware, or create a production endpoint.
 
+-- Free-form certification metadata is deliberately more restrictive than a
+-- length check.  This immutable predicate is also used by table constraints so
+-- service-role/direct SQL writes cannot bypass the RPC validation boundary.
+create or replace function public.m24f_is_safe_metadata(p_value text)
+returns boolean language sql immutable parallel safe set search_path = pg_catalog
+as $$
+  select p_value is null or (
+    p_value !~ '[{}\[\]]'
+    and p_value !~* '(^|[[:space:][:punct:]])(bearer[[:space:]]+[a-z0-9._~+/=-]{8,}|(api[_ -]?key|access[_ -]?token|refresh[_ -]?token|authorization|credential|password|secret)[[:space:]]*[:=][[:space:]]*[^[:space:]]{4,})'
+    and p_value !~* '(https?|mqtts?|wss?)://|([a-z0-9-]+\.)+[a-z]{2,}([/:][^[:space:]]*)?'
+    and p_value !~ '(^|[^A-Za-z0-9_+/=-])[A-Za-z0-9_+/=-]{24,}([^A-Za-z0-9_+/=-]|$)'
+    and p_value !~* '(^|[^0-9])[-+]?[0-9]{1,3}\.[0-9]{4,}[[:space:]]*[,/][[:space:]]*[-+]?[0-9]{1,3}\.[0-9]{4,}([^0-9]|$)'
+    and p_value !~* '(^|[[:space:]])(raw[_ -]?payload|payload[_ -]?(fragment|body|contents?|data))([[:space:]:=]|$)'
+  )
+$$;
+
 create table public.m24f_adapter_capability_manifests (
   id uuid primary key default gen_random_uuid(),
   contract_version text not null default 'm24f-adapter-v1',
@@ -49,6 +65,9 @@ create table public.m24f_adapter_capability_manifests (
     char_length(adapter_id) between 1 and 64
     and char_length(adapter_version) between 1 and 32
     and char_length(vendor_device_family_label) between 1 and 160
+    and public.m24f_is_safe_metadata(adapter_id)
+    and public.m24f_is_safe_metadata(adapter_version)
+    and public.m24f_is_safe_metadata(vendor_device_family_label)
   ),
   constraint m24f_manifest_transport_check check (transport_type in ('vendor_webhook','vendor_polling','direct_http','mqtt','tcp','udp')),
   constraint m24f_manifest_auth_check check (authentication_type in ('bearer','hmac_signature','api_key','mutual_tls','protocol_native')),
@@ -73,6 +92,8 @@ create table public.m24f_adapter_capability_manifests (
     and char_length(support_escalation_note) between 1 and 500
     and cardinality(approved_sensor_metrics) <= 16
     and approved_sensor_metrics <@ array['fuel_level','temperature','door_state','vibration','external_power','ignition','tamper']::text[]
+    and public.m24f_is_safe_metadata(data_residency_note)
+    and public.m24f_is_safe_metadata(support_escalation_note)
   )
 );
 
@@ -110,6 +131,10 @@ create table public.m24f_adapter_candidates (
     and char_length(device_family) between 1 and 160
     and (blocking_reason is null or char_length(blocking_reason) between 1 and 500)
     and (safe_notes is null or char_length(safe_notes) between 1 and 500)
+    and public.m24f_is_safe_metadata(safe_display_name)
+    and public.m24f_is_safe_metadata(device_family)
+    and public.m24f_is_safe_metadata(blocking_reason)
+    and public.m24f_is_safe_metadata(safe_notes)
   ),
   constraint m24f_candidate_transport_check check (transport_type in ('vendor_webhook','vendor_polling','direct_http','mqtt','tcp','udp')),
   constraint m24f_candidate_auth_check check (authentication_type in ('bearer','hmac_signature','api_key','mutual_tls','protocol_native')),
@@ -153,7 +178,7 @@ create table public.m24f_certification_runs (
   constraint m24f_run_state_check check (certification_level in ('manifest_only','synthetic_conformance','sandbox_conformance','physical_pilot','production_authorized') and certification_state in ('not_started','in_progress','passed','failed','expired')),
   constraint m24f_run_synthetic_level_check check (synthetic and certification_level in ('manifest_only','synthetic_conformance')),
   constraint m24f_run_counts_check check (synthetic and scenario_count between 0 and 200 and passed_count between 0 and scenario_count and failed_count = scenario_count - passed_count),
-  constraint m24f_run_digest_check check (result_digest ~ '^[0-9a-f]{64}$' and char_length(safe_summary) between 1 and 500)
+  constraint m24f_run_digest_check check (result_digest ~ '^[0-9a-f]{64}$' and char_length(safe_summary) between 1 and 500 and public.m24f_is_safe_metadata(safe_summary))
 );
 
 create table public.m24f_certification_scenarios (
@@ -165,7 +190,7 @@ create table public.m24f_certification_scenarios (
   reason_code text not null,
   synthetic boolean not null default true,
   checked_at timestamptz not null default clock_timestamp(),
-  constraint m24f_scenario_bounds_check check (char_length(scenario_id) between 1 and 100 and char_length(reason_code) between 1 and 100 and category in ('authentication','parsing','normalization','replay_and_sequence','work_and_privacy','safe_output'))
+  constraint m24f_scenario_bounds_check check (char_length(scenario_id) between 1 and 100 and char_length(reason_code) between 1 and 100 and public.m24f_is_safe_metadata(scenario_id) and public.m24f_is_safe_metadata(reason_code) and category in ('authentication','parsing','normalization','replay_and_sequence','work_and_privacy','safe_output'))
 );
 
 create table public.m24f_candidate_decision_history (
@@ -178,7 +203,7 @@ create table public.m24f_candidate_decision_history (
   safe_note text not null,
   created_at timestamptz not null default clock_timestamp(),
   constraint m24f_decision_history_status_check check (new_status in ('not_assessed','candidate','technically_compatible','technically_blocked','awaiting_commercial_review','awaiting_compliance_review','approved_by_ap','rejected','retired') and (previous_status is null or previous_status in ('not_assessed','candidate','technically_compatible','technically_blocked','awaiting_commercial_review','awaiting_compliance_review','approved_by_ap','rejected','retired'))),
-  constraint m24f_decision_history_text_check check (char_length(reason) between 1 and 160 and char_length(safe_note) between 1 and 500)
+  constraint m24f_decision_history_text_check check (char_length(reason) between 1 and 160 and char_length(safe_note) between 1 and 500 and public.m24f_is_safe_metadata(reason) and public.m24f_is_safe_metadata(safe_note))
 );
 
 create or replace function public.m24f_protect_immutable()
@@ -529,6 +554,7 @@ create policy "M24F scenario admin reads only" on public.m24f_certification_scen
 create policy "M24F decision history admin reads only" on public.m24f_candidate_decision_history for select to authenticated using (public.is_admin());
 
 revoke all on function public.admin_create_m24f_capability_manifest_v1(text,text,text,text,text,boolean,boolean,boolean,boolean,boolean,boolean,boolean,boolean,text[],text,text) from public, anon, authenticated;
+revoke all on function public.m24f_is_safe_metadata(text) from public, anon, authenticated;
 revoke all on function public.admin_create_m24f_candidate_v1(text,text,text,text,text,text,text,text,text,text) from public, anon, authenticated;
 revoke all on function public.admin_update_m24f_candidate_metadata_v1(uuid,uuid,text,text,text,text,text,text,text,text) from public, anon, authenticated;
 revoke all on function public.admin_record_m24f_certification_v1(uuid,text,text,text,text,integer,integer,text,text) from public, anon, authenticated;
@@ -546,6 +572,7 @@ grant execute on function public.admin_decide_m24f_candidate_v1(uuid,text,text,t
 grant execute on function public.admin_list_m24f_adapter_readiness_v1(integer) to authenticated;
 grant execute on function public.admin_get_m24f_adapter_technical_values_v1(uuid) to authenticated;
 grant execute on function public.m24f_compact_certification_runs(integer,timestamptz) to service_role;
+grant execute on function public.m24f_is_safe_metadata(text) to authenticated, service_role;
 
 comment on table public.m24f_adapter_capability_manifests is 'Bounded vendor-neutral capability manifests; no credential or arbitrary capability JSON is stored.';
 comment on table public.m24f_adapter_candidates is 'Admin-only future adapter candidates. M24F does not select or authorize a vendor.';

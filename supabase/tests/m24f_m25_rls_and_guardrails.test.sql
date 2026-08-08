@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(28);
+select plan(36);
 
 select has_table('public','m24f_adapter_capability_manifests','M24F capability manifests exist');
 select has_table('public','m24f_adapter_candidates','M24F candidates exist');
@@ -40,13 +40,22 @@ select ok((select pg_get_constraintdef(oid) ilike '%statistical_signal%' from pg
 -- Match prohibited storage concepts at identifier boundaries. A bare `payload`
 -- substring is intentionally not prohibited: documented_payload_size_bytes is
 -- bounded capability metadata, not a payload. Raw payload columns remain caught.
-select is((select count(*)::integer from information_schema.columns where table_schema='public' and table_name like 'm24f_%' and column_name ~* '(^|_)credential(s|_id|_key|_value|_hash|_material)?($|_)|(^|_)(secret|token|api_key|authorization)(_value|_hash|_ciphertext|_material|_bytes)?$|(^|_)(vendor_secret|vendor_token|access_token|refresh_token|bearer_token|plaintext_secret)($|_)|(^|_)(latitude|longitude|coordinates?|vendor_endpoint|endpoint_url|physical_device_evidence)($|_)|(^|_)raw(_vendor)?_?payload($|_)'),0,'M24F tables contain no credentials, secrets, raw vendor payloads, coordinates, vendor endpoints, or physical-device evidence');
-select is((select count(*)::integer from information_schema.columns where table_schema='public' and table_name like 'm25_%' and column_name ~* '(^|_)credential(s|_id|_key|_value|_hash|_material)?($|_)|(^|_)(secret|token|api_key|authorization)(_value|_hash|_ciphertext|_material|_bytes)?$|(^|_)(vendor_secret|vendor_token|access_token|refresh_token|bearer_token|plaintext_secret)($|_)|(^|_)(latitude|longitude|coordinates?|vendor_endpoint|endpoint_url|physical_device_evidence)($|_)|(^|_)raw(_vendor)?_?payload($|_)'),0,'M25 tables contain no credentials, secrets, raw vendor payloads, coordinates, vendor endpoints, or physical-device evidence');
+select is((select count(*)::integer from information_schema.columns where table_schema='public' and table_name like 'm24f_%' and column_name ~* '(^|_)(credentials?|secrets?|tokens?|api_keys?|authorization|ciphertexts?|key_material|vendor_endpoint|endpoint_url|latitude|longitude|coordinates?|physical_device_evidence|raw(_vendor)?_?payload)($|_)' and column_name not in ('documented_payload_size_bytes','server_only_secret_required','secret_storage_requirement','key_id_available')),0,'M24F tables contain no credentials, secrets, raw vendor payloads, coordinates, vendor endpoints, or physical-device evidence');
+select is((select count(*)::integer from information_schema.columns where table_schema='public' and table_name like 'm25_%' and column_name ~* '(^|_)(credentials?|secrets?|tokens?|api_keys?|authorization|ciphertexts?|key_material|vendor_endpoint|endpoint_url|latitude|longitude|coordinates?|physical_device_evidence|raw(_vendor)?_?payload)($|_)' and column_name not in ('documented_payload_size_bytes','server_only_secret_required','secret_storage_requirement','key_id_available')),0,'M25 tables contain no credentials, secrets, raw vendor payloads, coordinates, vendor endpoints, or physical-device evidence');
 select has_function('public','admin_record_m24f_certification_scenarios_v1',array['uuid','text[]','text[]','boolean[]','text[]'],'typed M24F scenario persistence RPC exists');
 select has_function('public','admin_get_m25_intelligence_readiness_v1',array['integer'],'safe M25 readiness RPC exists');
 select has_function('public','admin_promote_m25_signal_to_alert_v1',array['uuid','text','text'],'explicit M25 alert promotion RPC exists');
 select ok(not has_function_privilege('anon','public.m24f_compact_certification_runs(integer,timestamptz)','EXECUTE') and not has_function_privilege('authenticated','public.m24f_compact_certification_runs(integer,timestamptz)','EXECUTE'),'M24F compaction is service-only');
 select ok(not has_function_privilege('anon','public.m25_process_statistical_queue(integer,timestamptz)','EXECUTE') and not has_function_privilege('authenticated','public.m25_process_statistical_queue(integer,timestamptz)','EXECUTE'),'M25 queue processing is service-only');
+
+select ok(public.m24f_is_safe_metadata('Bounded synthetic certification note.'),'ordinary bounded certification metadata is accepted');
+select ok(not public.m24f_is_safe_metadata('Authorization: Bearer abcdefghijklmnop'),'bearer credentials are rejected by value');
+select ok(not public.m24f_is_safe_metadata('api_key=vendor-secret-value'),'API keys are rejected by value');
+select ok(not public.m24f_is_safe_metadata('send to https://vendor.example/device'),'vendor endpoints are rejected by value');
+select ok(not public.m24f_is_safe_metadata('position 12.34567, 77.65432'),'coordinate pairs are rejected by value');
+select ok(not public.m24f_is_safe_metadata('raw payload: {device:sample}'),'raw payload fragments are rejected by value');
+select ok((select pg_get_constraintdef(oid) ilike '%observation_status%' from pg_catalog.pg_constraint where conname='m25_feature_value_observation_check'),'unavailable features require zero sample and coverage');
+select ok(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure) ilike '%promoted_alert_id is null%' and pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure) not ilike '%insert into public.alerts%','statistical worker preserves reviewed signals and has zero automatic alert side effects');
 
 select * from finish();
 rollback;

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   M25_STATISTICAL_QUEUE_BATCH_SIZE,
   M25_STATISTICAL_QUEUE_MAX_ITERATIONS,
@@ -11,6 +12,18 @@ import {
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("M25 bounded statistical worker", () => {
+  it("keeps the database worker exact-scoped, unavailable-aware, and review-only", () => {
+    const migration = readFileSync("supabase/migrations/20260807020000_m25_statistical_intelligence_foundation.sql", "utf8");
+    expect(migration).toContain("r.ad_work_day_id=j.ad_work_day_id");
+    expect(migration).toContain("r.adapter_version=j.adapter_version");
+    expect(migration).toContain("d.model=j.device_model");
+    expect(migration).toContain("then 'unavailable'");
+    expect(migration).toContain("on conflict(baseline_version) do nothing");
+    expect(migration).toContain("on conflict(source_snapshot_id) do nothing");
+    const workerBody = migration.slice(migration.indexOf("create or replace function public.m25_process_statistical_queue"), migration.indexOf("create or replace function public.m25_compact_operational_rows"));
+    expect(workerBody).not.toContain("insert into public.alerts");
+  });
+
   it("uses bounded queue waves and count-only output", async () => {
     const calls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
