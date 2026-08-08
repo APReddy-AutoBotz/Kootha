@@ -31,6 +31,11 @@ describe("M24F synthetic adapter certification", () => {
     for (const path of closurePaths) {
       expect(readFileSync(path, "utf8"), path).not.toMatch(superuserOnlyDdl);
     }
+
+    const authoritativeClosure = readFileSync(closurePaths[2], "utf8");
+    expect(authoritativeClosure).not.toMatch(/\\u[0-9a-f]{4}/i);
+    expect(authoritativeClosure).toContain("chr(1) || '-' || chr(8)");
+    expect(authoritativeClosure).toContain("chr(11) || chr(12) || chr(14) || '-' || chr(31)");
   });
 
   it("closes hostname endpoint and certification-scenario append channels", () => {

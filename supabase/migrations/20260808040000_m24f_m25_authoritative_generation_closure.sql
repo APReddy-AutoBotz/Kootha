@@ -5,7 +5,9 @@ returns boolean language sql immutable parallel safe
 set search_path=pg_catalog,public as $$
   select p_value is null or (
     char_length(p_value)<=500
-    and p_value !~ E'[\u0000-\u0008\u000B\u000C\u000E-\u001F]'
+    -- PostgreSQL text cannot contain NUL. Build the remaining prohibited C0
+    -- ranges with chr() so managed PostgreSQL never parses Unicode escapes.
+    and p_value !~ ('[' || chr(1) || '-' || chr(8) || chr(11) || chr(12) || chr(14) || '-' || chr(31) || ']')
     and p_value !~* '(^|[^a-z0-9])(password|passwd|pwd|credential|secret|bearer|token|api[_ -]?key|auth(entication|orization)?[_ -]?header|private[_ -]?key|client[_ -]?secret)([^a-z0-9]|$)'
     and p_value !~* '(https?|wss?|mqtt|tcp|udp)://|(^|[[:space:]])([0-9]{1,3}\.){3}[0-9]{1,3}(:[0-9]{1,5})?(/[^[:space:]]*)?'
     and p_value !~* '(^|[^a-z0-9])([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}(:[0-9]{1,5})?(/[^[:space:]]*)'
