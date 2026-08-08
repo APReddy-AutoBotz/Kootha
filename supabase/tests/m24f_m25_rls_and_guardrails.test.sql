@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(52);
+select plan(59);
 
 select has_table('public','m24f_adapter_capability_manifests','M24F capability manifests exist');
 select has_table('public','m24f_adapter_candidates','M24F candidates exist');
@@ -73,6 +73,14 @@ select ok(pg_get_functiondef('public.m25_process_statistical_queue(integer,times
 select ok(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure) ilike '%consecutive_windows%','SQL worker enforces configured consecutive windows');
 select ok(pg_get_functiondef('public.admin_promote_m25_signal_to_alert_v1(uuid,text,text)'::regprocedure) ilike '%h.evaluation_id=s.evaluation_id%','promotion review is bound to exact evaluation');
 select ok(pg_get_functiondef('public.admin_list_m22_alerts_v1(text,text,text,text,uuid,uuid,uuid,boolean,boolean,integer)'::regprocedure) ilike '%phone_physical_sustained_mismatch%','retained M23 alert identity remains visible and filterable');
+
+select ok(not public.m24f_is_safe_metadata('hooks.vendor.example/v1/ingest'),'scheme-less hostname paths are rejected');
+select ok(not public.m24f_is_safe_metadata('api.vendor.example:8443/hook'),'scheme-less hostname ports are rejected');
+select ok(public.m24f_is_safe_metadata('Webhook direction is inbound only.'),'bounded declarative webhook metadata remains accepted');
+select ok(pg_get_functiondef('public.admin_record_m24f_certification_scenarios_v1(uuid,text[],text[],boolean[],text[])'::regprocedure) ilike '%v_existing>=v_declared%' and exists(select 1 from pg_trigger where tgname='m24f_certification_scenario_immutability' and not tgisinternal),'certification scenario evidence closes at its declared count');
+select ok(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure) ilike '%newer.generation>fs.generation%','baselines and readiness use authoritative snapshot generations');
+select ok(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure) ilike '%source_generation < excluded.source_generation%','same-period corrected evaluations advance current signal state');
+select ok(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure) ilike '%count(distinct (fs.scope_key_hash,fs.period_start,fs.period_end))%','readiness counts stable work-day session identities');
 
 select * from finish();
 rollback;

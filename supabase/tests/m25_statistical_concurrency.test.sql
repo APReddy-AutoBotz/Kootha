@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(29);
+select plan(34);
 
 select has_function('public','m25_enqueue_feature_scope_v1',array['text','text','timestamp with time zone','timestamp with time zone','uuid','uuid','text','text','boolean'],'bounded M25 enqueue RPC exists');
 select has_function('public','m25_process_statistical_queue',array['integer','timestamp with time zone'],'bounded M25 queue RPC exists');
@@ -40,6 +40,12 @@ select lives_ok($$select public.m25_enqueue_feature_scope_v1('fleet_day',repeat(
 select is((select generation from public.m25_feature_extraction_jobs where scope_key_hash=repeat('e',64) and synthetic),2,'changed authoritative input watermark advances generation exactly once');
 select lives_ok($$select public.m25_enqueue_feature_scope_v1('fleet_day',repeat('e',64),'2026-08-07 00:00+00','2026-08-08 00:00+00',null,null,null,null,true)$$,'replay of the changed watermark succeeds');
 select is((select generation from public.m25_feature_extraction_jobs where scope_key_hash=repeat('e',64) and synthetic),2,'replay of the changed watermark does not advance generation again');
+
+select lives_ok($$select public.m25_process_statistical_queue(50,'2030-01-01 00:00+00')$$,'changed generation processes successfully');
+select is((select count(*)::integer from public.m25_feature_snapshots where scope_key_hash=repeat('e',64) and synthetic),2,'changed evidence retains two immutable snapshot generations');
+select is((select count(*)::integer from public.m25_feature_snapshots latest join public.m25_feature_snapshots prior on prior.id=latest.supersedes_snapshot_id where latest.scope_key_hash=repeat('e',64) and latest.generation=2 and prior.generation=1),1,'corrected snapshot explicitly supersedes its prior generation');
+select is((select count(*)::integer from public.m25_feature_snapshots fs where fs.scope_key_hash=repeat('e',64) and fs.synthetic and not exists(select 1 from public.m25_feature_snapshots newer where newer.scope=fs.scope and newer.scope_key_hash=fs.scope_key_hash and newer.period_start=fs.period_start and newer.period_end=fs.period_end and newer.feature_version=fs.feature_version and newer.synthetic=fs.synthetic and newer.generation>fs.generation)),1,'only one generation is authoritative for a scope-period');
+select is((select max(reviewed_work_day_sessions) from public.m25_readiness_assessments where source_snapshot_id in (select id from public.m25_feature_snapshots where scope_key_hash=repeat('e',64))),0,'corrected non-work-day snapshots cannot inflate work-day session readiness');
 
 select * from finish();
 rollback;

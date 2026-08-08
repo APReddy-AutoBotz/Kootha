@@ -32,6 +32,16 @@ describe("M25 bounded statistical worker", () => {
     expect(workerBody).not.toContain("insert into public.alerts");
   });
 
+  it("uses one authoritative generation per period and stable readiness sessions", () => {
+    const closure = readFileSync("supabase/migrations/20260808040000_m24f_m25_authoritative_generation_closure.sql", "utf8");
+    expect(closure).toContain("newer.generation>fs.generation");
+    expect(closure).toContain("supersedes_snapshot_id");
+    expect(closure).toContain("generated_at = excluded.generated_at");
+    expect(closure).toContain("source_generation < excluded.source_generation");
+    expect(closure).toContain("count(distinct (fs.scope_key_hash,fs.period_start,fs.period_end))");
+    expect(closure).not.toContain("count(distinct fs.id) filter(where fs.scope='device_work_day')");
+  });
+
   it("uses bounded queue waves and count-only output", async () => {
     const calls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {

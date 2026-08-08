@@ -24,12 +24,21 @@ describe("M24F synthetic adapter certification", () => {
     const closurePaths = [
       "supabase/migrations/20260808010000_m24f_m25_release_closure.sql",
       "supabase/migrations/20260808030000_m24f_m25_compatibility_closure.sql",
+      "supabase/migrations/20260808040000_m24f_m25_authoritative_generation_closure.sql",
     ];
     const superuserOnlyDdl = /\b(?:leakproof|superuser|bypassrls|alter\s+system|event\s+trigger|language\s+c)\b/i;
 
     for (const path of closurePaths) {
       expect(readFileSync(path, "utf8"), path).not.toMatch(superuserOnlyDdl);
     }
+  });
+
+  it("closes hostname endpoint and certification-scenario append channels", () => {
+    const closure = readFileSync("supabase/migrations/20260808040000_m24f_m25_authoritative_generation_closure.sql", "utf8");
+    expect(closure).toContain("[a-z]{2,}(:[0-9]{1,5})?(/[^[:space:]]*)");
+    expect(closure).toContain("v_existing>=v_declared or v_existing+v_count>v_declared");
+    expect(closure).toContain("m24f_certification_scenario_immutability");
+    expect(closure).toContain("before insert or update or delete");
   });
 
   it("runs the complete synthetic certification matrix without a production claim", () => {
