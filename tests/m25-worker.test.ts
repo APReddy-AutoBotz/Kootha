@@ -12,6 +12,14 @@ import {
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("M25 bounded statistical worker", () => {
+  it("requires immutable review evidence and exposes promotions through M22", () => {
+    const closure = readFileSync("supabase/migrations/20260808010000_m24f_m25_release_closure.sql", "utf8");
+    expect(closure).toContain("from public.m25_signal_review_history h");
+    expect(closure).toContain("h.new_state=s.state");
+    expect(closure).toContain("a.rule_id is not null or a.source='statistical_signal'");
+    expect(closure).not.toContain("values('m25-statistical-signal-rule'");
+  });
+
   it("keeps the database worker exact-scoped, unavailable-aware, and review-only", () => {
     const migration = readFileSync("supabase/migrations/20260807020000_m25_statistical_intelligence_foundation.sql", "utf8");
     expect(migration).toContain("r.ad_work_day_id=j.ad_work_day_id");

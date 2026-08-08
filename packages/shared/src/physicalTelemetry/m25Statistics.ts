@@ -216,7 +216,9 @@ export function evaluateM25StatisticalSignalV1(
   input: M25SignalEvaluationInputV1,
 ): M25StatisticalSignalV1 {
   const definition = input.signalDefinition;
-  const score = input.observedValue === null
+  const meetsConfiguredSupport = input.currentSampleCount >= definition.minimumCurrentSupport
+    && (input.baseline?.sampleCount ?? 0) >= definition.minimumBaselineSupport;
+  const score = input.observedValue === null || !meetsConfiguredSupport
     ? { status: "insufficient_data" as const, robustScore: null, fallbackStatistic: "none" as const, scale: null, deviation: null, supportLevel: supportFor(input.currentSampleCount, input.synthetic) }
     : scoreM25RobustObservationV1({
       observedValue: input.observedValue,

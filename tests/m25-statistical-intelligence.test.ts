@@ -60,6 +60,17 @@ describe("M25 feature extraction and deterministic statistical intelligence", ()
     expect(signal.promotedAlertId).toBeNull();
   });
 
+  it("fails closed until both configured support thresholds are met", () => {
+    const definition = m25StatisticalSignalDefinitionsV1.find((item) => item.signalId === "rejection_rate_shift")!;
+    const cohort = { metric: "rejection_rate" as const, deviceModel: null, adapterVersion: null, workCategory: null, source: "mixed" as const, synthetic: false };
+    const baseline = computeM25RobustBaselineV1({ baselineId: "support-baseline", baselineVersion: "support-v1", metric: "rejection_rate", cohort, minimumSupport: 1, observations: [0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07].map((value, index) => ({ value, capturedAt: `2026-08-${String(index + 1).padStart(2, "0")}T00:00:00.000Z`, scopeKeyHash: `support-${index}`, deviceModel: null, adapterVersion: null, workCategory: null, source: "physical_device", synthetic: false })) });
+    const common = { signalEpisodeId: "support-episode", signalDefinition: definition, scope: "fleet_day" as const, scopeKeyHash: "c".repeat(64), observedValue: 10, fallback: "exact_supported_cohort" as const, coverageScore: 1, synthetic: false, generatedAt: "2026-08-08T00:00:00.000Z" };
+
+    expect(evaluateM25StatisticalSignalV1({ ...common, baseline, currentSampleCount: definition.minimumCurrentSupport }).state).toBe("insufficient_data");
+    expect(evaluateM25StatisticalSignalV1({ ...common, baseline: { ...baseline, sampleCount: definition.minimumBaselineSupport }, currentSampleCount: definition.minimumCurrentSupport - 1 }).state).toBe("insufficient_data");
+    expect(evaluateM25StatisticalSignalV1({ ...common, baseline: { ...baseline, sampleCount: definition.minimumBaselineSupport }, currentSampleCount: definition.minimumCurrentSupport }).state).toBe("investigate");
+  });
+
   it("semantically evaluates every catalog signal with the declared direction", () => {
     expect(m25StatisticalSignalDefinitionsV1).toHaveLength(18);
     for (const definition of m25StatisticalSignalDefinitionsV1) {

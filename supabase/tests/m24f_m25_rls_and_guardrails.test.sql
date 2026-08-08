@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(36);
+select plan(41);
 
 select has_table('public','m24f_adapter_capability_manifests','M24F capability manifests exist');
 select has_table('public','m24f_adapter_candidates','M24F candidates exist');
@@ -56,6 +56,11 @@ select ok(not public.m24f_is_safe_metadata('position 12.34567, 77.65432'),'coord
 select ok(not public.m24f_is_safe_metadata('raw payload: {device:sample}'),'raw payload fragments are rejected by value');
 select ok((select pg_get_constraintdef(oid) ilike '%observation_status%' from pg_catalog.pg_constraint where conname='m25_feature_value_observation_check'),'unavailable features require zero sample and coverage');
 select ok(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure) ilike '%promoted_alert_id is null%' and pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure) not ilike '%insert into public.alerts%','statistical worker preserves reviewed signals and has zero automatic alert side effects');
+select ok(exists(select 1 from pg_constraint where conrelid='public.m24f_certification_runs'::regclass and conname='m24f_passed_requires_nonvacuous_synthetic_check'),'passed certification requires nonvacuous successful synthetic evidence');
+select ok(pg_get_functiondef('public.admin_decide_m24f_candidate_v1(uuid,text,text,text)'::regprocedure) ilike '%approved_by_ap%' and pg_get_functiondef('public.admin_decide_m24f_candidate_v1(uuid,text,text,text)'::regprocedure) ilike '%scenario_count <= 0%','AP approval revalidates the latest successful certification evidence');
+select ok(pg_get_functiondef('public.admin_promote_m25_signal_to_alert_v1(uuid,text,text)'::regprocedure) ilike '%m25_signal_review_history%' and pg_get_functiondef('public.admin_promote_m25_signal_to_alert_v1(uuid,text,text)'::regprocedure) ilike '%h.new_state=s.state%','signal promotion requires matching immutable review evidence');
+select ok(pg_get_functiondef('public.admin_list_m22_alerts_v1(text,text,text,text,uuid,uuid,uuid,boolean,boolean,integer)'::regprocedure) ilike '%statistical_signal%','authoritative alert list includes promoted statistical signals');
+select ok(pg_get_functiondef('public.admin_get_m22_alert_detail_v1(uuid)'::regprocedure) ilike '%statistical_signal%','authoritative alert detail includes promoted statistical signals');
 
 select * from finish();
 rollback;

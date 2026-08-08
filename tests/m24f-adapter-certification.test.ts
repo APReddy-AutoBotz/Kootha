@@ -41,4 +41,11 @@ describe("M24F synthetic adapter certification", () => {
     expect(REFERENCE_VENDOR_CAPABILITY_MANIFEST_V1.syntheticState).toBe("synthetic_only");
     expect(REFERENCE_VENDOR_CAPABILITY_MANIFEST_V1.certificationLevel).toBe("synthetic_conformance");
   });
+
+  it("requires current, nonvacuous certification evidence for approval", () => {
+    const closure = readFileSync("supabase/migrations/20260808010000_m24f_m25_release_closure.sql", "utf8");
+    expect(closure).toContain("scenario_count > 0 and passed_count = scenario_count and failed_count = 0");
+    expect(closure).toContain("p_new_status in ('technically_compatible','approved_by_ap')");
+    expect(closure).toContain("order by completed_at desc nulls last, id desc limit 1");
+  });
 });
