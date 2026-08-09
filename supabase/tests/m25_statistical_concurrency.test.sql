@@ -203,8 +203,12 @@ select ok(
 -- publication holds the same transaction lock promotion must acquire, so the
 -- promotion-side authority check cannot run until the newer evaluation commits.
 create extension if not exists dblink with schema extensions;
-select dblink_connect_u('m25_eval_writer','dbname=postgres');
-select dblink_connect_u('m25_promoter','dbname=postgres');
+-- Use authenticated test-owner sessions rather than the superuser-only
+-- dblink_connect_u entry point. These credentials belong only to the disposable
+-- local Supabase database used by `supabase test db` and do not alter product
+-- roles or grants.
+select dblink_connect('m25_eval_writer','host=127.0.0.1 port=5432 dbname=postgres user=supabase_admin password=postgres');
+select dblink_connect('m25_promoter','host=127.0.0.1 port=5432 dbname=postgres user=supabase_admin password=postgres');
 select dblink_send_query('m25_eval_writer',$race$
   begin;
   select public.m25_signal_authority_lock_v1('rejection_rate_shift',repeat('9',64),true)::text;
