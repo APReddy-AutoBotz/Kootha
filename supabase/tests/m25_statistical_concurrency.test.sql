@@ -6,7 +6,7 @@
 
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(84);
+select plan(90);
 
 select has_function('public','m25_enqueue_feature_scope_v1',array['text','text','timestamp with time zone','timestamp with time zone','uuid','uuid','text','text','boolean'],'bounded M25 enqueue RPC exists');
 select has_function('public','m25_process_statistical_queue',array['integer','timestamp with time zone'],'bounded M25 queue RPC exists');
@@ -299,6 +299,25 @@ select ok(regexp_replace(pg_get_functiondef('public.m25_process_statistical_queu
 select ok(regexp_replace(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure),'[[:space:]]','','g')
   ilike '%newer.generation>fs.generation%',
   'replayed and corrected readiness evidence remains deduplicated to the authoritative generation');
+
+select ok(regexp_replace(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure),'[[:space:]]','','g')
+  ilike '%count(distinctfs.period_start::date)filter(whereexists(select1frompublic.m25_feature_valuesobservedwhereobserved.snapshot_id=fs.idandobserved.observation_status=''observed''andobserved.sample_count>0andobserved.coverage_score>0))%',
+  'calendar-day readiness requires qualifying observed evidence');
+select ok(regexp_replace(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure),'[[:space:]]','','g')
+  ilike '%count(distinct(fs.device_model,fs.period_start::date))filter(wherefs.scope=''device_model_day''andfs.device_modelisnotnullandexists(select1frompublic.m25_feature_valuesobservedwhereobserved.snapshot_id=fs.idandobserved.observation_status=''observed''andobserved.sample_count>0andobserved.coverage_score>0))%',
+  'model-day readiness requires model-scoped qualifying observed evidence');
+select ok(regexp_replace(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure),'[[:space:]]','','g')
+  not ilike '%count(distinctfs.period_start::date)::integerreviewed_calendar_days%',
+  'empty authoritative snapshots do not advance calendar readiness');
+select ok(regexp_replace(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure),'[[:space:]]','','g')
+  ilike '%notexists(select1frompublic.m25_feature_snapshotsnewerwhere%newer.generation>fs.generation)%',
+  'mixed generations contribute only their latest authoritative snapshot');
+select ok(regexp_replace(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure),'[[:space:]]','','g')
+  ilike '%count(distinctfs.period_start::date)filter(%',
+  'qualifying calendar evidence counts exact distinct dates');
+select ok(regexp_replace(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure),'[[:space:]]','','g')
+  ilike '%count(distinct(fs.device_model,fs.period_start::date))filter(%',
+  'qualifying model evidence counts exact distinct model-day identities');
 
 select * from finish();
 rollback;

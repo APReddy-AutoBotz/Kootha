@@ -150,6 +150,22 @@ describe("M25 bounded statistical worker", () => {
     expect(closure).toContain("count(distinct (fs.scope_key_hash,fs.period_start,fs.period_end))");
   });
 
+  it("requires observed evidence for calendar and model-day readiness", () => {
+    const closure = readFileSync("supabase/migrations/20260808160000_m25_observed_readiness_closure.sql", "utf8");
+    const calendarStart = closure.indexOf("count(distinct fs.period_start::date) filter(");
+    const modelStart = closure.indexOf("count(distinct (fs.device_model,fs.period_start::date)) filter(");
+    const workDayStart = closure.indexOf("reviewed_work_day_sessions", modelStart);
+    const calendarLaw = closure.slice(calendarStart, modelStart);
+    const modelLaw = closure.slice(modelStart, workDayStart);
+
+    for (const law of [calendarLaw, modelLaw]) {
+      expect(law).toContain("observed.observation_status='observed'");
+      expect(law).toContain("observed.sample_count>0 and observed.coverage_score>0");
+    }
+    expect(modelLaw).toContain("fs.scope='device_model_day' and fs.device_model is not null");
+    expect(closure).toContain("newer.generation>fs.generation");
+  });
+
   it("uses the shared 3/20 support threshold contract in SQL", () => {
     const closure = readFileSync("supabase/migrations/20260808150000_m24f_m25_certification_authority_support_parity.sql", "utf8");
     expect(closure).toContain("when p_sample_count<3 then 'low'");
