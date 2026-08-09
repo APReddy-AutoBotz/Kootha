@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(81);
+select plan(93);
 
 select has_table('public','m24f_adapter_capability_manifests','M24F capability manifests exist');
 select has_table('public','m24f_adapter_candidates','M24F candidates exist');
@@ -107,13 +107,39 @@ select ok(pg_get_functiondef('public.m25_process_statistical_queue(integer,times
 select ok(exists(select 1 from pg_trigger where tgname='m24f_invalidate_approval_on_certification' and not tgisinternal),
   'later failed or expired certification invalidates prior AP authority at the write boundary');
 select ok(pg_get_functiondef('public.m24f_invalidate_approval_on_certification_v1()'::regprocedure)
-  ilike '%new.certification_state not in (''failed'',''expired'')%'
+  not ilike '%new.certification_state not in (''failed'',''expired'')%'
   and pg_get_functiondef('public.m24f_invalidate_approval_on_certification_v1()'::regprocedure)
-  ilike '%v_previous=''approved_by_ap''%technically_blocked%',
-  'passing current certification preserves authority while failed or expired evidence requires a fresh AP decision');
+  ilike '%v_previous in (''technically_compatible'',''approved_by_ap'')%technically_blocked%',
+  'every new certification requires a fresh technical and AP decision, including a run initially declared passed');
 select ok(pg_get_functiondef('public.m24f_invalidate_approval_on_certification_v1()'::regprocedure)
   ilike '%m24f_candidate_decision_history%manifest_id,certification_run_id%',
   'certification invalidation appends exact immutable decision evidence');
+
+select ok(pg_get_functiondef('public.m24f_invalidate_approval_on_certification_v1()'::regprocedure)
+  not ilike '%certification_state not in%'
+  and pg_get_functiondef('public.m24f_invalidate_approval_on_certification_v1()'::regprocedure)
+  ilike '%technically_compatible%approved_by_ap%',
+  'every newly inserted certification run immediately supersedes prior technical and AP authority');
+select ok(pg_get_functiondef('public.admin_record_m24f_certification_v1(uuid,text,text,text,text,integer,integer,text,text)'::regprocedure)
+  ilike '%m24f_assert_persisted_scenario_truth(v_latest.id)%'
+  and pg_get_functiondef('public.admin_record_m24f_certification_v1(uuid,text,text,text,text,integer,integer,text,text)'::regprocedure)
+  ilike '%h.certification_run_id=v_latest.id%return v_latest.id%',
+  'only exact replay of fully persisted certification evidence bound to current AP authority is idempotent');
+select ok(pg_get_functiondef('public.admin_decide_m24f_candidate_v1(uuid,text,text,text)'::regprocedure)
+  ilike '%m24f_assert_persisted_scenario_truth(v_latest.id)%'
+  and pg_get_functiondef('public.admin_decide_m24f_candidate_v1(uuid,text,text,text)'::regprocedure)
+  ilike '%certification_run_id%',
+  'fresh authority still requires complete current scenario truth and binds the exact run');
+
+select is(public.m25_support_level_v1(0,false),'none','zero observations have no support');
+select is(public.m25_support_level_v1(1,false),'low','one observation has low support');
+select is(public.m25_support_level_v1(2,false),'low','two observations remain low support');
+select is(public.m25_support_level_v1(3,false),'moderate','three observations reach moderate support');
+select is(public.m25_support_level_v1(7,false),'moderate','seven observations remain moderate support');
+select is(public.m25_support_level_v1(8,false),'moderate','eight observations remain moderate support');
+select is(public.m25_support_level_v1(19,false),'moderate','nineteen observations remain moderate support');
+select is(public.m25_support_level_v1(20,false),'strong','twenty observations reach strong support');
+select is(public.m25_support_level_v1(1,true),'synthetic_only','synthetic evidence retains its canonical support label');
 
 select * from finish();
 rollback;

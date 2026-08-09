@@ -109,6 +109,16 @@ describe("M24F synthetic adapter certification", () => {
     expect(closure).toContain("new_status,actor_admin_id,reason,safe_note,manifest_id,certification_run_id");
   });
 
+  it("invalidates prior authority for every genuinely new certification run", () => {
+    const closure = readFileSync("supabase/migrations/20260808150000_m24f_m25_certification_authority_support_parity.sql", "utf8");
+    expect(closure).not.toContain("new.certification_state not in ('failed','expired')");
+    expect(closure).toContain("v_previous in ('technically_compatible','approved_by_ap')");
+    expect(closure).toContain("certification_evidence_superseded");
+    expect(closure).toContain("public.m24f_assert_persisted_scenario_truth(v_latest.id)");
+    expect(closure).toContain("h.certification_run_id=v_latest.id");
+    expect(closure.indexOf("return v_latest.id")).toBeLessThan(closure.indexOf("insert into public.m24f_certification_runs"));
+  });
+
   it("requires current, nonvacuous certification evidence for approval", () => {
     const closure = readFileSync("supabase/migrations/20260808010000_m24f_m25_release_closure.sql", "utf8");
     expect(closure).toContain("scenario_count > 0 and passed_count = scenario_count and failed_count = 0");

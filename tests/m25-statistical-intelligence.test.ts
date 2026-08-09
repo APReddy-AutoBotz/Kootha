@@ -86,6 +86,19 @@ describe("M25 feature extraction and deterministic statistical intelligence", ()
     expect(signal.promotedAlertId).toBeNull();
   });
 
+  it("uses canonical support boundaries at 0/1/2/3/7/8/19/20", () => {
+    const baseline = computeM25RobustBaselineV1({
+      baselineId: "support-boundaries", baselineVersion: "support-boundaries-v1", metric: "rejection_rate",
+      cohort: { metric: "rejection_rate", deviceModel: null, adapterVersion: null, workCategory: null, source: "physical_device", synthetic: false },
+      minimumSupport: 1,
+      observations: [0, 1].map((value, index) => ({ value, capturedAt: `2026-08-0${index + 1}T00:00:00.000Z`, scopeKeyHash: `boundary-${index}`, deviceModel: null, adapterVersion: null, workCategory: null, source: "physical_device", synthetic: false })),
+    });
+    const expected = [[0, "none"], [1, "low"], [2, "low"], [3, "moderate"], [7, "moderate"], [8, "moderate"], [19, "moderate"], [20, "strong"]] as const;
+    for (const [currentSampleCount, supportLevel] of expected) {
+      expect(scoreM25RobustObservationV1({ observedValue: 2, baseline, direction: "high_bad", currentSampleCount, currentSynthetic: false }).supportLevel).toBe(supportLevel);
+    }
+  });
+
   it("fails closed until both configured support thresholds are met", () => {
     const definition = m25StatisticalSignalDefinitionsV1.find((item) => item.signalId === "rejection_rate_shift")!;
     const cohort = { metric: "rejection_rate" as const, deviceModel: null, adapterVersion: null, workCategory: null, source: "mixed" as const, synthetic: false };

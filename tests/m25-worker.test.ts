@@ -150,6 +150,14 @@ describe("M25 bounded statistical worker", () => {
     expect(closure).toContain("count(distinct (fs.scope_key_hash,fs.period_start,fs.period_end))");
   });
 
+  it("uses the shared 3/20 support threshold contract in SQL", () => {
+    const closure = readFileSync("supabase/migrations/20260808150000_m24f_m25_certification_authority_support_parity.sql", "utf8");
+    expect(closure).toContain("when p_sample_count<3 then 'low'");
+    expect(closure).toContain("when p_sample_count<20 then 'moderate'");
+    expect(closure).toContain("v_support:=public.m25_support_level_v1(v_feature.sample_count,j.synthetic)");
+    expect(closure).not.toContain("v_feature.sample_count>=8 then 'strong'");
+  });
+
   it("uses bounded queue waves and count-only output", async () => {
     const calls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
