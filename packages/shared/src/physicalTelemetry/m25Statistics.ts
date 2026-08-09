@@ -123,15 +123,28 @@ export function selectM25BaselineV1(
   const active = baselines.filter((baseline) => baseline.active && baseline.metric === requested.metric && baseline.cohort.synthetic === requested.synthetic);
   const exact = active.find((baseline) => sameCohort(baseline.cohort, requested) && baseline.sampleCount > 0);
   if (exact) return { baseline: { ...exact, fallback: "exact_supported_cohort" }, fallback: "exact_supported_cohort" };
-  const broader = active.find((baseline) =>
-    baseline.cohort.deviceModel === requested.deviceModel
-      || baseline.cohort.adapterVersion === requested.adapterVersion,
-  );
+  const broader = active.find((baseline) => {
+    const modelMatches = requested.deviceModel !== null
+      && baseline.cohort.deviceModel === requested.deviceModel;
+    const adapterMatches = requested.adapterVersion !== null
+      && baseline.cohort.adapterVersion === requested.adapterVersion;
+    const compatibleModel = baseline.cohort.deviceModel === null || modelMatches;
+    const compatibleAdapter = baseline.cohort.adapterVersion === null || adapterMatches;
+    const compatibleWorkCategory = baseline.cohort.workCategory === null
+      || baseline.cohort.workCategory === requested.workCategory;
+    const compatibleSource = baseline.cohort.source === requested.source;
+    return (modelMatches || adapterMatches)
+      && compatibleModel
+      && compatibleAdapter
+      && compatibleWorkCategory
+      && compatibleSource;
+  });
   if (broader && broader.sampleCount > 0) return { baseline: { ...broader, fallback: "broader_model_adapter_cohort" }, fallback: "broader_model_adapter_cohort" };
   const fleet = active.find((baseline) =>
     baseline.cohort.deviceModel === null
       && baseline.cohort.adapterVersion === null
-      && baseline.cohort.workCategory === null,
+      && baseline.cohort.workCategory === null
+      && baseline.cohort.source === requested.source,
   );
   if (fleet && fleet.sampleCount > 0) return { baseline: { ...fleet, fallback: "fleet_cohort" }, fallback: "fleet_cohort" };
   return { baseline: null, fallback: "insufficient_data" };

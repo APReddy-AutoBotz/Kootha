@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(64);
+select plan(67);
 
 select has_function('public','m25_enqueue_feature_scope_v1',array['text','text','timestamp with time zone','timestamp with time zone','uuid','uuid','text','text','boolean'],'bounded M25 enqueue RPC exists');
 select has_function('public','m25_process_statistical_queue',array['integer','timestamp with time zone'],'bounded M25 queue RPC exists');
@@ -170,6 +170,21 @@ select ok(
   pg_get_functiondef('public.admin_transition_m25_signal_review_v1(uuid,text,text,text,text)'::regprocedure)
     ilike '%s.evaluation_id%',
   'a fresh review binds to the newest evaluation and can satisfy promotion authority');
+
+select ok(
+  pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
+    ilike '%generated_at < excluded.generated_at%'
+  and pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
+    not ilike '%generated_at < excluded.generated_at%state not in (''reviewed'',''suppressed'')%',
+  'a newer authoritative period replaces a reviewed or suppressed older signal');
+select ok(
+  pg_get_functiondef('public.admin_promote_m25_signal_to_alert_v1(uuid,text,text)'::regprocedure)
+    ilike '%newer.period_end>s.generated_at%newer.source_generation>s.source_generation%',
+  'promotion rejects a stale current projection when a newer authoritative evaluation exists');
+select ok(
+  pg_get_functiondef('public.admin_promote_m25_signal_to_alert_v1(uuid,text,text)'::regprocedure)
+    ilike '%h.evaluation_id=s.evaluation_id%',
+  'promotion requires a matching immutable review for the newest current evaluation');
 
 select * from finish();
 rollback;

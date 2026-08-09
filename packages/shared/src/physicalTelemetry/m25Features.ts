@@ -131,6 +131,9 @@ export function extractM25FeatureSnapshotV1(
   if (Date.parse(input.periodEnd) < Date.parse(input.periodStart)) {
     throw new Error("M25_FEATURE_PERIOD_INVALID");
   }
+  if (input.evidence.some((item) => item.synthetic !== input.adapter.synthetic)) {
+    throw new Error("M25_FEATURE_SYNTHETIC_COHORT_MISMATCH");
+  }
   const evidence = cleanEvidence(input);
   const valuesById = valueMap(evidence);
   const values: M25FeatureValueV1[] = m25FeatureIdsV1.map((featureId) => {
@@ -165,7 +168,7 @@ export function extractM25FeatureSnapshotV1(
     periodStart: input.periodStart,
     periodEnd: input.periodEnd,
     values,
-    synthetic: evidence.length === 0 ? input.adapter.synthetic : evidence.every((item) => item.synthetic),
+    synthetic: input.adapter.synthetic,
     sourceCompleteness,
     supersedesSnapshotId: input.supersedesSnapshotId ?? null,
     generatedAt: input.generatedAt,

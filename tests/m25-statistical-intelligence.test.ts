@@ -51,6 +51,29 @@ describe("M25 feature extraction and deterministic statistical intelligence", ()
     expect(mixed.maximum).toBe(1);
   });
 
+  it("requires a meaningful compatible cohort match for broader baselines", () => {
+    const requested = { metric: "rejection_rate" as const, deviceModel: "model-a", adapterVersion: null, workCategory: "delivery", source: "physical_device" as const, synthetic: false };
+    const base = computeM25RobustBaselineV1({
+      baselineId: "broader", baselineVersion: "broader-v1", metric: requested.metric,
+      cohort: { ...requested, adapterVersion: "adapter-a" }, minimumSupport: 1,
+      observations: [{ value: 1, capturedAt: "2026-08-01T00:00:00.000Z", scopeKeyHash: "scope", deviceModel: "model-a", adapterVersion: "adapter-a", workCategory: "delivery", source: "physical_device", synthetic: false }],
+    });
+    expect(selectM25BaselineV1([{ ...base, cohort: { ...base.cohort, deviceModel: "model-b", adapterVersion: null } }], requested).fallback).toBe("insufficient_data");
+    expect(selectM25BaselineV1([{ ...base, cohort: { ...base.cohort, adapterVersion: null, workCategory: null } }], requested).fallback).toBe("broader_model_adapter_cohort");
+    expect(selectM25BaselineV1([{ ...base, cohort: { ...base.cohort, adapterVersion: null, source: "simulator" } }], requested).fallback).toBe("insufficient_data");
+    expect(selectM25BaselineV1([{ ...base, cohort: { ...base.cohort, adapterVersion: null, workCategory: "service" } }], requested).fallback).toBe("insufficient_data");
+    const fleetRequest = { ...requested, deviceModel: null, workCategory: null };
+    expect(selectM25BaselineV1([{ ...base, cohort: { ...fleetRequest, source: "simulator" } }], fleetRequest).fallback).toBe("insufficient_data");
+  });
+
+  it("rejects mixed or mismatched synthetic extraction evidence", () => {
+    const input = { snapshotId: "snapshot-cohort", scope: "device_day" as const, scopeKeyHash: "d".repeat(64), periodStart: "2026-08-07T00:00:00.000Z", periodEnd: "2026-08-08T00:00:00.000Z", adapter: { adapterVersion: "1.0.0", deviceModel: "model", synthetic: false }, generatedAt: "2026-08-08T00:00:00.000Z" };
+    expect(() => extractM25FeatureSnapshotV1({ ...input, evidence: [evidence({ synthetic: false }), evidence({ evidenceId: "e-2", synthetic: true })] })).toThrow("M25_FEATURE_SYNTHETIC_COHORT_MISMATCH");
+    expect(() => extractM25FeatureSnapshotV1({ ...input, evidence: [evidence({ synthetic: true })] })).toThrow("M25_FEATURE_SYNTHETIC_COHORT_MISMATCH");
+    const real = extractM25FeatureSnapshotV1({ ...input, evidence: [evidence({ synthetic: false, source: "physical_device" })] });
+    expect(real.synthetic).toBe(false);
+  });
+
   it("scores a signal with direction, support, and deterministic explanation", () => {
     const definition = m25StatisticalSignalDefinitionsV1.find((item) => item.signalId === "rejection_rate_shift")!;
     const cohort = { metric: "rejection_rate" as const, deviceModel: null, adapterVersion: null, workCategory: null, source: "mixed" as const, synthetic: false };
