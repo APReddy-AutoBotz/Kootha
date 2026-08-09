@@ -131,7 +131,13 @@ describe("M25 bounded statistical worker", () => {
       closure.indexOf("where id=p_signal_id for update"),
     );
     expect(closure).toContain("current_evaluation.evaluation_id=s.evaluation_id");
+    expect(closure).toContain("current_evaluation.period_end=s.generated_at");
+    expect(closure).toContain("current_evaluation.source_generation=s.source_generation");
+    expect(closure).toContain("h.evaluation_id=s.evaluation_id");
     expect(closure).toContain("newer.source_generation>s.source_generation");
+    expect(closure.indexOf("newer.source_generation>s.source_generation")).toBeLessThan(
+      closure.indexOf("insert into public.alerts"),
+    );
   });
 
   it("uses bounded queue waves and count-only output", async () => {
