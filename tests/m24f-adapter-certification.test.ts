@@ -56,6 +56,15 @@ describe("M24F synthetic adapter certification", () => {
     expect(closure).toContain("before insert or update or delete");
   });
 
+  it("binds certification and approval to a frozen candidate manifest", () => {
+    const closure = readFileSync("supabase/migrations/20260808070000_m24f_m25_authority_statistical_parity_closure.sql", "utf8");
+    expect(closure).toContain("add column manifest_id uuid");
+    expect(closure).toContain("trim(p_adapter_id)<>v_manifest.adapter_id");
+    expect(closure).toContain("v_latest.manifest_id is distinct from v_manifest_id");
+    expect(closure).toContain("certification_run_id uuid references");
+    expect(closure).toContain("Authorizing manifest identity is frozen");
+  });
+
   it("runs the complete synthetic certification matrix without a production claim", () => {
     const result = runM24fAdapterCertificationV1();
     expect(M24F_CERTIFICATION_COMMAND).toBe("test:m24f-adapter-certification");

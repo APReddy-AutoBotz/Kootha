@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(65);
+select plan(74);
 
 select has_table('public','m24f_adapter_capability_manifests','M24F capability manifests exist');
 select has_table('public','m24f_adapter_candidates','M24F candidates exist');
@@ -87,6 +87,16 @@ select ok(pg_get_functiondef('public.admin_record_m24f_certification_scenarios_v
 select ok(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure) ilike '%newer.generation>fs.generation%','baselines and readiness use authoritative snapshot generations');
 select ok(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure) ilike '%source_generation < excluded.source_generation%','same-period corrected evaluations advance current signal state');
 select ok(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure) ilike '%count(distinct (fs.scope_key_hash,fs.period_start,fs.period_end))%','readiness counts stable work-day session identities');
+
+select ok(exists(select 1 from information_schema.columns where table_schema='public' and table_name='m24f_certification_runs' and column_name='manifest_id'),'certification runs persist exact manifest identity');
+select ok(pg_get_functiondef('public.admin_record_m24f_certification_v1(uuid,text,text,text,text,integer,integer,text,text)'::regprocedure) ilike '%trim(p_adapter_id)<>v_manifest.adapter_id%' and pg_get_functiondef('public.admin_decide_m24f_candidate_v1(uuid,text,text,text)'::regprocedure) ilike '%v_latest.manifest_id is distinct from v_manifest_id%','certification and decisions require exact current manifest identity');
+select ok(pg_get_functiondef('public.admin_update_m24f_candidate_metadata_v1(uuid,uuid,text,text,text,text,text,text,text,text)'::regprocedure) ilike '%authorizing manifest identity is frozen%','authorizing manifest cannot be replaced after certification or decision');
+select ok(exists(select 1 from information_schema.columns where table_schema='public' and table_name='m24f_candidate_decision_history' and column_name='certification_run_id') and pg_get_functiondef('public.admin_decide_m24f_candidate_v1(uuid,text,text,text)'::regprocedure) ilike '%manifest_id,certification_run_id%','decision history versions the exact authorizing manifest and certification run');
+select is(round(public.m25_robust_score_v1(13,10,2,8,12,'high_bad'),8),round(0.6745::numeric*3/2,8),'SQL MAD scoring uses the canonical robust factor');
+select is(round(public.m25_robust_score_v1(13,10,0,8,12,'high_bad'),8),round(0.6745::numeric*3/(4::numeric/1.349),8),'SQL IQR fallback uses IQR divided by 1.349 and the robust factor');
+select ok(public.m25_robust_score_v1(13,10,0,8,12,'high_bad')>0.68 and public.m25_robust_score_v1(13,10,0,8,12,'high_bad')<0.69,'IQR fallback preserves deterministic threshold-boundary semantics');
+select ok(exists(select 1 from pg_trigger where tgname='m25_mark_authoritative_correction') and pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure) ilike '%dependency_cause_snapshot_id is distinct from s_id%','historical corrections requeue dependent later windows idempotently');
+select ok(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure) ilike '%sig.generated_at>j.period_end%' and pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure) ilike '%state=''insufficient_data''%','stale later signals are invalidated before dependent reevaluation');
 
 select * from finish();
 rollback;

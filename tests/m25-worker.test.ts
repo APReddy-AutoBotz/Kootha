@@ -66,6 +66,16 @@ describe("M25 bounded statistical worker", () => {
     expect(workerBody).not.toContain("where c.first_seen_at >= j.period_start");
   });
 
+  it("requeues historical dependents once and uses canonical MAD/IQR scoring", () => {
+    const closure = readFileSync("supabase/migrations/20260808070000_m24f_m25_authority_statistical_parity_closure.sql", "utf8");
+    expect(closure).toContain("authoritative_correction_pending");
+    expect(closure).toContain("later.period_end>j.period_end");
+    expect(closure).toContain("dependency_cause_snapshot_id is distinct from s_id");
+    expect(closure).toContain("sig.generated_at>j.period_end");
+    expect(closure).toContain("(p_p75-p_p25)/1.349");
+    expect(closure).toContain("0.6745*(p_observed-p_median)");
+  });
+
   it("uses bounded queue waves and count-only output", async () => {
     const calls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
