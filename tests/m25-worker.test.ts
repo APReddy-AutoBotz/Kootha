@@ -51,6 +51,21 @@ describe("M25 bounded statistical worker", () => {
     expect(closure).toContain("safe_failure_reason_code=case when public.m25_feature_extraction_jobs.input_watermark<>excluded.input_watermark");
   });
 
+  it("aligns conflict evidence to receipt periods and bounds conflict rates", () => {
+    const closure = readFileSync("supabase/migrations/20260808060000_m25_identity_conflict_evidence_closure.sql", "utf8");
+    const enqueueBody = closure.slice(
+      closure.indexOf("create or replace function public.m25_enqueue_feature_scope_v1"),
+      closure.indexOf("create or replace function public.m25_process_statistical_queue"),
+    );
+    const workerBody = closure.slice(closure.indexOf("create or replace function public.m25_process_statistical_queue"));
+
+    expect(enqueueBody).toContain("where r.captured_at>=p_period_start and r.captured_at<p_period_end");
+    expect(enqueueBody).not.toContain("c.first_seen_at>=p_period_start");
+    expect(workerBody).toContain("select count(distinct r.id)::integer into v_conflicts");
+    expect(workerBody).toContain("where r.captured_at >= j.period_start and r.captured_at < j.period_end");
+    expect(workerBody).not.toContain("where c.first_seen_at >= j.period_start");
+  });
+
   it("uses bounded queue waves and count-only output", async () => {
     const calls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {

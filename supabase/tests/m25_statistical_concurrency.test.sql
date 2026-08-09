@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(39);
+select plan(43);
 
 select has_function('public','m25_enqueue_feature_scope_v1',array['text','text','timestamp with time zone','timestamp with time zone','uuid','uuid','text','text','boolean'],'bounded M25 enqueue RPC exists');
 select has_function('public','m25_process_statistical_queue',array['integer','timestamp with time zone'],'bounded M25 queue RPC exists');
@@ -51,6 +51,19 @@ select ok(pg_get_functiondef('public.m25_enqueue_feature_scope_v1(text,text,time
   and pg_get_functiondef('public.m25_enqueue_feature_scope_v1(text,text,timestamptz,timestamptz,uuid,uuid,text,text,boolean)'::regprocedure) ilike '%c.last_seen_at%'
   and pg_get_functiondef('public.m25_enqueue_feature_scope_v1(text,text,timestamptz,timestamptz,uuid,uuid,text,text,boolean)'::regprocedure) ilike '%c.incoming_content_hash%',
   'input watermark binds exact scoped identity-conflict evidence');
+select ok(pg_get_functiondef('public.m25_enqueue_feature_scope_v1(text,text,timestamptz,timestamptz,uuid,uuid,text,text,boolean)'::regprocedure)
+  ilike '%r.captured_at >= p_period_start%r.captured_at < p_period_end%',
+  'late conflict evidence is assigned to the original receipt capture period');
+select ok(pg_get_functiondef('public.m25_enqueue_feature_scope_v1(text,text,timestamptz,timestamptz,uuid,uuid,text,text,boolean)'::regprocedure)
+  not ilike '%c.first_seen_at >= p_period_start%',
+  'conflict discovery time cannot contaminate an unrelated later period watermark');
+select ok(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
+  ilike '%count(DISTINCT r.id)%' and pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
+  ilike '%r.captured_at >= j.period_start%r.captured_at < j.period_end%',
+  'worker counts each affected scoped receipt once regardless of conflict row multiplicity');
+select ok(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
+  not ilike '%WHERE c.first_seen_at >= j.period_start%',
+  'worker conflict numerator and receipt denominator use the same historical population');
 
 -- Prove that successful generations do not consume a lifetime retry budget.
 select lives_ok($$
