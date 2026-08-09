@@ -104,6 +104,15 @@ describe("M25 bounded statistical worker", () => {
     expect(closure).not.toContain("select sig.state into v_previous_state from public.m25_statistical_signals sig");
   });
 
+  it("reopens same-period reviewed evidence for a generation-bound fresh review", () => {
+    const closure = readFileSync("supabase/migrations/20260808110000_m25_same_period_review_authority_closure.sql", "utf8");
+    expect(closure).toContain("j.period_end::text,j.generation::text,v_baseline_version");
+    expect(closure).toContain("generated_at = excluded.generated_at");
+    expect(closure).toContain("source_generation < excluded.source_generation");
+    expect(closure).not.toContain("state not in ('reviewed','suppressed') and (public.m25_statistical_signals.generated_at");
+    expect(closure).toContain("promoted_alert_id is null");
+  });
+
   it("uses bounded queue waves and count-only output", async () => {
     const calls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {

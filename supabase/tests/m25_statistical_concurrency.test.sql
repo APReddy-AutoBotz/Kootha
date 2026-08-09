@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(57);
+select plan(64);
 
 select has_function('public','m25_enqueue_feature_scope_v1',array['text','text','timestamp with time zone','timestamp with time zone','uuid','uuid','text','text','boolean'],'bounded M25 enqueue RPC exists');
 select has_function('public','m25_process_statistical_queue',array['integer','timestamp with time zone'],'bounded M25 queue RPC exists');
@@ -139,6 +139,37 @@ select ok(
   'an invalidated current signal row cannot supply historical hysteresis state');
 select is(public.m25_signal_state_v1(2.5,3,2,'investigate',2,2,true),'watch',
   'P1-to-P2-to-P3 reconstruction preserves watch inside hysteresis after a prior investigating period');
+
+select ok(
+  pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
+    ilike '%j.period_end::text,j.generation::text,v_baseline_version%',
+  'evaluation identity includes the authoritative source generation');
+select ok(
+  pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
+    ilike '%generated_at = excluded.generated_at%source_generation < excluded.source_generation%',
+  'a corrected same-period generation replaces stale current signal evidence');
+select ok(
+  pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
+    not ilike '%state not in (''reviewed'',''suppressed'') and (public.m25_statistical_signals.generated_at%',
+  'reviewed same-period state cannot block authoritative correction replacement');
+select ok(
+  pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
+    ilike '%generated_at = excluded.generated_at%source_generation < excluded.source_generation%'
+  and pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
+    not ilike '%state not in (''reviewed'',''suppressed'') and (public.m25_statistical_signals.generated_at%',
+  'suppressed same-period state also yields to the newest authoritative evaluation');
+select ok(
+  pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
+    ilike '%promoted_alert_id is null%',
+  'same-period correction remains fail closed after explicit promotion');
+select ok(
+  pg_get_functiondef('public.admin_promote_m25_signal_to_alert_v1(uuid,text,text)'::regprocedure)
+    ilike '%h.evaluation_id=s.evaluation_id%',
+  'stale review evidence cannot authorize promotion of a newer evaluation');
+select ok(
+  pg_get_functiondef('public.admin_transition_m25_signal_review_v1(uuid,text,text,text,text)'::regprocedure)
+    ilike '%s.evaluation_id%',
+  'a fresh review binds to the newest evaluation and can satisfy promotion authority');
 
 select * from finish();
 rollback;
