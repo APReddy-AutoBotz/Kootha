@@ -140,6 +140,16 @@ describe("M25 bounded statistical worker", () => {
     );
   });
 
+  it("counts only authoritative qualifying evidence in readiness", () => {
+    const closure = readFileSync("supabase/migrations/20260808140000_m24f_m25_authority_readiness_closure.sql", "utf8");
+    expect(closure).toContain("fs.scope='device_model_day' and fs.device_model is not null");
+    expect(closure).toContain("fs.scope='device_work_day' and exists");
+    expect(closure).toContain("observed.observation_status='observed'");
+    expect(closure).toContain("observed.sample_count>0 and observed.coverage_score>0");
+    expect(closure).toContain("newer.generation>fs.generation");
+    expect(closure).toContain("count(distinct (fs.scope_key_hash,fs.period_start,fs.period_end))");
+  });
+
   it("uses bounded queue waves and count-only output", async () => {
     const calls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {

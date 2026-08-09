@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(78);
+select plan(81);
 
 select has_table('public','m24f_adapter_capability_manifests','M24F capability manifests exist');
 select has_table('public','m24f_adapter_candidates','M24F candidates exist');
@@ -103,6 +103,17 @@ select ok(pg_get_functiondef('public.admin_record_m24f_certification_v1(uuid,tex
 select ok(pg_get_functiondef('public.admin_record_m24f_certification_v1(uuid,text,text,text,text,integer,integer,text,text)'::regprocedure) ilike '%m20a_require_admin%' and not has_function_privilege('anon','public.admin_record_m24f_certification_v1(uuid,text,text,text,text,integer,integer,text,text)','EXECUTE'), 'certification audit emission retains tenant admin authority');
 select ok(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure) ilike '%order by authoritative_correction_pending desc,period_end,period_start,next_attempt_at,created_at,id%', 'historical correction dependencies are claimed in chronological evidence order, independent of enqueue order');
 select ok(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure) ilike '%authoritative_correction_pending=true,dependency_cause_snapshot_id=s_id%' and pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure) ilike '%later.period_end=(select min(next_period.period_end)%', 'historical corrections propagate idempotently through each next affected period');
+
+select ok(exists(select 1 from pg_trigger where tgname='m24f_invalidate_approval_on_certification' and not tgisinternal),
+  'later failed or expired certification invalidates prior AP authority at the write boundary');
+select ok(pg_get_functiondef('public.m24f_invalidate_approval_on_certification_v1()'::regprocedure)
+  ilike '%new.certification_state not in (''failed'',''expired'')%'
+  and pg_get_functiondef('public.m24f_invalidate_approval_on_certification_v1()'::regprocedure)
+  ilike '%v_previous=''approved_by_ap''%technically_blocked%',
+  'passing current certification preserves authority while failed or expired evidence requires a fresh AP decision');
+select ok(pg_get_functiondef('public.m24f_invalidate_approval_on_certification_v1()'::regprocedure)
+  ilike '%m24f_candidate_decision_history%manifest_id,certification_run_id%',
+  'certification invalidation appends exact immutable decision evidence');
 
 select * from finish();
 rollback;

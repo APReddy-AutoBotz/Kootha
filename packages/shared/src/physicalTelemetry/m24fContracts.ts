@@ -308,7 +308,7 @@ export function validateAdapterCapabilityManifestV1(
 }
 
 export function isApApprovedAdapterCandidateV1(
-  candidate: Pick<AdapterCandidateV1, "decisionStatus">,
+  candidate: Pick<AdapterCandidateV1, "decisionStatus" | "certificationStatus">,
 ): boolean {
-  return candidate.decisionStatus === "approved_by_ap";
+  return candidate.decisionStatus === "approved_by_ap" && candidate.certificationStatus === "passed";
 }

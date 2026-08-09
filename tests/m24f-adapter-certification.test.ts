@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import { isApApprovedAdapterCandidateV1 } from "../packages/shared/src/physicalTelemetry/m24fContracts";
 import {
   M24F_CERTIFICATION_COMMAND,
   REFERENCE_VENDOR_ADAPTER_ID,
@@ -93,6 +94,19 @@ describe("M24F synthetic adapter certification", () => {
     expect(REFERENCE_VENDOR_CAPABILITY_MANIFEST_V1.authentication.serverOnlySecretRequired).toBe(true);
     expect(REFERENCE_VENDOR_CAPABILITY_MANIFEST_V1.syntheticState).toBe("synthetic_only");
     expect(REFERENCE_VENDOR_CAPABILITY_MANIFEST_V1.certificationLevel).toBe("synthetic_conformance");
+  });
+
+  it("requires both the AP decision and current passing certification for authority", () => {
+    expect(isApApprovedAdapterCandidateV1({ decisionStatus: "approved_by_ap", certificationStatus: "passed" })).toBe(true);
+    expect(isApApprovedAdapterCandidateV1({ decisionStatus: "approved_by_ap", certificationStatus: "failed" })).toBe(false);
+    expect(isApApprovedAdapterCandidateV1({ decisionStatus: "approved_by_ap", certificationStatus: "expired" })).toBe(false);
+    expect(isApApprovedAdapterCandidateV1({ decisionStatus: "technically_compatible", certificationStatus: "passed" })).toBe(false);
+
+    const closure = readFileSync("supabase/migrations/20260808140000_m24f_m25_authority_readiness_closure.sql", "utf8");
+    expect(closure).toContain("after insert on public.m24f_certification_runs");
+    expect(closure).toContain("new.certification_state not in ('failed','expired')");
+    expect(closure).toContain("v_previous='approved_by_ap'");
+    expect(closure).toContain("new_status,actor_admin_id,reason,safe_note,manifest_id,certification_run_id");
   });
 
   it("requires current, nonvacuous certification evidence for approval", () => {

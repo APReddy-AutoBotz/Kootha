@@ -6,7 +6,7 @@
 
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(80);
+select plan(84);
 
 select has_function('public','m25_enqueue_feature_scope_v1',array['text','text','timestamp with time zone','timestamp with time zone','uuid','uuid','text','text','boolean'],'bounded M25 enqueue RPC exists');
 select has_function('public','m25_process_statistical_queue',array['integer','timestamp with time zone'],'bounded M25 queue RPC exists');
@@ -286,6 +286,19 @@ select throws_ok(
   '55000','A matching review of the newest authoritative evaluation is required before promotion',
   'a newer authoritative evaluation makes the old matching review non-promotable');
 reset role;
+
+select ok(regexp_replace(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure),'[[:space:]]','','g')
+  ilike '%fs.scope=''device_model_day''%fs.device_modelisnotnull%',
+  'non-model scopes cannot advance device-model-day readiness');
+select ok(regexp_replace(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure),'[[:space:]]','','g')
+  ilike '%fs.scope=''device_work_day''%exists%observation_status=''observed''%sample_count>0%coverage_score>0%',
+  'empty work-day generations cannot advance reviewed-session readiness');
+select ok(regexp_replace(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure),'[[:space:]]','','g')
+  ilike '%count(distinct(fs.scope_key_hash,fs.period_start,fs.period_end))%',
+  'qualifying authoritative work-day evidence counts once per stable session identity');
+select ok(regexp_replace(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure),'[[:space:]]','','g')
+  ilike '%newer.generation>fs.generation%',
+  'replayed and corrected readiness evidence remains deduplicated to the authoritative generation');
 
 select * from finish();
 rollback;
