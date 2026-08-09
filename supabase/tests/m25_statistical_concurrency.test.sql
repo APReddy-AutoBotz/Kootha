@@ -51,8 +51,10 @@ select ok(pg_get_functiondef('public.m25_enqueue_feature_scope_v1(text,text,time
   and pg_get_functiondef('public.m25_enqueue_feature_scope_v1(text,text,timestamptz,timestamptz,uuid,uuid,text,text,boolean)'::regprocedure) ilike '%c.last_seen_at%'
   and pg_get_functiondef('public.m25_enqueue_feature_scope_v1(text,text,timestamptz,timestamptz,uuid,uuid,text,text,boolean)'::regprocedure) ilike '%c.incoming_content_hash%',
   'input watermark binds exact scoped identity-conflict evidence');
-select ok(pg_get_functiondef('public.m25_enqueue_feature_scope_v1(text,text,timestamptz,timestamptz,uuid,uuid,text,text,boolean)'::regprocedure)
-  ilike '%r.captured_at >= p_period_start%r.captured_at < p_period_end%',
+select ok(regexp_replace(
+    pg_get_functiondef('public.m25_enqueue_feature_scope_v1(text,text,timestamptz,timestamptz,uuid,uuid,text,text,boolean)'::regprocedure),
+    '[[:space:]]','','g'
+  ) ilike '%r.captured_at>=p_period_start%r.captured_at<p_period_end%',
   'late conflict evidence is assigned to the original receipt capture period');
 select ok(pg_get_functiondef('public.m25_enqueue_feature_scope_v1(text,text,timestamptz,timestamptz,uuid,uuid,text,text,boolean)'::regprocedure)
   not ilike '%c.first_seen_at >= p_period_start%',
