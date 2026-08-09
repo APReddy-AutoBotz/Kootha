@@ -216,11 +216,12 @@ create extension if not exists dblink with schema extensions;
 select dblink_connect_u('m25_eval_writer','dbname=postgres');
 select dblink_connect_u('m25_promoter','dbname=postgres');
 select dblink_send_query('m25_eval_writer',$race$
-  begin;
-  select public.m25_signal_authority_lock_v1('rejection_rate_shift',repeat('9',64),true)::text;
-  select pg_sleep(1.5)::text;
-  commit;
-  select 1;
+  with authority_lock as materialized (
+    select public.m25_signal_authority_lock_v1('rejection_rate_shift',repeat('9',64),true)
+  ), lock_pause as materialized (
+    select pg_sleep(1.5) from authority_lock
+  )
+  select 1 from lock_pause;
 $race$);
 do $wait_for_evaluation_lock$
 declare n integer:=0;
@@ -232,21 +233,15 @@ begin
 end
 $wait_for_evaluation_lock$;
 select dblink_send_query('m25_promoter',$race$
-  begin;
-  select public.m25_signal_authority_lock_v1('rejection_rate_shift',repeat('9',64),true)::text;
-  commit;
-  select 1;
+  with authority_lock as materialized (
+    select public.m25_signal_authority_lock_v1('rejection_rate_shift',repeat('9',64),true)
+  )
+  select 1 from authority_lock;
 $race$);
 select pg_sleep(0.2);
 select is(dblink_is_busy('m25_promoter'),1,
   'promotion waits while an authoritative evaluation transaction is committing');
-select * from dblink_get_result('m25_eval_writer') as r(lock_result text);
-select * from dblink_get_result('m25_eval_writer') as r(slept text);
-select * from dblink_get_result('m25_eval_writer') as r(committed text);
 select * from dblink_get_result('m25_eval_writer') as r(done integer);
-select * from dblink_get_result('m25_promoter') as r(began text);
-select * from dblink_get_result('m25_promoter') as r(lock_result text);
-select * from dblink_get_result('m25_promoter') as r(committed text);
 select is((select done from dblink_get_result('m25_promoter') as r(done integer)),1,
   'promotion proceeds only after current evaluation authority is visible');
 select is(dblink_disconnect('m25_eval_writer'),'OK','evaluation concurrency session closes');
