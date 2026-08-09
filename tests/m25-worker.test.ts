@@ -42,6 +42,15 @@ describe("M25 bounded statistical worker", () => {
     expect(closure).not.toContain("count(distinct fs.id) filter(where fs.scope='device_work_day')");
   });
 
+  it("watermarks conflict evidence and resets retries per generation", () => {
+    const closure = readFileSync("supabase/migrations/20260808050000_m24f_m25_watermark_privacy_retry_closure.sql", "utf8");
+    for (const evidence of ["telemetry_identity_conflicts", "c.incoming_content_hash", "c.last_seen_at", "c.attempt_count::text"]) {
+      expect(closure).toContain(evidence);
+    }
+    expect(closure).toContain("attempt_count=case when public.m25_feature_extraction_jobs.input_watermark<>excluded.input_watermark");
+    expect(closure).toContain("safe_failure_reason_code=case when public.m25_feature_extraction_jobs.input_watermark<>excluded.input_watermark");
+  });
+
   it("uses bounded queue waves and count-only output", async () => {
     const calls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {

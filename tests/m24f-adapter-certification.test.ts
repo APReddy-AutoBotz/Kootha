@@ -36,6 +36,16 @@ describe("M24F synthetic adapter certification", () => {
     expect(authoritativeClosure).not.toMatch(/\\u[0-9a-f]{4}/i);
     expect(authoritativeClosure).toContain("chr(1) || '-' || chr(8)");
     expect(authoritativeClosure).toContain("chr(11) || chr(12) || chr(14) || '-' || chr(31)");
+
+    const finalClosure = readFileSync("supabase/migrations/20260808050000_m24f_m25_watermark_privacy_retry_closure.sql", "utf8");
+    expect(finalClosure).toContain("chr(127) || '-' || chr(159)");
+    expect(finalClosure).not.toMatch(/\\u[0-9a-f]{4}/i);
+  });
+
+  it("rejects pathless hostname endpoints and extended control characters", () => {
+    const closure = readFileSync("supabase/migrations/20260808050000_m24f_m25_watermark_privacy_retry_closure.sql", "utf8");
+    expect(closure).toContain("[a-z]{2,}(:[0-9]{1,5})?(/[^[:space:]]*)?");
+    expect(closure).toContain("chr(127) || '-' || chr(159)");
   });
 
   it("closes hostname endpoint and certification-scenario append channels", () => {

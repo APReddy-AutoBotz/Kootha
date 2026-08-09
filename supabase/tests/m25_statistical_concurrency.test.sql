@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(34);
+select plan(38);
 
 select has_function('public','m25_enqueue_feature_scope_v1',array['text','text','timestamp with time zone','timestamp with time zone','uuid','uuid','text','text','boolean'],'bounded M25 enqueue RPC exists');
 select has_function('public','m25_process_statistical_queue',array['integer','timestamp with time zone'],'bounded M25 queue RPC exists');
@@ -46,6 +46,39 @@ select is((select count(*)::integer from public.m25_feature_snapshots where scop
 select is((select count(*)::integer from public.m25_feature_snapshots latest join public.m25_feature_snapshots prior on prior.id=latest.supersedes_snapshot_id where latest.scope_key_hash=repeat('e',64) and latest.generation=2 and prior.generation=1),1,'corrected snapshot explicitly supersedes its prior generation');
 select is((select count(*)::integer from public.m25_feature_snapshots fs where fs.scope_key_hash=repeat('e',64) and fs.synthetic and not exists(select 1 from public.m25_feature_snapshots newer where newer.scope=fs.scope and newer.scope_key_hash=fs.scope_key_hash and newer.period_start=fs.period_start and newer.period_end=fs.period_end and newer.feature_version=fs.feature_version and newer.synthetic=fs.synthetic and newer.generation>fs.generation)),1,'only one generation is authoritative for a scope-period');
 select is((select max(reviewed_work_day_sessions) from public.m25_readiness_assessments where source_snapshot_id in (select id from public.m25_feature_snapshots where scope_key_hash=repeat('e',64))),0,'corrected non-work-day snapshots cannot inflate work-day session readiness');
+
+select ok(pg_get_functiondef('public.m25_enqueue_feature_scope_v1(text,text,timestamptz,timestamptz,uuid,uuid,text,text,boolean)'::regprocedure) ilike '%telemetry_identity_conflicts%'
+  and pg_get_functiondef('public.m25_enqueue_feature_scope_v1(text,text,timestamptz,timestamptz,uuid,uuid,text,text,boolean)'::regprocedure) ilike '%c.last_seen_at%'
+  and pg_get_functiondef('public.m25_enqueue_feature_scope_v1(text,text,timestamptz,timestamptz,uuid,uuid,text,text,boolean)'::regprocedure) ilike '%c.incoming_content_hash%',
+  'input watermark binds exact scoped identity-conflict evidence');
+
+-- Prove that successful generations do not consume a lifetime retry budget.
+select lives_ok($$
+do $generations$
+declare n integer;
+begin
+  perform public.m25_enqueue_feature_scope_v1('fleet_day',repeat('c',64),'2026-08-09','2026-08-10',null,null,null,null,true);
+  for n in 2..10 loop
+    update public.m25_feature_extraction_jobs set state='completed',attempt_count=1,
+      input_watermark=repeat(substr('0123456789abcdef',n,1),64)
+    where scope_key_hash=repeat('c',64) and synthetic;
+    perform public.m25_enqueue_feature_scope_v1('fleet_day',repeat('c',64),'2026-08-09','2026-08-10',null,null,null,null,true);
+  end loop;
+end
+$generations$;
+$$,'more than eight successive changed generations can be enqueued');
+select ok((select generation=10 and state='pending' and attempt_count=0 and safe_failure_reason_code is null
+  from public.m25_feature_extraction_jobs where scope_key_hash=repeat('c',64) and synthetic),
+  'each changed generation receives a fresh bounded retry budget');
+
+update public.m25_feature_extraction_jobs set state='failed',attempt_count=8,
+  safe_failure_reason_code='attempts_exhausted',input_watermark=repeat('f',64)
+where scope_key_hash=repeat('c',64) and synthetic;
+select lives_ok($$select public.m25_enqueue_feature_scope_v1('fleet_day',repeat('c',64),'2026-08-09','2026-08-10',null,null,null,null,true)$$,
+  'a changed watermark revives an exhausted prior generation');
+select ok((select generation=11 and state='pending' and attempt_count=0 and safe_failure_reason_code is null
+  from public.m25_feature_extraction_jobs where scope_key_hash=repeat('c',64) and synthetic),
+  'exhausted failure state does not strand corrected evidence');
 
 select * from finish();
 rollback;

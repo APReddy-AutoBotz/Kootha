@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(59);
+select plan(65);
 
 select has_table('public','m24f_adapter_capability_manifests','M24F capability manifests exist');
 select has_table('public','m24f_adapter_candidates','M24F candidates exist');
@@ -76,6 +76,12 @@ select ok(pg_get_functiondef('public.admin_list_m22_alerts_v1(text,text,text,tex
 
 select ok(not public.m24f_is_safe_metadata('hooks.vendor.example/v1/ingest'),'scheme-less hostname paths are rejected');
 select ok(not public.m24f_is_safe_metadata('api.vendor.example:8443/hook'),'scheme-less hostname ports are rejected');
+select ok(not public.m24f_is_safe_metadata('hooks.vendor.example'),'bare scheme-less hostname endpoints are rejected');
+select ok(not public.m24f_is_safe_metadata('api.vendor.example:8443'),'bare scheme-less hostname ports are rejected');
+select ok(public.m24f_is_safe_metadata('Vendor compatibility is documented.'),'ordinary dotted-free prose remains accepted');
+select ok(not public.m24f_is_safe_metadata('audit' || chr(127) || 'suffix'),'DEL is rejected from safe metadata');
+select ok(not public.m24f_is_safe_metadata('audit' || chr(128) || 'suffix'),'C1 range start is rejected from safe metadata');
+select ok(not public.m24f_is_safe_metadata('audit' || chr(159) || 'suffix'),'C1 range end is rejected from safe metadata');
 select ok(public.m24f_is_safe_metadata('Webhook direction is inbound only.'),'bounded declarative webhook metadata remains accepted');
 select ok(pg_get_functiondef('public.admin_record_m24f_certification_scenarios_v1(uuid,text[],text[],boolean[],text[])'::regprocedure) ilike '%v_existing>=v_declared%' and exists(select 1 from pg_trigger where tgname='m24f_certification_scenario_immutability' and not tgisinternal),'certification scenario evidence closes at its declared count');
 select ok(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure) ilike '%newer.generation>fs.generation%','baselines and readiness use authoritative snapshot generations');
