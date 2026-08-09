@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(67);
+select plan(80);
 
 select has_function('public','m25_enqueue_feature_scope_v1',array['text','text','timestamp with time zone','timestamp with time zone','uuid','uuid','text','text','boolean'],'bounded M25 enqueue RPC exists');
 select has_function('public','m25_process_statistical_queue',array['integer','timestamp with time zone'],'bounded M25 queue RPC exists');
@@ -185,6 +185,102 @@ select ok(
   pg_get_functiondef('public.admin_promote_m25_signal_to_alert_v1(uuid,text,text)'::regprocedure)
     ilike '%h.evaluation_id=s.evaluation_id%',
   'promotion requires a matching immutable review for the newest current evaluation');
+
+select has_function('public','m25_signal_authority_lock_v1',array['text','text','boolean'],
+  'shared M25 signal authority lock exists');
+select has_trigger('public','m25_signal_evaluations','m25_evaluation_authority_serialization',
+  'authoritative evaluation writes acquire the shared episode lock');
+select ok(
+  pg_get_functiondef('public.admin_promote_m25_signal_to_alert_v1(uuid,text,text)'::regprocedure)
+    ilike '%perform public.m25_signal_authority_lock_v1(s.signal_id,s.scope_key_hash,s.synthetic)%select * into s from public.m25_statistical_signals where id=p_signal_id for update%',
+  'promotion acquires episode serialization before locking and re-reading the signal');
+select ok(
+  pg_get_functiondef('public.admin_promote_m25_signal_to_alert_v1(uuid,text,text)'::regprocedure)
+    ilike '%current_evaluation.evaluation_id=s.evaluation_id%current_evaluation.source_generation=s.source_generation%',
+  'promotion requires the exact current authoritative evaluation after serialization');
+
+-- Executable two-session evidence for the reviewed-evidence race. Evaluation
+-- publication holds the same transaction lock promotion must acquire, so the
+-- promotion-side authority check cannot run until the newer evaluation commits.
+create extension if not exists dblink with schema extensions;
+select dblink_connect_u('m25_eval_writer','dbname=postgres');
+select dblink_connect_u('m25_promoter','dbname=postgres');
+select dblink_send_query('m25_eval_writer',$race$
+  begin;
+  select public.m25_signal_authority_lock_v1('rejection_rate_shift',repeat('9',64),true)::text;
+  select pg_sleep(1.5)::text;
+  commit;
+  select 1;
+$race$);
+do $wait_for_evaluation_lock$
+declare n integer:=0;
+begin
+  while not exists(select 1 from pg_catalog.pg_locks where locktype='advisory' and granted and pid<>pg_backend_pid()) loop
+    perform pg_sleep(0.05); n:=n+1;
+    if n>40 then raise exception 'evaluation authority lock was not acquired'; end if;
+  end loop;
+end
+$wait_for_evaluation_lock$;
+select dblink_send_query('m25_promoter',$race$
+  begin;
+  select public.m25_signal_authority_lock_v1('rejection_rate_shift',repeat('9',64),true)::text;
+  commit;
+  select 1;
+$race$);
+select pg_sleep(0.2);
+select is(dblink_is_busy('m25_promoter'),1,
+  'promotion waits while an authoritative evaluation transaction is committing');
+select * from dblink_get_result('m25_eval_writer') as r(lock_result text);
+select * from dblink_get_result('m25_eval_writer') as r(slept text);
+select * from dblink_get_result('m25_eval_writer') as r(committed text);
+select * from dblink_get_result('m25_eval_writer') as r(done integer);
+select * from dblink_get_result('m25_promoter') as r(began text);
+select * from dblink_get_result('m25_promoter') as r(lock_result text);
+select * from dblink_get_result('m25_promoter') as r(committed text);
+select is((select done from dblink_get_result('m25_promoter') as r(done integer)),1,
+  'promotion proceeds only after current evaluation authority is visible');
+select is(dblink_disconnect('m25_eval_writer'),'OK','evaluation concurrency session closes');
+select is(dblink_disconnect('m25_promoter'),'OK','promotion concurrency session closes');
+
+-- Positive and fail-closed authority cases use real admin RPCs. The current
+-- evaluation must be reviewed; an immutable review of a superseded evaluation
+-- remains history but cannot authorize an alert.
+insert into public.user_profiles(auth_user_id,display_name,role)
+values('25000000-0000-0000-0000-000000000013','M25 Serialization Admin','admin');
+insert into public.m25_signal_evaluations(evaluation_id,signal_id,scope_key_hash,synthetic,period_end,state,anomalous,baseline_version,source_generation)
+values
+  (repeat('1',64),'rejection_rate_shift',repeat('7',64),true,'2026-08-13 00:00+00','watch',true,'serialization-current-v1',1),
+  (repeat('2',64),'rejection_rate_shift',repeat('8',64),true,'2026-08-13 00:00+00','watch',true,'serialization-stale-v1',1);
+insert into public.m25_statistical_signals(id,signal_id,signal_episode_id,metric,scope,scope_key_hash,direction,state,observed_value,baseline_median,baseline_mad,fallback_statistic,robust_score,sample_count,support_level,coverage_score,baseline_version,explanation_code,rule_fallback,synthetic,generated_at,evaluation_id,source_generation)
+values
+  ('25000000-0000-0000-0000-000000000071','rejection_rate_shift','serialization-current','rejection_rate','fleet_day',repeat('7',64),'high_bad','watch',0.5,0.1,0.1,'mad',3.1,8,'synthetic_only',1,'serialization-current-v1','rejection_rate_shift','Admin review only.',true,'2026-08-13 00:00+00',repeat('1',64),1),
+  ('25000000-0000-0000-0000-000000000072','rejection_rate_shift','serialization-stale','rejection_rate','fleet_day',repeat('8',64),'high_bad','watch',0.5,0.1,0.1,'mad',3.1,8,'synthetic_only',1,'serialization-stale-v1','rejection_rate_shift','Admin review only.',true,'2026-08-13 00:00+00',repeat('2',64),1);
+
+set local role authenticated;
+select set_config('request.jwt.claims',json_build_object('sub','25000000-0000-0000-0000-000000000013')::text,true);
+select throws_ok(
+  $$select public.admin_promote_m25_signal_to_alert_v1('25000000-0000-0000-0000-000000000071','serialization gate','Current evaluation requires review.')$$,
+  '55000','A matching review of the newest authoritative evaluation is required before promotion',
+  'an unreviewed current evaluation cannot be promoted');
+select lives_ok(
+  $$select public.admin_transition_m25_signal_review_v1('25000000-0000-0000-0000-000000000071','reviewed','confirmed_operational_issue','serialization review','Current evaluation reviewed.')$$,
+  'the current authoritative evaluation can receive an immutable review');
+select lives_ok(
+  $$select public.admin_promote_m25_signal_to_alert_v1('25000000-0000-0000-0000-000000000071','serialization promotion','Current reviewed evaluation promoted.')$$,
+  'promotion succeeds after the exact current evaluation is reviewed');
+select lives_ok(
+  $$select public.admin_transition_m25_signal_review_v1('25000000-0000-0000-0000-000000000072','reviewed','confirmed_operational_issue','stale review','Original evaluation reviewed.')$$,
+  'the older evaluation review is retained immutably');
+reset role;
+insert into public.m25_signal_evaluations(evaluation_id,signal_id,scope_key_hash,synthetic,period_end,state,anomalous,baseline_version,source_generation)
+values(repeat('3',64),'rejection_rate_shift',repeat('8',64),true,'2026-08-14 00:00+00','watch',true,'serialization-newer-v2',2);
+set local role authenticated;
+select set_config('request.jwt.claims',json_build_object('sub','25000000-0000-0000-0000-000000000013')::text,true);
+select throws_ok(
+  $$select public.admin_promote_m25_signal_to_alert_v1('25000000-0000-0000-0000-000000000072','stale promotion','Superseded evaluation must fail closed.')$$,
+  '55000','A matching review of the newest authoritative evaluation is required before promotion',
+  'a newer authoritative evaluation makes the old matching review non-promotable');
+reset role;
 
 select * from finish();
 rollback;

@@ -122,6 +122,18 @@ describe("M25 bounded statistical worker", () => {
     expect(closure).toContain("h.evaluation_id=s.evaluation_id");
   });
 
+  it("serializes promotion with authoritative evaluation publication", () => {
+    const closure = readFileSync("supabase/migrations/20260808130000_m25_promotion_evaluation_serialization.sql", "utf8");
+    expect(closure).toContain("before insert or update on public.m25_signal_evaluations");
+    expect(closure).toContain("m25_signal_authority_lock_v1(new.signal_id,new.scope_key_hash,new.synthetic)");
+    expect(closure).toContain("perform public.m25_signal_authority_lock_v1(s.signal_id,s.scope_key_hash,s.synthetic)");
+    expect(closure.indexOf("perform public.m25_signal_authority_lock_v1(s.signal_id,s.scope_key_hash,s.synthetic)")).toBeLessThan(
+      closure.indexOf("where id=p_signal_id for update"),
+    );
+    expect(closure).toContain("current_evaluation.evaluation_id=s.evaluation_id");
+    expect(closure).toContain("newer.source_generation>s.source_generation");
+  });
+
   it("uses bounded queue waves and count-only output", async () => {
     const calls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
