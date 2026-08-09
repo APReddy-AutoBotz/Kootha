@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(53);
+select plan(57);
 
 select has_function('public','m25_enqueue_feature_scope_v1',array['text','text','timestamp with time zone','timestamp with time zone','uuid','uuid','text','text','boolean'],'bounded M25 enqueue RPC exists');
 select has_function('public','m25_process_statistical_queue',array['integer','timestamp with time zone'],'bounded M25 queue RPC exists');
@@ -124,6 +124,21 @@ select is(public.m25_signal_state_v1(2.5,3,2,'watch',2,2,true),'normal',
   'only the prior investigating state retains hysteresis');
 select is(public.m25_signal_state_v1(3,3,2,'investigate',2,2,false),'insufficient_data',
   'support gates remain authoritative before hysteresis');
+
+select ok(
+  regexp_replace(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure),'[[:space:]]','','g')
+    ilike '%select*intostrictjfrompublic.m25_feature_extraction_jobswhereid=j.idforupdate;%updatepublic.m25_feature_extraction_jobssetstate='processing'%select*intostrictjfrompublic.m25_feature_extraction_jobswhereid=j.id;%',
+  'each batched job reloads its authoritative live generation and correction marker before artifact construction');
+select ok(
+  pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
+    ilike '%from public.m25_signal_evaluations prior%prior.period_end<j.period_end%order by prior.period_end desc,prior.source_generation desc%',
+  'hysteresis reads the latest authoritative evaluation before the current period');
+select ok(
+  pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
+    not ilike '%select sig.state into v_previous_state from public.m25_statistical_signals sig%',
+  'an invalidated current signal row cannot supply historical hysteresis state');
+select is(public.m25_signal_state_v1(2.5,3,2,'investigate',2,2,true),'watch',
+  'P1-to-P2-to-P3 reconstruction preserves watch inside hysteresis after a prior investigating period');
 
 select * from finish();
 rollback;

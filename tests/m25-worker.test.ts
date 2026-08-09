@@ -94,6 +94,16 @@ describe("M25 bounded statistical worker", () => {
     expect(closure).toContain("for update skip locked");
   });
 
+  it("re-reads same-batch claims and reconstructs prior-period hysteresis", () => {
+    const closure = readFileSync("supabase/migrations/20260808100000_m24f_m25_correction_propagation_closure.sql", "utf8");
+    expect(closure).toContain("select * into strict j from public.m25_feature_extraction_jobs where id=j.id for update");
+    expect(closure).toContain("select * into strict j from public.m25_feature_extraction_jobs where id=j.id;");
+    expect(closure).toContain("from public.m25_signal_evaluations prior");
+    expect(closure).toContain("prior.period_end<j.period_end");
+    expect(closure).toContain("order by prior.period_end desc,prior.source_generation desc");
+    expect(closure).not.toContain("select sig.state into v_previous_state from public.m25_statistical_signals sig");
+  });
+
   it("uses bounded queue waves and count-only output", async () => {
     const calls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
