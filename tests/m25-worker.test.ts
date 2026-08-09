@@ -84,6 +84,16 @@ describe("M25 bounded statistical worker", () => {
     expect(closure).not.toContain("order by next_attempt_at,created_at");
   });
 
+  it("preserves dirty correction cascades and matches deterministic hysteresis", () => {
+    const closure = readFileSync("supabase/migrations/20260808090000_m24f_m25_deterministic_correction_closure.sql", "utf8");
+    expect(closure).toContain("else authoritative_correction_pending end");
+    expect(closure).toContain("p_previous_state='investigate' and p_score>=p_clearing_threshold");
+    expect(closure).toContain("p_consecutive_windows<p_required_windows");
+    expect(closure).toContain("v_definition.opening_threshold,v_definition.clearing_threshold");
+    expect(closure).toContain("order by authoritative_correction_pending desc,period_end,period_start");
+    expect(closure).toContain("for update skip locked");
+  });
+
   it("uses bounded queue waves and count-only output", async () => {
     const calls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {

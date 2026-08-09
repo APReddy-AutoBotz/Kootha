@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(45);
+select plan(53);
 
 select has_function('public','m25_enqueue_feature_scope_v1',array['text','text','timestamp with time zone','timestamp with time zone','uuid','uuid','text','text','boolean'],'bounded M25 enqueue RPC exists');
 select has_function('public','m25_process_statistical_queue',array['integer','timestamp with time zone'],'bounded M25 queue RPC exists');
@@ -104,6 +104,26 @@ select ok(pg_get_functiondef('public.m25_process_statistical_queue(integer,times
   and pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
   ilike '%authoritative_correction_pending=true,dependency_cause_snapshot_id=s_id%',
   'multi-period corrections cascade one bounded authoritative period at a time');
+
+
+select ok(
+  replace(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure), E'\n', ' ')
+    ilike '%when generation=claimed_generation and not dirty_after_claim then false%else authoritative_correction_pending end%',
+  'dirty concurrent claims retain authoritative correction evidence for their corrected retry');
+select is(public.m25_signal_state_v1(1.99,3,2,'investigate',2,2,true),'normal',
+  'a prior investigating signal clears below the clearing threshold');
+select is(public.m25_signal_state_v1(2,3,2,'investigate',2,2,true),'watch',
+  'a prior investigating signal remains watch at the clearing threshold');
+select is(public.m25_signal_state_v1(2.5,3,2,'investigate',2,2,true),'watch',
+  'a prior investigating signal remains watch inside hysteresis');
+select is(public.m25_signal_state_v1(3,3,2,'normal',2,2,true),'investigate',
+  'the opening threshold investigates with required consecutive support');
+select is(public.m25_signal_state_v1(3,3,2,'normal',1,2,true),'watch',
+  'the opening threshold remains watch before consecutive support');
+select is(public.m25_signal_state_v1(2.5,3,2,'watch',2,2,true),'normal',
+  'only the prior investigating state retains hysteresis');
+select is(public.m25_signal_state_v1(3,3,2,'investigate',2,2,false),'insufficient_data',
+  'support gates remain authoritative before hysteresis');
 
 select * from finish();
 rollback;
