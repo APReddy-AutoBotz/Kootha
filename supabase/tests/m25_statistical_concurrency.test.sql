@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(43);
+select plan(45);
 
 select has_function('public','m25_enqueue_feature_scope_v1',array['text','text','timestamp with time zone','timestamp with time zone','uuid','uuid','text','text','boolean'],'bounded M25 enqueue RPC exists');
 select has_function('public','m25_process_statistical_queue',array['integer','timestamp with time zone'],'bounded M25 queue RPC exists');
@@ -94,6 +94,16 @@ select lives_ok($$select public.m25_enqueue_feature_scope_v1('fleet_day',repeat(
 select ok((select generation=11 and state='pending' and attempt_count=0 and safe_failure_reason_code is null
   from public.m25_feature_extraction_jobs where scope_key_hash=repeat('c',64) and synthetic),
   'exhausted failure state does not strand corrected evidence');
+
+
+select ok(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
+  ilike '%order by authoritative_correction_pending desc,period_end,period_start,next_attempt_at,created_at,id%',
+  'out-of-order enqueue timestamps cannot overtake chronological correction evidence');
+select ok(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
+  ilike '%later.period_end=(select min(next_period.period_end)%'
+  and pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
+  ilike '%authoritative_correction_pending=true,dependency_cause_snapshot_id=s_id%',
+  'multi-period corrections cascade one bounded authoritative period at a time');
 
 select * from finish();
 rollback;

@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(74);
+select plan(78);
 
 select has_table('public','m24f_adapter_capability_manifests','M24F capability manifests exist');
 select has_table('public','m24f_adapter_candidates','M24F candidates exist');
@@ -97,6 +97,12 @@ select is(round(public.m25_robust_score_v1(13,10,0,8,12,'high_bad'),8),round(0.6
 select ok(public.m25_robust_score_v1(13,10,0,8,12,'high_bad')>0.68 and public.m25_robust_score_v1(13,10,0,8,12,'high_bad')<0.69,'IQR fallback preserves deterministic threshold-boundary semantics');
 select ok(exists(select 1 from pg_trigger where tgname='m25_mark_authoritative_correction') and pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure) ilike '%dependency_cause_snapshot_id is distinct from s_id%','historical corrections requeue dependent later windows idempotently');
 select ok(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure) ilike '%sig.generated_at>j.period_end%' and pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure) ilike '%state=''insufficient_data''%','stale later signals are invalidated before dependent reevaluation');
+
+
+select ok(pg_get_functiondef('public.admin_record_m24f_certification_v1(uuid,text,text,text,text,integer,integer,text,text)'::regprocedure) ilike '%m24f_certification_recorded%' and pg_get_functiondef('public.admin_record_m24f_certification_v1(uuid,text,text,text,text,integer,integer,text,text)'::regprocedure) ilike '%certification_run_id%', 'certification recording emits central audit evidence bound to the exact run');
+select ok(pg_get_functiondef('public.admin_record_m24f_certification_v1(uuid,text,text,text,text,integer,integer,text,text)'::regprocedure) ilike '%m20a_require_admin%' and not has_function_privilege('anon','public.admin_record_m24f_certification_v1(uuid,text,text,text,text,integer,integer,text,text)','EXECUTE'), 'certification audit emission retains tenant admin authority');
+select ok(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure) ilike '%order by authoritative_correction_pending desc,period_end,period_start,next_attempt_at,created_at,id%', 'historical correction dependencies are claimed in chronological evidence order, independent of enqueue order');
+select ok(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure) ilike '%authoritative_correction_pending=true,dependency_cause_snapshot_id=s_id%' and pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure) ilike '%later.period_end=(select min(next_period.period_end)%', 'historical corrections propagate idempotently through each next affected period');
 
 select * from finish();
 rollback;

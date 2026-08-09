@@ -76,6 +76,14 @@ describe("M25 bounded statistical worker", () => {
     expect(closure).toContain("0.6745*(p_observed-p_median)");
   });
 
+  it("orders and cascades historical corrections by evidence period", () => {
+    const closure = readFileSync("supabase/migrations/20260808080000_m24f_m25_final_closure.sql", "utf8");
+    expect(closure).toContain("order by authoritative_correction_pending desc,period_end,period_start,next_attempt_at,created_at,id");
+    expect(closure).toContain("later.period_end=(select min(next_period.period_end)");
+    expect(closure).toContain("authoritative_correction_pending=true,dependency_cause_snapshot_id=s_id");
+    expect(closure).not.toContain("order by next_attempt_at,created_at");
+  });
+
   it("uses bounded queue waves and count-only output", async () => {
     const calls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
