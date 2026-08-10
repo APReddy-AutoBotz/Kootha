@@ -95,7 +95,17 @@ select ok(exists(select 1 from information_schema.columns where table_schema='pu
 select is(round(public.m25_robust_score_v1(13,10,2,8,12,'high_bad'),8),round(0.6745::numeric*3/2,8),'SQL MAD scoring uses the canonical robust factor');
 select is(round(public.m25_robust_score_v1(13,10,0,8,12,'high_bad'),8),round(0.6745::numeric*3/(4::numeric/1.349),8),'SQL IQR fallback uses IQR divided by 1.349 and the robust factor');
 select ok(public.m25_robust_score_v1(13,10,0,8,12,'high_bad')>0.68 and public.m25_robust_score_v1(13,10,0,8,12,'high_bad')<0.69,'IQR fallback preserves deterministic threshold-boundary semantics');
-select ok(exists(select 1 from pg_trigger where tgname='m25_mark_authoritative_correction') and pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure) ilike '%dependency_cause_snapshot_id is distinct from s_id%','historical corrections requeue dependent later windows idempotently');
+select ok(
+  exists(select 1 from pg_trigger where tgname='m25_mark_authoritative_correction')
+  and regexp_replace(
+    pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure),
+    '[[:space:]]','','g'
+  ) ilike '%v_dependency_snapshot_id:=coalesce(j.dependency_cause_snapshot_id,s_id)%'
+  and regexp_replace(
+    pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure),
+    '[[:space:]]','','g'
+  ) ilike '%later.dependency_cause_snapshot_idisdistinctfromv_dependency_snapshot_id%',
+  'historical corrections requeue dependent later windows idempotently');
 select ok(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure) ilike '%sig.generated_at>j.period_end%' and pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure) ilike '%state=''insufficient_data''%','stale later signals are invalidated before dependent reevaluation');
 
 

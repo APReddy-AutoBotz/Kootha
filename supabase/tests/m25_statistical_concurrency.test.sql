@@ -142,7 +142,9 @@ select is(public.m25_signal_state_v1(3,3,2,'investigate',2,2,false),'insufficien
 
 select ok(
   regexp_replace(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure),'[[:space:]]','','g')
-    ilike '%select*intostrictjfrompublic.m25_feature_extraction_jobswhereid=j.idforupdate;%updatepublic.m25_feature_extraction_jobssetstate=''processing''%select*intostrictjfrompublic.m25_feature_extraction_jobswhereid=j.id;%',
+    ilike '%pg_advisory_xact_lock%selectlive.*intojfrompublic.m25_feature_extraction_jobslive%orderbylive.authoritative_correction_pendingdesc,live.period_end,live.period_start%forupdateskiplockedlimit1;%'
+  and regexp_replace(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure),'[[:space:]]','','g')
+    ilike '%updatepublic.m25_feature_extraction_jobssetstate=''processing''%claimed_generation=generation%whereid=j.id;select*intostrictjfrompublic.m25_feature_extraction_jobswhereid=j.id;%',
   'each batched job reloads its authoritative live generation and correction marker before artifact construction');
 select ok(
   pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
