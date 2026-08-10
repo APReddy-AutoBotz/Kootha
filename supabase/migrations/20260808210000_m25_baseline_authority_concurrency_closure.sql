@@ -1,6 +1,18 @@
 -- Serialize cohort evaluation and propagate corrected fallback authority to every
 -- compatible downstream consumer. The selector remains prior-only and deterministic.
 
+create or replace function public.m25_mark_authoritative_correction_v1() returns trigger
+language plpgsql set search_path=pg_catalog,public as $$
+begin
+  if old.input_watermark is distinct from new.input_watermark then
+    new.authoritative_correction_pending:=true;
+    -- A direct input correction starts a new dependency generation. Propagated
+    -- retries do not change the watermark and retain their root snapshot identity.
+    new.dependency_cause_snapshot_id:=null;
+  end if;
+  return new;
+end $$;
+
 create or replace function public.m25_select_prior_baseline_v1(
   p_metric text, p_source_kind text, p_scope text, p_scope_key_hash text,
   p_device_model text, p_adapter_version text, p_synthetic boolean,
@@ -71,21 +83,26 @@ declare
   v_value numeric; v_median numeric; v_mad numeric; v_p25 numeric; v_p75 numeric; v_min numeric; v_max numeric; v_score numeric;
   v_baseline_count integer; v_coverage_count integer; v_state text; v_fallback text; v_support text; v_baseline_version text;
   v_evaluation_id text; v_anomalous boolean; v_consecutive integer; v_superseded_snapshot_id uuid; v_previous_state text;
+  v_dependency_snapshot_id uuid; v_dependency_scope text; v_dependency_scope_key_hash text;
+  v_dependency_device_model text; v_dependency_adapter_version text;
   v_claimed integer:=0; v_built integer:=0; v_baselines integer:=0; v_signals integer:=0; v_readiness integer:=0; v_retries integer:=0; v_rows integer;
 begin
   if p_batch_size not between 1 and 200 then raise exception 'Invalid bounded M25 queue request' using errcode = '22023'; end if;
-  for j in select * from public.m25_feature_extraction_jobs where state in ('pending','processing') and next_attempt_at <= p_now and attempt_count < 8 and (state='pending' or locked_at < p_now - interval '5 minutes') order by authoritative_correction_pending desc,period_end,period_start,next_attempt_at,created_at,id for update skip locked limit p_batch_size loop
-    -- The cursor materializes row values for the batch. An earlier correction can
-    -- advance a later locked job before its iteration, so reload its live generation
-    -- and correction marker before claiming or deriving any artifact.
-    select * into strict j from public.m25_feature_extraction_jobs where id=j.id for update;
-    -- Initial periods for one exact cohort must publish in chronological order even
-    -- when separate SKIP LOCKED workers claim later rows. The transaction advisory
-    -- lock is acquired after the chronologically first row lock, so later claims wait
-    -- until all prior snapshot/baseline/evaluation writes are committed.
+  for j in select * from public.m25_feature_extraction_jobs where state in ('pending','processing') and next_attempt_at <= p_now and attempt_count < 8 and (state='pending' or locked_at < p_now - interval '5 minutes') order by authoritative_correction_pending desc,period_end,period_start,next_attempt_at,created_at,id limit p_batch_size loop
+    -- Serialize before taking a queue-row lock. A concurrent worker that saw a later
+    -- row for this cohort must wait here, then claim the chronologically earliest live
+    -- row after the preceding snapshot/evaluation transaction commits.
     perform pg_catalog.pg_advisory_xact_lock(
       pg_catalog.hashtextextended(concat_ws('|','m25-cohort-evaluation-v1',j.scope,j.scope_key_hash,j.synthetic::text),0)
     );
+    select live.* into j
+    from public.m25_feature_extraction_jobs live
+    where live.scope=j.scope and live.scope_key_hash=j.scope_key_hash and live.synthetic=j.synthetic
+      and live.state in ('pending','processing') and live.next_attempt_at<=p_now and live.attempt_count<8
+      and (live.state='pending' or live.locked_at<p_now-interval '5 minutes')
+    order by live.authoritative_correction_pending desc,live.period_end,live.period_start,live.next_attempt_at,live.created_at,live.id
+    for update skip locked limit 1;
+    if not found then continue; end if;
     v_claimed:=v_claimed+1;
     update public.m25_feature_extraction_jobs set state='processing', attempt_count=attempt_count+1, claimed_generation=generation, locked_at=p_now, updated_at=clock_timestamp() where id=j.id;
     select * into strict j from public.m25_feature_extraction_jobs where id=j.id;
@@ -248,21 +265,36 @@ begin
       get diagnostics v_rows=row_count; v_readiness:=v_readiness+v_rows;
 
       -- A corrected broader baseline cohort can invalidate exact and fallback
-      -- consumers. Requeue every compatible later window (bounded to 1000) and
+      -- consumers. Requeue only the next compatible authoritative period and
+      -- let that rebuilt period carry the correction forward. This bounds each
+      -- processing cycle while retaining the root dependency identity.
       -- invalidate its mutable signal projection immediately, including reviewed or
       -- suppressed rows, so stale evidence cannot remain promotable.
       if j.authoritative_correction_pending then
+        v_dependency_snapshot_id:=coalesce(j.dependency_cause_snapshot_id,s_id);
+        select root_job.scope,root_job.scope_key_hash,root_job.device_model,root_job.adapter_version
+          into v_dependency_scope,v_dependency_scope_key_hash,v_dependency_device_model,v_dependency_adapter_version
+        from public.m25_feature_snapshots root_snapshot
+        join public.m25_feature_extraction_jobs root_job
+          on root_job.scope=root_snapshot.scope and root_job.scope_key_hash=root_snapshot.scope_key_hash
+          and root_job.period_start=root_snapshot.period_start and root_job.period_end=root_snapshot.period_end
+          and root_job.synthetic=root_snapshot.synthetic
+        where root_snapshot.id=v_dependency_snapshot_id;
+        if not found then
+          v_dependency_scope:=j.scope; v_dependency_scope_key_hash:=j.scope_key_hash;
+          v_dependency_device_model:=j.device_model; v_dependency_adapter_version:=j.adapter_version;
+        end if;
         if (select count(*) from public.m25_feature_extraction_jobs later
             where later.synthetic=j.synthetic and later.period_end>j.period_end
               and (
-                (later.scope=j.scope and later.scope_key_hash=j.scope_key_hash)
-                or (j.scope='device_model_day' and j.device_model is not null
-                  and later.device_model=j.device_model
-                  and (j.adapter_version is null or later.adapter_version=j.adapter_version))
-                or (j.scope='adapter_version_day' and j.adapter_version is not null
-                  and later.adapter_version=j.adapter_version
-                  and (j.device_model is null or later.device_model=j.device_model))
-                or (j.scope='fleet_day' and j.device_model is null and j.adapter_version is null)
+                (later.scope=v_dependency_scope and later.scope_key_hash=v_dependency_scope_key_hash)
+                or (v_dependency_scope='device_model_day' and v_dependency_device_model is not null
+                  and later.device_model=v_dependency_device_model
+                  and (v_dependency_adapter_version is null or later.adapter_version=v_dependency_adapter_version))
+                or (v_dependency_scope='adapter_version_day' and v_dependency_adapter_version is not null
+                  and later.adapter_version=v_dependency_adapter_version
+                  and (v_dependency_device_model is null or later.device_model=v_dependency_device_model))
+                or (v_dependency_scope='fleet_day' and v_dependency_device_model is null and v_dependency_adapter_version is null)
               )) > 1000 then
           raise exception 'M25 historical correction exceeds bounded fallback dependency window' using errcode='54000';
         end if;
@@ -275,14 +307,14 @@ begin
             where consumer.scope_key_hash=sig.scope_key_hash and consumer.synthetic=sig.synthetic
               and consumer.period_end=sig.generated_at
               and (
-                (consumer.scope=j.scope and consumer.scope_key_hash=j.scope_key_hash)
-                or (j.scope='device_model_day' and j.device_model is not null
-                  and consumer.device_model=j.device_model
-                  and (j.adapter_version is null or consumer.adapter_version=j.adapter_version))
-                or (j.scope='adapter_version_day' and j.adapter_version is not null
-                  and consumer.adapter_version=j.adapter_version
-                  and (j.device_model is null or consumer.device_model=j.device_model))
-                or (j.scope='fleet_day' and j.device_model is null and j.adapter_version is null)
+                (consumer.scope=v_dependency_scope and consumer.scope_key_hash=v_dependency_scope_key_hash)
+                or (v_dependency_scope='device_model_day' and v_dependency_device_model is not null
+                  and consumer.device_model=v_dependency_device_model
+                  and (v_dependency_adapter_version is null or consumer.adapter_version=v_dependency_adapter_version))
+                or (v_dependency_scope='adapter_version_day' and v_dependency_adapter_version is not null
+                  and consumer.adapter_version=v_dependency_adapter_version
+                  and (v_dependency_device_model is null or consumer.device_model=v_dependency_device_model))
+                or (v_dependency_scope='fleet_day' and v_dependency_device_model is null and v_dependency_adapter_version is null)
               )
           );
         update public.m25_feature_extraction_jobs later set
@@ -293,20 +325,37 @@ begin
           completed_at=case when later.state='processing' then later.completed_at else null end,
           locked_at=case when later.state='processing' then later.locked_at else null end,
           claimed_generation=case when later.state='processing' then later.claimed_generation else null end,
-          authoritative_correction_pending=true,dependency_cause_snapshot_id=s_id,
+          authoritative_correction_pending=true,dependency_cause_snapshot_id=v_dependency_snapshot_id,
           next_attempt_at=clock_timestamp(),updated_at=clock_timestamp()
         where later.synthetic=j.synthetic and later.period_end>j.period_end
+          and (later.state in ('processing','completed','failed') or exists (
+            select 1 from public.m25_feature_snapshots prior_snapshot
+            where prior_snapshot.scope=later.scope and prior_snapshot.scope_key_hash=later.scope_key_hash
+              and prior_snapshot.period_start=later.period_start and prior_snapshot.period_end=later.period_end
+              and prior_snapshot.synthetic=later.synthetic))
           and (
-            (later.scope=j.scope and later.scope_key_hash=j.scope_key_hash)
-            or (j.scope='device_model_day' and j.device_model is not null
-              and later.device_model=j.device_model
-              and (j.adapter_version is null or later.adapter_version=j.adapter_version))
-            or (j.scope='adapter_version_day' and j.adapter_version is not null
-              and later.adapter_version=j.adapter_version
-              and (j.device_model is null or later.device_model=j.device_model))
-            or (j.scope='fleet_day' and j.device_model is null and j.adapter_version is null)
+            (later.scope=v_dependency_scope and later.scope_key_hash=v_dependency_scope_key_hash)
+            or (v_dependency_scope='device_model_day' and v_dependency_device_model is not null
+              and later.device_model=v_dependency_device_model
+              and (v_dependency_adapter_version is null or later.adapter_version=v_dependency_adapter_version))
+            or (v_dependency_scope='adapter_version_day' and v_dependency_adapter_version is not null
+              and later.adapter_version=v_dependency_adapter_version
+              and (v_dependency_device_model is null or later.device_model=v_dependency_device_model))
+            or (v_dependency_scope='fleet_day' and v_dependency_device_model is null and v_dependency_adapter_version is null)
           )
-          and later.dependency_cause_snapshot_id is distinct from s_id;
+          and later.period_end=(select min(next_period.period_end)
+            from public.m25_feature_extraction_jobs next_period
+            where next_period.synthetic=j.synthetic and next_period.period_end>j.period_end
+              and (next_period.state in ('processing','completed','failed') or exists (
+                select 1 from public.m25_feature_snapshots prior_snapshot
+                where prior_snapshot.scope=next_period.scope and prior_snapshot.scope_key_hash=next_period.scope_key_hash
+                  and prior_snapshot.period_start=next_period.period_start and prior_snapshot.period_end=next_period.period_end
+                  and prior_snapshot.synthetic=next_period.synthetic))
+              and ((next_period.scope=v_dependency_scope and next_period.scope_key_hash=v_dependency_scope_key_hash)
+                or (v_dependency_scope='device_model_day' and v_dependency_device_model is not null and next_period.device_model=v_dependency_device_model and (v_dependency_adapter_version is null or next_period.adapter_version=v_dependency_adapter_version))
+                or (v_dependency_scope='adapter_version_day' and v_dependency_adapter_version is not null and next_period.adapter_version=v_dependency_adapter_version and (v_dependency_device_model is null or next_period.device_model=v_dependency_device_model))
+                or (v_dependency_scope='fleet_day' and v_dependency_device_model is null and v_dependency_adapter_version is null)))
+          and later.dependency_cause_snapshot_id is distinct from v_dependency_snapshot_id;
       end if;
       update public.m25_feature_extraction_jobs set
         state=case when generation=claimed_generation and not dirty_after_claim then 'completed' else 'pending' end,

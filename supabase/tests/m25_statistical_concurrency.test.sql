@@ -117,7 +117,7 @@ select ok(pg_get_functiondef('public.m25_process_statistical_queue(integer,times
 select ok(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
   ilike '%later.period_end=(select min(next_period.period_end)%'
   and pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
-  ilike '%authoritative_correction_pending=true,dependency_cause_snapshot_id=s_id%',
+  ilike '%authoritative_correction_pending=true,dependency_cause_snapshot_id=v_dependency_snapshot_id%',
   'multi-period corrections cascade one bounded authoritative period at a time');
 
 
@@ -551,22 +551,22 @@ select ok(
   'initial evaluations serialize on the exact cohort authority key');
 select ok(
   pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
-    ilike '%order by authoritative_correction_pending desc,period_end,period_start%for update skip locked%',
+    ilike '%pg_advisory_xact_lock%select live.* into j%order by live.authoritative_correction_pending desc,live.period_end,live.period_start%for update skip locked%',
   'serialized initial claims retain chronological period ordering');
 select ok(
   pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
-    ilike '%j.scope=''device_model_day''%later.device_model=j.device_model%'
+    ilike '%v_dependency_scope=''device_model_day''%later.device_model=v_dependency_device_model%'
   and pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
-    ilike '%j.scope=''adapter_version_day''%later.adapter_version=j.adapter_version%'
+    ilike '%v_dependency_scope=''adapter_version_day''%later.adapter_version=v_dependency_adapter_version%'
   and pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
-    ilike '%j.scope=''fleet_day'' and j.device_model is null and j.adapter_version is null%',
+    ilike '%v_dependency_scope=''fleet_day'' and v_dependency_device_model is null and v_dependency_adapter_version is null%',
   'corrected model adapter and fleet baselines cover compatible fallback consumers');
 select ok(
   pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
     ilike '%later.synthetic=j.synthetic and later.period_end>j.period_end%'
   and pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
-    not ilike '%later.period_end=(select min(next_period.period_end)%',
-  'fallback correction requeues every bounded later compatible consumer');
+    ilike '%later.period_end=(select min(next_period.period_end)%',
+  'fallback correction advances one bounded compatible period per processing cycle');
 select ok(
   pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
     ilike '%set%state=''insufficient_data''%m25-fallback-invalidated-v1%'
@@ -575,7 +575,11 @@ select ok(
   'reviewed and suppressed fallback consumers fail closed on corrected evidence');
 select ok(
   pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
-    ilike '%dependency_cause_snapshot_id=s_id%dirty_after_claim=case when later.state=''processing'' then true%',
+    ilike '%dependency_cause_snapshot_id=v_dependency_snapshot_id%'
+  and pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
+    ilike '%dirty_after_claim=case when later.state=''processing'' then true%'
+  and pg_get_functiondef('public.m25_mark_authoritative_correction_v1()'::regprocedure)
+    ilike '%new.dependency_cause_snapshot_id:=null%',
   'fallback correction propagation remains generation-bound and concurrent-claim safe');
 
 select * from finish();

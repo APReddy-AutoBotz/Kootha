@@ -234,12 +234,14 @@ describe("M25 bounded statistical worker", () => {
     expect(closure).toContain("pg_advisory_xact_lock(");
     expect(closure).toContain("'m25-cohort-evaluation-v1',j.scope,j.scope_key_hash,j.synthetic::text");
     expect(closure.indexOf("pg_advisory_xact_lock(")).toBeLessThan(closure.indexOf("insert into public.m25_feature_snapshots"));
-    expect(closure).toContain("j.scope='device_model_day' and j.device_model is not null");
-    expect(closure).toContain("j.scope='adapter_version_day' and j.adapter_version is not null");
-    expect(closure).toContain("j.scope='fleet_day' and j.device_model is null and j.adapter_version is null");
+    expect(closure).toContain("v_dependency_scope='device_model_day' and v_dependency_device_model is not null");
+    expect(closure).toContain("v_dependency_scope='adapter_version_day' and v_dependency_adapter_version is not null");
+    expect(closure).toContain("v_dependency_scope='fleet_day' and v_dependency_device_model is null and v_dependency_adapter_version is null");
     expect(closure).toContain("state='insufficient_data'");
     expect(closure).toContain("'m25-fallback-invalidated-v1'");
-    expect(closure).not.toContain("later.period_end=(select min(next_period.period_end)");
+    expect(closure).toContain("later.period_end=(select min(next_period.period_end)");
+    expect(closure).toContain("dependency_cause_snapshot_id=v_dependency_snapshot_id");
+    expect(closure).toContain("new.dependency_cause_snapshot_id:=null");
   });
 
   it("uses bounded queue waves and count-only output", async () => {
