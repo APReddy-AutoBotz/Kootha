@@ -16,6 +16,31 @@ function response(value: unknown, ok = true) {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("M25 rendered intelligence admin contracts", () => {
+  it("reuses the immutable reference manifest for repeated candidate attachment", async () => {
+    const names: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const name = String(input).split("/").at(-1)!; names.push(name);
+      if (name === "admin_list_m24f_adapter_readiness_v1") return response({ contractVersion: "m24f-admin-v1", rows: [{
+        candidateId: "candidate-1", safeDisplayName: "First", deviceFamily: "Synthetic", transportType: "vendor_webhook", authenticationType: "hmac_signature",
+        hostingExpectation: "unknown", offlineBuffering: "unknown", eventIdentityCapability: "unknown", vendorSandboxStatus: "not_assessed",
+        documentationStatus: "not_assessed", dataResidencyStatus: "not_assessed", commercialStatus: "not_assessed", costEvidenceStatus: "not_assessed",
+        complianceEvidenceStatus: "not_assessed", certificationStatus: "not_started", decisionStatus: "candidate", blockingReason: null,
+        lastCertificationAt: null, lastCertificationState: null, lastCertificationPassedCount: null, lastCertificationScenarioCount: null, adapterVersion: null,
+      }] });
+      if (name === "admin_get_m25_intelligence_readiness_v1") return response({ contractVersion: "m25-admin-v1", readiness: {}, baselines: [], signals: [], governance: [], mlStatus: "Not activated" });
+      if (name === "admin_get_or_create_m24f_reference_manifest_v1") return response("manifest-reference");
+      if (name === "admin_update_m24f_candidate_metadata_v1") return response(null);
+      throw new Error(`unexpected RPC ${name}`);
+    }));
+    render(<IntelligenceAdapterReadinessView connection={connection} />);
+    expect(await screen.findAllByText("First")).toHaveLength(2);
+    const attach = screen.getByRole("button", { name: "Attach synthetic manifest" });
+    await userEvent.click(attach); await screen.findByText(/manifest attached/i);
+    await userEvent.click(attach); await screen.findByText(/manifest attached/i);
+    expect(names.filter((name) => name === "admin_get_or_create_m24f_reference_manifest_v1")).toHaveLength(2);
+    expect(names).not.toContain("admin_create_m24f_capability_manifest_v1");
+  });
+
   it("keeps readiness safe by default and only fetches technical values after explicit access", async () => {
     const names: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {

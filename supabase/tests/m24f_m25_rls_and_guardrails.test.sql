@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(93);
+select plan(102);
 
 select has_table('public','m24f_adapter_capability_manifests','M24F capability manifests exist');
 select has_table('public','m24f_adapter_candidates','M24F candidates exist');
@@ -140,6 +140,16 @@ select is(public.m25_support_level_v1(8,false),'moderate','eight observations re
 select is(public.m25_support_level_v1(19,false),'moderate','nineteen observations remain moderate support');
 select is(public.m25_support_level_v1(20,false),'strong','twenty observations reach strong support');
 select is(public.m25_support_level_v1(1,true),'synthetic_only','synthetic evidence retains its canonical support label');
+
+select ok(not public.m24f_is_safe_metadata('AbCdEfGhIjKlMnOpQrStUvWxYz123456'),'unlabelled credential-shaped opaque tokens are rejected');
+select ok(public.m24f_is_safe_metadata(repeat('a',64)),'plain hexadecimal digests remain safe declarative metadata');
+select ok(not public.m24f_is_safe_metadata('00:11:22:33:44:55'),'bare MAC addresses are rejected');
+select ok(not public.m24f_is_safe_metadata('490154203237518'),'bare Luhn-valid IMEI-shaped values are rejected');
+select ok(public.m24f_is_safe_metadata('synthetic-adapter-v1.2'),'bounded synthetic adapter identifiers remain accepted');
+select ok(not exists(select 1 from public.m25_feature_definitions where active and availability_status<>'implemented'),'active features are exactly those with implemented authoritative extraction');
+select is((select count(*)::integer from public.m25_feature_definitions where active),6,'only the six authoritative receipt/conflict features remain active');
+select ok(not exists(select 1 from public.m25_statistical_signal_definitions s join public.m25_feature_definitions f on f.feature_id=s.metric where s.active and not f.active),'active signals cannot depend on unavailable features');
+select ok(pg_get_functiondef('public.admin_get_or_create_m24f_reference_manifest_v1()'::regprocedure) ilike '%pg_advisory_xact_lock%' and pg_get_functiondef('public.admin_get_or_create_m24f_reference_manifest_v1()'::regprocedure) ilike '%select id into v_id%','reference synthetic manifest lookup is serialized and reusable');
 
 select * from finish();
 rollback;

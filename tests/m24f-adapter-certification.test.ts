@@ -119,6 +119,16 @@ describe("M24F synthetic adapter certification", () => {
     expect(closure.indexOf("return v_latest.id")).toBeLessThan(closure.indexOf("insert into public.m24f_certification_runs"));
   });
 
+  it("rejects credential and hardware value shapes while retaining safe identifiers", () => {
+    const closure = readFileSync("supabase/migrations/20260808170000_m24f_m25_catalog_privacy_manifest_closure.sql", "utf8");
+    expect(closure).toContain("m24f_is_credential_shaped_v1");
+    expect(closure).toContain("m24f_is_luhn15_identifier_v1");
+    expect(closure).toContain("([0-9a-f]{2}:){5}[0-9a-f]{2}");
+    expect(closure).toContain("!~* '^[0-9a-f]{32,160}$'");
+    expect(closure).toContain("m24f-reference-manifest-v1");
+    expect(closure).toContain("select id into v_id from public.m24f_adapter_capability_manifests");
+  });
+
   it("requires current, nonvacuous certification evidence for approval", () => {
     const closure = readFileSync("supabase/migrations/20260808010000_m24f_m25_release_closure.sql", "utf8");
     expect(closure).toContain("scenario_count > 0 and passed_count = scenario_count and failed_count = 0");

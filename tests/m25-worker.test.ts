@@ -166,6 +166,16 @@ describe("M25 bounded statistical worker", () => {
     expect(closure).toContain("newer.generation>fs.generation");
   });
 
+  it("keeps the active catalog limited to authoritative implemented extraction", () => {
+    const closure = readFileSync("supabase/migrations/20260808170000_m24f_m25_catalog_privacy_manifest_closure.sql", "utf8");
+    expect(closure).toContain("availability_status in ('implemented','unavailable')");
+    expect(closure).toContain("active and availability_status='implemented'");
+    expect(closure).toContain("not active and availability_status='unavailable'");
+    expect(closure).toContain("'identity_conflict_rate'");
+    expect(closure).toContain("Inactive until deterministic exact-scoped source extraction is implemented; no covered zero is emitted.");
+    expect(closure).toContain("update public.m25_statistical_signal_definitions s set active=f.active");
+  });
+
   it("uses the shared 3/20 support threshold contract in SQL", () => {
     const closure = readFileSync("supabase/migrations/20260808150000_m24f_m25_certification_authority_support_parity.sql", "utf8");
     expect(closure).toContain("when p_sample_count<3 then 'low'");

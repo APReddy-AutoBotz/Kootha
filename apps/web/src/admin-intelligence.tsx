@@ -150,13 +150,7 @@ export function IntelligenceAdapterReadinessView({ connection }: { connection: I
     if (!selectedCandidate) return;
     setBusy(true); setError(""); setMessage("");
     try {
-      const manifestId = await callRpc<string>(connection, "admin_create_m24f_capability_manifest_v1", {
-        p_adapter_id: "reference-vendor-webhook-v1", p_adapter_version: "1.0.0", p_vendor_device_family_label: "Synthetic reference vendor-cloud webhook",
-        p_transport_type: "vendor_webhook", p_authentication_type: "hmac_signature", p_stable_event_id_available: true, p_sequence_available: true,
-        p_stream_epoch_available: true, p_device_timestamp_available: true, p_offline_buffering_supported: true, p_batching_supported: true,
-        p_heartbeat_supported: true, p_location_supported: true, p_approved_sensor_metrics: ["temperature"],
-        p_data_residency_note: "Synthetic fixture only; no vendor residency claim.", p_support_escalation_note: "Repository test owner only.",
-      });
+      const manifestId = await callRpc<string>(connection, "admin_get_or_create_m24f_reference_manifest_v1", {});
       await callRpc(connection, "admin_update_m24f_candidate_metadata_v1", { p_candidate_id: selectedCandidate.candidateId, p_manifest_id: manifestId });
       setMessage("Synthetic capability manifest attached. No production adapter was activated."); await load();
     } catch (actionError) { setError(actionError instanceof Error ? actionError.message : "Capability manifest could not be attached."); }
