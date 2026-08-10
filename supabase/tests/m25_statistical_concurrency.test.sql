@@ -6,7 +6,7 @@
 
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(140);
+select plan(146);
 
 select has_function('public','m25_enqueue_feature_scope_v1',array['text','text','timestamp with time zone','timestamp with time zone','uuid','uuid','text','text','boolean'],'bounded M25 enqueue RPC exists');
 select has_function('public','m25_process_statistical_queue',array['integer','timestamp with time zone'],'bounded M25 queue RPC exists');
@@ -543,6 +543,40 @@ select is((select fallback_used from public.m25_select_prior_baseline_v1('event_
 select ok(pg_get_functiondef('public.m25_select_prior_baseline_v1(text,text,text,text,text,text,boolean,timestamptz,integer)'::regprocedure) ilike '%fs.period_end<p_period_end%'
   and pg_get_functiondef('public.m25_select_prior_baseline_v1(text,text,text,text,text,text,boolean,timestamptz,integer)'::regprocedure) ilike '%newer.generation>fs.generation%','SQL selector rejects current/future and superseded generations');
 select ok(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure) ilike '%m25_select_prior_baseline_v1%','authoritative worker applies the canonical prior baseline selector');
+
+-- Initial-period and fallback-baseline authority closure.
+select ok(
+  pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
+    ilike '%pg_advisory_xact_lock%''m25-cohort-evaluation-v1''%j.scope%j.scope_key_hash%j.synthetic%',
+  'initial evaluations serialize on the exact cohort authority key');
+select ok(
+  pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
+    ilike '%order by authoritative_correction_pending desc,period_end,period_start%for update skip locked%',
+  'serialized initial claims retain chronological period ordering');
+select ok(
+  pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
+    ilike '%j.scope=''device_model_day''%later.device_model=j.device_model%'
+  and pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
+    ilike '%j.scope=''adapter_version_day''%later.adapter_version=j.adapter_version%'
+  and pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
+    ilike '%j.scope=''fleet_day'' and j.device_model is null and j.adapter_version is null%',
+  'corrected model adapter and fleet baselines cover compatible fallback consumers');
+select ok(
+  pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
+    ilike '%later.synthetic=j.synthetic and later.period_end>j.period_end%'
+  and pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
+    not ilike '%later.period_end=(select min(next_period.period_end)%',
+  'fallback correction requeues every bounded later compatible consumer');
+select ok(
+  pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
+    ilike '%set%state=''insufficient_data''%m25-fallback-invalidated-v1%'
+  and pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
+    not ilike '%sig.state not in (''reviewed'',''suppressed'')%',
+  'reviewed and suppressed fallback consumers fail closed on corrected evidence');
+select ok(
+  pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
+    ilike '%dependency_cause_snapshot_id=s_id%dirty_after_claim=case when later.state=''processing'' then true%',
+  'fallback correction propagation remains generation-bound and concurrent-claim safe');
 
 select * from finish();
 rollback;

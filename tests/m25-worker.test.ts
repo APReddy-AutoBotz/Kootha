@@ -229,6 +229,19 @@ describe("M25 bounded statistical worker", () => {
     expect(closure.indexOf("m25_signal_authority_lock_v1")).toBeLessThan(closure.indexOf("max(a.episode_number)"));
   });
 
+  it("serializes initial cohorts and propagates broader baseline corrections", () => {
+    const closure = readFileSync("supabase/migrations/20260808210000_m25_baseline_authority_concurrency_closure.sql", "utf8");
+    expect(closure).toContain("pg_advisory_xact_lock(");
+    expect(closure).toContain("'m25-cohort-evaluation-v1',j.scope,j.scope_key_hash,j.synthetic::text");
+    expect(closure.indexOf("pg_advisory_xact_lock(")).toBeLessThan(closure.indexOf("insert into public.m25_feature_snapshots"));
+    expect(closure).toContain("j.scope='device_model_day' and j.device_model is not null");
+    expect(closure).toContain("j.scope='adapter_version_day' and j.adapter_version is not null");
+    expect(closure).toContain("j.scope='fleet_day' and j.device_model is null and j.adapter_version is null");
+    expect(closure).toContain("state='insufficient_data'");
+    expect(closure).toContain("'m25-fallback-invalidated-v1'");
+    expect(closure).not.toContain("later.period_end=(select min(next_period.period_end)");
+  });
+
   it("uses bounded queue waves and count-only output", async () => {
     const calls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
