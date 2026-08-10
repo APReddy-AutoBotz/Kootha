@@ -100,11 +100,27 @@ select ok(
   and regexp_replace(
     pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure),
     '[[:space:]]','','g'
-  ) ilike '%v_dependency_snapshot_id:=coalesce(j.dependency_cause_snapshot_id,s_id)%'
+  ) ilike '%v_dependency_snapshot_id:=s_id%'
   and regexp_replace(
     pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure),
     '[[:space:]]','','g'
-  ) ilike '%later.dependency_cause_snapshot_idisdistinctfromv_dependency_snapshot_id%',
+  ) not ilike '%v_dependency_snapshot_id:=coalesce(j.dependency_cause_snapshot_id,s_id)%'
+  and regexp_replace(
+    pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure),
+    '[[:space:]]','','g'
+  ) ilike '%v_root_snapshot_id:=coalesce(j.correction_root_snapshot_id,v_dependency_snapshot_id)%'
+  and regexp_replace(
+    pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure),
+    '[[:space:]]','','g'
+  ) ilike '%later.dependency_cause_snapshot_idisdistinctfromv_dependency_snapshot_id%later.correction_consumer_snapshot_idisdistinctfromv_consumer_snapshot_id%'
+  and regexp_replace(
+    pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure),
+    '[[:space:]]','','g'
+  ) ilike '%blocker.correction_root_snapshot_id=live.correction_root_snapshot_id%'
+  and regexp_replace(
+    pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure),
+    '[[:space:]]','','g'
+  ) ilike '%dependency_cause_snapshot_id=v_dependency_snapshot_id%correction_consumer_snapshot_id=v_consumer_snapshot_id%correction_root_snapshot_id=v_root_snapshot_id%',
   'historical corrections requeue dependent later windows idempotently');
 select ok(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure) ilike '%sig.generated_at>j.period_end%' and pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure) ilike '%state=''insufficient_data''%','stale later signals are invalidated before dependent reevaluation');
 
