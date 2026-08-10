@@ -12,6 +12,16 @@ import {
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("M25 bounded statistical worker", () => {
+  it("keeps the statistical concurrency pgTAP plan aligned with its assertions", () => {
+    const sql = readFileSync("supabase/tests/m25_statistical_concurrency.test.sql", "utf8");
+    const declaredPlan = Number(sql.match(/^select plan\((\d+)\);$/m)?.[1]);
+    const assertions = sql.match(
+      /^select\s+(?:has_function|has_trigger|has_function_privilege|ok|is|lives_ok|throws_ok)\s*\(/gm,
+    ) ?? [];
+
+    expect(declaredPlan).toBe(assertions.length);
+  });
+
   it("requires immutable review evidence and exposes promotions through M22", () => {
     const closure = readFileSync("supabase/migrations/20260808010000_m24f_m25_release_closure.sql", "utf8");
     expect(closure).toContain("from public.m25_signal_review_history h");
