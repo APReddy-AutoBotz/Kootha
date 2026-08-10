@@ -6,7 +6,7 @@
 
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(90);
+select plan(93);
 
 select has_function('public','m25_enqueue_feature_scope_v1',array['text','text','timestamp with time zone','timestamp with time zone','uuid','uuid','text','text','boolean'],'bounded M25 enqueue RPC exists');
 select has_function('public','m25_process_statistical_queue',array['integer','timestamp with time zone'],'bounded M25 queue RPC exists');
@@ -29,8 +29,17 @@ select lives_ok($$select public.m25_enqueue_feature_scope_v1('fleet_day',repeat(
 select is((select generation from public.m25_feature_extraction_jobs where scope_key_hash=repeat('e',64) and synthetic),1,'exact replay after completion remains a no-op');
 select lives_ok($$select public.m25_process_statistical_queue(50,'2030-01-01 00:00+00')$$,'no-op replay does not require duplicate processing');
 select is((select count(*)::integer from public.m25_feature_snapshots where scope_key_hash=repeat('e',64) and synthetic),1,'exact replay retains one immutable snapshot');
-select is((select count(*)::integer from public.m25_feature_values v join public.m25_feature_snapshots s on s.id=v.snapshot_id where s.scope_key_hash=repeat('e',64) and s.synthetic),27,'one snapshot contains all typed feature values');
-select is((select count(*)::integer from public.m25_feature_values v join public.m25_feature_snapshots s on s.id=v.snapshot_id where s.scope_key_hash=repeat('e',64) and v.observation_status='unavailable' and (v.sample_count<>0 or v.coverage_score<>0)),0,'unavailable features never masquerade as covered observations');
+select is(
+  (select count(*)::integer from public.m25_feature_values v join public.m25_feature_snapshots s on s.id=v.snapshot_id where s.scope_key_hash=repeat('e',64) and s.synthetic),
+  (select count(*)::integer from public.m25_feature_definitions where active and availability_status='implemented'),
+  'one snapshot contains exactly the active implemented feature catalog');
+select is(
+  (select array_agg(v.feature_id order by v.feature_id) from public.m25_feature_values v join public.m25_feature_snapshots s on s.id=v.snapshot_id where s.scope_key_hash=repeat('e',64) and s.synthetic),
+  (select array_agg(feature_id order by feature_id) from public.m25_feature_definitions where active and availability_status='implemented'),
+  'snapshot feature identities exactly match the active implemented catalog');
+select is((select count(*)::integer from public.m25_feature_values v join public.m25_feature_snapshots s on s.id=v.snapshot_id join public.m25_feature_definitions f on f.feature_id=v.feature_id where s.scope_key_hash=repeat('e',64) and not f.active),0,'inactive unavailable definitions emit no fake feature observations');
+select is((select count(*)::integer from public.m25_baseline_versions b join public.m25_feature_definitions f on f.feature_id=b.metric where not f.active),0,'inactive unavailable definitions cannot contribute to baselines');
+select is((select count(*)::integer from public.m25_signal_evaluations e join public.m25_statistical_signal_definitions d on d.signal_id=e.signal_id join public.m25_feature_definitions f on f.feature_id=d.metric where not f.active),0,'inactive unavailable definitions cannot contribute to signal evaluation or downstream readiness');
 select throws_ok($$select public.m25_enqueue_feature_scope_v1('device_work_day',repeat('a',64),'2026-08-07','2026-08-08',null,null,null,null,true)$$,'22023','Invalid bounded M25 feature scope dimensions','work-day scope requires both exact dimensions');
 select throws_ok($$select public.m25_enqueue_feature_scope_v1('fleet_day',repeat('b',64),'2026-08-07','2026-08-08',null,null,'mixed-adapter',null,true)$$,'22023','Invalid bounded M25 feature scope dimensions','fleet scope cannot carry a misleading adapter cohort');
 select ok(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure) ilike '%r.ad_work_day_id=j.ad_work_day_id%','authoritative selector constrains exact work day');
