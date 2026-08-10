@@ -427,39 +427,55 @@ select lives_ok($$select public.admin_transition_m25_signal_review_v1('25000000-
   'another complete lifecycle receives a fresh episode-bound review');
 reset role;
 
--- Two actual promotion calls race behind the same cohort lock. The first creates
--- episode 3; after serialization, the second observes promoted_alert_id and replays it.
-create function public.m25_test_promote_episode_v1()
-returns integer language plpgsql security definer set search_path=pg_catalog,public as $$
-begin
-  perform set_config('request.jwt.claims',json_build_object('sub','25000000-0000-0000-0000-000000000013')::text,true);
-  perform public.admin_promote_m25_signal_to_alert_v1('25000000-0000-0000-0000-000000000071','concurrent episode promotion','Concurrent reviewed episode promotion.');
-  return 1;
-end $$;
+-- Build a committed, race-specific episode fixture in an independent session.
+-- Test functions created in this pgTAP transaction are intentionally invisible
+-- to dblink workers, so both workers below invoke the committed production RPC.
 select dblink_connect_u('m25_episode_promoter_one','dbname=postgres');
 select dblink_connect_u('m25_episode_promoter_two','dbname=postgres');
+select dblink_exec('m25_episode_promoter_one',$setup$
+  insert into public.user_profiles(auth_user_id,display_name,role)
+  values('25000000-0000-0000-0000-000000000015','M25 Episode Race Admin','admin');
+  insert into public.m25_signal_evaluations(evaluation_id,signal_id,scope_key_hash,synthetic,period_end,state,anomalous,baseline_version,source_generation)
+  values(repeat('a',64),'rejection_rate_shift',repeat('d',64),true,'2026-08-18 00:00+00','reviewed',true,'episode-race-v3',3);
+  insert into public.m25_statistical_signals(id,signal_id,signal_episode_id,metric,scope,scope_key_hash,direction,state,observed_value,baseline_median,baseline_mad,fallback_statistic,robust_score,sample_count,support_level,coverage_score,baseline_version,explanation_code,rule_fallback,synthetic,generated_at,evaluation_id,source_generation)
+  values('25000000-0000-0000-0000-000000000079','rejection_rate_shift','episode-race-current','rejection_rate','fleet_day',repeat('d',64),'high_bad','reviewed',0.5,0.1,0.1,'mad',3.1,8,'synthetic_only',1,'episode-race-v3','rejection_rate_shift','Admin review only.',true,'2026-08-18 00:00+00',repeat('a',64),3);
+  insert into public.m25_signal_review_history(signal_id,previous_state,new_state,review_label,reviewer_admin_id,reason,note,evaluation_id)
+  values('25000000-0000-0000-0000-000000000079','watch','reviewed','confirmed_operational_issue','25000000-0000-0000-0000-000000000015','episode race review','Current race evaluation reviewed.',repeat('a',64));
+  insert into public.alerts(type,severity,status,message,created_at,source,dedupe_key,episode_number,condition_active,condition_cleared_at,first_detected_at,last_detected_at,occurrence_count,synthetic,title,value_unit,status_changed_at,updated_at,origin)
+  select 'statistical_signal','warning','resolved','Historical statistical episode.',clock_timestamp(),'statistical_signal',
+    public.m22_safe_digest('m25-statistical-signal|rejection_rate_shift|'||repeat('d',64)||'|true'),episode,false,clock_timestamp(),
+    '2026-08-16 00:00+00','2026-08-16 00:00+00',1,true,'Statistical signal review','count',clock_timestamp(),clock_timestamp(),'m25_statistical_engine'
+  from generate_series(1,2) episode;
+$setup$);
 select dblink_send_query('m25_episode_promoter_one',$race$
-  with authority_lock as materialized (
-    select public.m25_signal_authority_lock_v1('rejection_rate_shift',repeat('7',64),true)
+  with claims as materialized (
+    select set_config('request.jwt.claims',json_build_object('sub','25000000-0000-0000-0000-000000000015')::text,true)
+  ), authority_lock as materialized (
+    select public.m25_signal_authority_lock_v1('rejection_rate_shift',repeat('d',64),true) from claims
   ), lock_pause as materialized (select pg_sleep(0.8) from authority_lock)
-  select public.m25_test_promote_episode_v1() from lock_pause;
+  select (public.admin_promote_m25_signal_to_alert_v1('25000000-0000-0000-0000-000000000079','concurrent episode promotion','Concurrent reviewed episode promotion.')->>'created')::boolean::integer
+  from lock_pause;
 $race$);
 select pg_sleep(0.1);
 select dblink_send_query('m25_episode_promoter_two',$race$
-  select public.m25_test_promote_episode_v1();
+  with claims as materialized (
+    select set_config('request.jwt.claims',json_build_object('sub','25000000-0000-0000-0000-000000000015')::text,true)
+  )
+  select (public.admin_promote_m25_signal_to_alert_v1('25000000-0000-0000-0000-000000000079','concurrent episode promotion','Concurrent reviewed episode promotion.')->>'created')::boolean::integer
+  from claims;
 $race$);
 select pg_sleep(0.1);
 select is(dblink_is_busy('m25_episode_promoter_two'),1,
   'a racing repeat promotion waits on the existing cohort serialization lock');
 select is((select promoted from dblink_get_result('m25_episode_promoter_one') as r(promoted integer)),1,
   'the first concurrent promotion completes');
-select is((select promoted from dblink_get_result('m25_episode_promoter_two') as r(promoted integer)),1,
+select is((select promoted from dblink_get_result('m25_episode_promoter_two') as r(promoted integer)),0,
   'the serialized repeat promotion completes idempotently');
 select is(dblink_disconnect('m25_episode_promoter_one'),'OK','first episode promotion session closes');
 select is(dblink_disconnect('m25_episode_promoter_two'),'OK','second episode promotion session closes');
-select is((select max(episode_number) from public.alerts where dedupe_key=public.m22_safe_digest('m25-statistical-signal|rejection_rate_shift|'||repeat('7',64)||'|true')),3,
+select is((select max(episode_number) from public.alerts where dedupe_key=public.m22_safe_digest('m25-statistical-signal|rejection_rate_shift|'||repeat('d',64)||'|true')),3,
   'another complete lifecycle allocates statistical alert episode 3');
-select is((select count(*) from public.alerts where dedupe_key=public.m22_safe_digest('m25-statistical-signal|rejection_rate_shift|'||repeat('7',64)||'|true')),3::bigint,
+select is((select count(*) from public.alerts where dedupe_key=public.m22_safe_digest('m25-statistical-signal|rejection_rate_shift|'||repeat('d',64)||'|true')),3::bigint,
   'concurrent repeat promotion creates exactly one next episode');
 select is((select count(*) from public.alerts where dedupe_key=public.m22_safe_digest('m25-statistical-signal|rejection_rate_shift|'||repeat('7',64)||'|true') and episode_number in (1,2,3)),3::bigint,
   'all historical statistical alert episode identities remain queryable');
