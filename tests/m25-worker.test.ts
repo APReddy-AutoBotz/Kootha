@@ -196,6 +196,16 @@ describe("M25 bounded statistical worker", () => {
     expect(closure).toContain("perform public.m25_signal_authority_lock_v1(");
   });
 
+  it("allocates statistical alert episodes under the serialized cohort authority", () => {
+    const closure = readFileSync("supabase/migrations/20260808190000_m25_statistical_alert_episode_identity.sql", "utf8");
+    expect(closure).toContain("perform public.m25_signal_authority_lock_v1(s.signal_id,s.scope_key_hash,s.synthetic)");
+    expect(closure).toContain("select coalesce(max(a.episode_number),0)+1 into v_episode");
+    expect(closure).toContain("where a.dedupe_key=v_key and a.source='statistical_signal'");
+    expect(closure).toContain("v_key,v_episode,true");
+    expect(closure).not.toContain("v_key,1,true");
+    expect(closure.indexOf("m25_signal_authority_lock_v1")).toBeLessThan(closure.indexOf("max(a.episode_number)"));
+  });
+
   it("uses bounded queue waves and count-only output", async () => {
     const calls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {

@@ -6,7 +6,7 @@
 
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(110);
+select plan(128);
 
 select has_function('public','m25_enqueue_feature_scope_v1',array['text','text','timestamp with time zone','timestamp with time zone','uuid','uuid','text','text','boolean'],'bounded M25 enqueue RPC exists');
 select has_function('public','m25_process_statistical_queue',array['integer','timestamp with time zone'],'bounded M25 queue RPC exists');
@@ -282,6 +282,8 @@ select lives_ok(
 select lives_ok(
   $$select public.admin_promote_m25_signal_to_alert_v1('25000000-0000-0000-0000-000000000071','serialization promotion','Current reviewed evaluation promoted.')$$,
   'promotion succeeds after the exact current evaluation is reviewed');
+select is((select episode_number from public.alerts where id=(select promoted_alert_id from public.m25_statistical_signals where id='25000000-0000-0000-0000-000000000071')),1,
+  'the first promoted statistical signal alert is episode 1');
 select lives_ok(
   $$select public.admin_transition_m25_signal_review_v1('25000000-0000-0000-0000-000000000072','reviewed','confirmed_operational_issue','stale review','Original evaluation reviewed.')$$,
   'the older evaluation review is retained immutably');
@@ -386,6 +388,85 @@ select is(
   'episode closure does not mutate immutable review history');
 select ok((select a.status::text='resolved' and not a.condition_active and a.condition_cleared_at is not null from public.alerts a join m25_episode_history_counts h on h.alert_id=a.id),
   'the prior alert remains immutable after its current projection reopens');
+
+
+-- Promote the newly reviewed episode and allocate its identity from immutable
+-- historical alerts. Exact replay must return the existing alert without allocating.
+update public.m25_statistical_signals
+set state='watch',evaluation_id=repeat('5',64),generated_at='2026-08-16 00:00+00',
+  source_generation=3,baseline_version='new-episode-v1'
+where id='25000000-0000-0000-0000-000000000071';
+set local role authenticated;
+select set_config('request.jwt.claims',json_build_object('sub','25000000-0000-0000-0000-000000000013')::text,true);
+select lives_ok($$select public.admin_transition_m25_signal_review_v1('25000000-0000-0000-0000-000000000071','reviewed','confirmed_operational_issue','episode two review','Newest episode reviewed.')$$,
+  'the reopened episode receives a fresh immutable review');
+select lives_ok($$select public.admin_promote_m25_signal_to_alert_v1('25000000-0000-0000-0000-000000000071','episode two promotion','Newest reviewed episode promoted.')$$,
+  'the second reviewed signal episode can be promoted');
+select lives_ok($$select public.admin_promote_m25_signal_to_alert_v1('25000000-0000-0000-0000-000000000071','episode two replay','Exact promotion replay remains idempotent.')$$,
+  'exact promotion replay returns the already-created episode');
+reset role;
+select is((select max(episode_number) from public.alerts where dedupe_key=public.m22_safe_digest('m25-statistical-signal|rejection_rate_shift|'||repeat('7',64)||'|true')),2,
+  'terminal lifecycle reopening allocates statistical alert episode 2');
+select is((select count(*) from public.alerts where dedupe_key=public.m22_safe_digest('m25-statistical-signal|rejection_rate_shift|'||repeat('7',64)||'|true')),2::bigint,
+  'exact replay creates no extra statistical alert');
+
+set local role authenticated;
+select set_config('request.jwt.claims',json_build_object('sub','25000000-0000-0000-0000-000000000013')::text,true);
+select lives_ok($$select public.admin_transition_alert((select promoted_alert_id from public.m25_statistical_signals where id='25000000-0000-0000-0000-000000000071'),'resolved','episode two closure','Second statistical alert resolved.')$$,
+  'the second statistical alert completes its terminal lifecycle');
+reset role;
+insert into public.m25_signal_evaluations(evaluation_id,signal_id,scope_key_hash,synthetic,period_end,state,anomalous,baseline_version,source_generation)
+values(repeat('6',64),'rejection_rate_shift',repeat('7',64),true,'2026-08-17 00:00+00','watch',true,'new-episode-v2',4);
+update public.m25_statistical_signals
+set state='watch',evaluation_id=repeat('6',64),generated_at='2026-08-17 00:00+00',
+  source_generation=4,baseline_version='new-episode-v2'
+where id='25000000-0000-0000-0000-000000000071';
+set local role authenticated;
+select set_config('request.jwt.claims',json_build_object('sub','25000000-0000-0000-0000-000000000013')::text,true);
+select lives_ok($$select public.admin_transition_m25_signal_review_v1('25000000-0000-0000-0000-000000000071','reviewed','confirmed_operational_issue','episode three review','Third episode reviewed.')$$,
+  'another complete lifecycle receives a fresh episode-bound review');
+reset role;
+
+-- Two actual promotion calls race behind the same cohort lock. The first creates
+-- episode 3; after serialization, the second observes promoted_alert_id and replays it.
+create function public.m25_test_promote_episode_v1()
+returns integer language plpgsql security definer set search_path=pg_catalog,public as $$
+begin
+  perform set_config('request.jwt.claims',json_build_object('sub','25000000-0000-0000-0000-000000000013')::text,true);
+  perform public.admin_promote_m25_signal_to_alert_v1('25000000-0000-0000-0000-000000000071','concurrent episode promotion','Concurrent reviewed episode promotion.');
+  return 1;
+end $$;
+select dblink_connect_u('m25_episode_promoter_one','dbname=postgres');
+select dblink_connect_u('m25_episode_promoter_two','dbname=postgres');
+select dblink_send_query('m25_episode_promoter_one',$race$
+  with authority_lock as materialized (
+    select public.m25_signal_authority_lock_v1('rejection_rate_shift',repeat('7',64),true)
+  ), lock_pause as materialized (select pg_sleep(0.8) from authority_lock)
+  select public.m25_test_promote_episode_v1() from lock_pause;
+$race$);
+select pg_sleep(0.1);
+select dblink_send_query('m25_episode_promoter_two',$race$
+  select public.m25_test_promote_episode_v1();
+$race$);
+select pg_sleep(0.1);
+select is(dblink_is_busy('m25_episode_promoter_two'),1,
+  'a racing repeat promotion waits on the existing cohort serialization lock');
+select is((select promoted from dblink_get_result('m25_episode_promoter_one') as r(promoted integer)),1,
+  'the first concurrent promotion completes');
+select is((select promoted from dblink_get_result('m25_episode_promoter_two') as r(promoted integer)),1,
+  'the serialized repeat promotion completes idempotently');
+select is(dblink_disconnect('m25_episode_promoter_one'),'OK','first episode promotion session closes');
+select is(dblink_disconnect('m25_episode_promoter_two'),'OK','second episode promotion session closes');
+select is((select max(episode_number) from public.alerts where dedupe_key=public.m22_safe_digest('m25-statistical-signal|rejection_rate_shift|'||repeat('7',64)||'|true')),3,
+  'another complete lifecycle allocates statistical alert episode 3');
+select is((select count(*) from public.alerts where dedupe_key=public.m22_safe_digest('m25-statistical-signal|rejection_rate_shift|'||repeat('7',64)||'|true')),3::bigint,
+  'concurrent repeat promotion creates exactly one next episode');
+select is((select count(*) from public.alerts where dedupe_key=public.m22_safe_digest('m25-statistical-signal|rejection_rate_shift|'||repeat('7',64)||'|true') and episode_number in (1,2,3)),3::bigint,
+  'all historical statistical alert episode identities remain queryable');
+select ok((select count(*)>=3 from public.m25_signal_review_history where signal_id='25000000-0000-0000-0000-000000000071'),
+  'immutable review history remains queryable across all episodes');
+select ok((select count(*)>=3 from public.alert_status_history h join public.alerts a on a.id=h.alert_id where a.dedupe_key=public.m22_safe_digest('m25-statistical-signal|rejection_rate_shift|'||repeat('7',64)||'|true')),
+  'immutable alert status history remains queryable across all episodes');
 set local role authenticated;
 select set_config('request.jwt.claims',json_build_object('sub','25000000-0000-0000-0000-000000000013')::text,true);
 select lives_ok($$select public.admin_list_m22_alerts_v1(p_limit=>20)$$,
