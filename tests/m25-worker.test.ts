@@ -244,6 +244,34 @@ describe("M25 bounded statistical worker", () => {
     expect(closure).toContain("new.dependency_cause_snapshot_id:=null");
   });
 
+  it("paginates fan-out, tracks consumer edges, and resolves fallback authority", () => {
+    const closure = readFileSync(
+      "supabase/migrations/20260808220000_m25_correction_dependency_fallback_closure.sql",
+      "utf8",
+    );
+
+    expect(closure).not.toContain("exceeds bounded fallback dependency window");
+    expect(closure).toContain("order by later.id limit 200");
+    expect(closure).toContain("v_propagation_remaining");
+    expect(closure).toContain(
+      "attempt_count=case when v_propagation_remaining and not dirty_after_claim then 0",
+    );
+    expect(closure).toContain("v_dependency_snapshot_id:=s_id");
+    expect(closure).toContain("correction_root_snapshot_id=v_root_snapshot_id");
+    expect(closure).toContain("blocker.correction_root_snapshot_id=live.correction_root_snapshot_id");
+    expect(closure).toContain("blocker.period_end<live.period_end");
+    expect(closure).toContain("sig.generated_at>j.period_end");
+    expect(closure).toContain("m25-fallback-invalidated-v2");
+    expect(closure).toContain("count(distinct d.model)=1");
+    expect(closure).toContain("count(distinct r.adapter_version)=1");
+    expect(closure).toContain("m25_job_consumes_correction_v1(later.id");
+    expect(closure).toContain("authoritative_model=p_dependency_device_model");
+    expect(closure).toContain("authoritative_adapter=p_dependency_adapter_version");
+    expect(closure).toContain(
+      "v_authoritative_device_model,v_authoritative_adapter_version,j.synthetic,j.period_end,8",
+    );
+  });
+
   it("uses bounded queue waves and count-only output", async () => {
     const calls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {

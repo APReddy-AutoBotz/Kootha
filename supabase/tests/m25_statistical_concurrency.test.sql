@@ -6,7 +6,7 @@
 
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(146);
+select plan(157);
 
 select has_function('public','m25_enqueue_feature_scope_v1',array['text','text','timestamp with time zone','timestamp with time zone','uuid','uuid','text','text','boolean'],'bounded M25 enqueue RPC exists');
 select has_function('public','m25_process_statistical_queue',array['integer','timestamp with time zone'],'bounded M25 queue RPC exists');
@@ -556,22 +556,22 @@ select ok(
     ilike '%pg_advisory_xact_lock%select live.* into j%order by live.authoritative_correction_pending desc,live.period_end,live.period_start%for update skip locked%',
   'serialized initial claims retain chronological period ordering');
 select ok(
-  pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
-    ilike '%v_dependency_scope=''device_model_day''%later.device_model=v_dependency_device_model%'
-  and pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
-    ilike '%v_dependency_scope=''adapter_version_day''%later.adapter_version=v_dependency_adapter_version%'
-  and pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
-    ilike '%v_dependency_scope=''fleet_day'' and v_dependency_device_model is null and v_dependency_adapter_version is null%',
+  pg_get_functiondef('public.m25_job_consumes_correction_v1(uuid,text,text,text,text)'::regprocedure)
+    ilike '%p_dependency_scope=''device_model_day''%authoritative_model=p_dependency_device_model%'
+  and pg_get_functiondef('public.m25_job_consumes_correction_v1(uuid,text,text,text,text)'::regprocedure)
+    ilike '%p_dependency_scope=''adapter_version_day''%authoritative_adapter=p_dependency_adapter_version%'
+  and pg_get_functiondef('public.m25_job_consumes_correction_v1(uuid,text,text,text,text)'::regprocedure)
+    ilike '%p_dependency_scope=''fleet_day''%p_dependency_device_model is null%',
   'corrected model adapter and fleet baselines cover compatible fallback consumers');
 select ok(
   pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
     ilike '%later.synthetic=j.synthetic and later.period_end>j.period_end%'
   and pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
-    ilike '%later.period_end=(select min(next_period.period_end)%',
+    ilike '%select min(later.period_end) into v_next_period%order by later.id limit 200%',
   'fallback correction advances one bounded compatible period per processing cycle');
 select ok(
   pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
-    ilike '%set%state=''insufficient_data''%m25-fallback-invalidated-v1%'
+    ilike '%set state=''insufficient_data''%m25-fallback-invalidated-v2%'
   and pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
     not ilike '%sig.state not in (''reviewed'',''suppressed'')%',
   'reviewed and suppressed fallback consumers fail closed on corrected evidence');
@@ -583,6 +583,79 @@ select ok(
   and pg_get_functiondef('public.m25_mark_authoritative_correction_v1()'::regprocedure)
     ilike '%new.dependency_cause_snapshot_id:=null%',
   'fallback correction propagation remains generation-bound and concurrent-claim safe');
+
+-- Paginated, dependency-specific correction closure. These executable catalog
+-- checks pin the production function that the behavioral fixtures above invoke.
+select ok(
+  pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
+    not ilike '%exceeds bounded fallback dependency window%'
+  and pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
+    ilike '%order by later.id limit 200%',
+  'correction fan-out is paginated without a total-dependent-count abort');
+select ok(
+  pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
+    ilike '%v_propagation_remaining%state=case when generation=claimed_generation%not v_propagation_remaining%',
+  'a correction source remains retryable until every deterministic page is scheduled');
+select ok(
+  pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
+    ilike '%v_dependency_snapshot_id:=s_id%'
+  and pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
+    ilike '%dependency_cause_snapshot_id=v_dependency_snapshot_id%',
+  'propagation deduplication is bound to each rebuilt consumer snapshot');
+select ok(
+  pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
+    ilike '%blocker.correction_root_snapshot_id=live.correction_root_snapshot_id%blocker.period_end<live.period_end%',
+  'later consumers wait while an earlier sibling for the same correction root remains pending');
+select ok(
+  pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
+    ilike '%correction_root_snapshot_id=v_root_snapshot_id%'
+  and pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
+    ilike '%later.dependency_cause_snapshot_id is distinct from v_dependency_snapshot_id%',
+  'root ordering and per-consumer edge identity survive retries and dirty claims');
+select ok(
+  pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
+    ilike '%count(distinct d.model)=1%'
+  and pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
+    ilike '%count(distinct r.adapter_version)=1%',
+  'device-owned scopes resolve authoritative model and adapter dimensions');
+select ok(
+  pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure)
+    ilike '%v_authoritative_device_model,v_authoritative_adapter_version,j.synthetic,j.period_end,8%',
+  'authoritative dimensions feed exact model adapter and fleet baseline selection');
+
+-- A real 1,001-consumer fan-out converges over multiple bounded worker calls.
+-- These dates are isolated from the retained fixtures above.
+update public.m25_feature_extraction_jobs set next_attempt_at='2200-01-01 00:00+00'
+where period_start<'2090-01-01 00:00+00' and state in ('pending','processing');
+insert into public.m25_feature_extraction_jobs(
+  scope,scope_key_hash,period_start,period_end,synthetic,state,authoritative_correction_pending
+) values (
+  'fleet_day',encode(digest('m25-page-root','sha256'),'hex'),
+  '2090-01-01 00:00+00','2090-01-02 00:00+00',true,'pending',true
+);
+insert into public.m25_feature_extraction_jobs(
+  scope,scope_key_hash,period_start,period_end,synthetic,state,completed_at
+)
+select 'fleet_day',encode(digest('m25-page-consumer-'||n::text,'sha256'),'hex'),
+  '2090-01-02 00:00+00','2090-01-03 00:00+00',true,'completed','2090-01-04 00:00+00'
+from generate_series(1,1001) n;
+select lives_ok($$
+  do $page$
+  begin
+    for page_no in 1..6 loop
+      perform public.m25_process_statistical_queue(1,'2100-01-01 00:00+00');
+    end loop;
+  end $page$
+$$,'1,001 compatible consumers propagate across deterministic bounded pages');
+select is((select count(*)::integer from public.m25_feature_extraction_jobs
+  where period_start='2090-01-02 00:00+00' and generation=2),1001,
+  'every paginated consumer advances exactly once');
+select is((select count(distinct dependency_cause_snapshot_id)::integer
+  from public.m25_feature_extraction_jobs where period_start='2090-01-02 00:00+00'),1,
+  'one source event is idempotently attached to every direct consumer page');
+select is((select state from public.m25_feature_extraction_jobs
+  where scope_key_hash=encode(digest('m25-page-root','sha256'),'hex')),'completed',
+  'the source completes only after the final propagation page');
 
 select * from finish();
 rollback;
