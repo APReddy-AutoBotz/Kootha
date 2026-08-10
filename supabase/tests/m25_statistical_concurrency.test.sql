@@ -427,6 +427,18 @@ select lives_ok($$select public.admin_transition_m25_signal_review_v1('25000000-
   'another complete lifecycle receives a fresh episode-bound review');
 reset role;
 
+-- Complete the sequential cohort's third promotion before exercising the
+-- separately keyed concurrency fixture below. This retains an independent
+-- immutable episode 1 -> 2 -> 3 history for the historical identity checks.
+set local role authenticated;
+select set_config('request.jwt.claims',json_build_object('sub','25000000-0000-0000-0000-000000000013')::text,true);
+select public.admin_promote_m25_signal_to_alert_v1(
+  '25000000-0000-0000-0000-000000000071',
+  'episode three promotion',
+  'Third reviewed episode promoted.'
+);
+reset role;
+
 -- Build a committed, race-specific episode fixture in an independent session.
 -- Test functions created in this pgTAP transaction are intentionally invisible
 -- to dblink workers, so both workers below invoke the committed production RPC.
