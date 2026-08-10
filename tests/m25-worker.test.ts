@@ -279,6 +279,9 @@ describe("M25 bounded statistical worker", () => {
     );
 
     expect(closure).toContain(
+      "v_dependency_snapshot_id:=s_id",
+    );
+    expect(closure).not.toContain(
       "v_dependency_snapshot_id:=coalesce(j.dependency_cause_snapshot_id,s_id)",
     );
     expect(closure).toContain("correction_consumer_snapshot_id=v_consumer_snapshot_id");

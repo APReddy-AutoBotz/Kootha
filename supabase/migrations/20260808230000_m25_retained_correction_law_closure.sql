@@ -253,10 +253,10 @@ begin
       -- invalidate its mutable signal projection immediately, including reviewed or
       -- suppressed rows, so stale evidence cannot remain promotable.
       if j.authoritative_correction_pending then
-        -- Root/dependency identity is stable across the retained correction graph;
-        -- the consumer identity is the snapshot published by this particular
-        -- rebuilt job. This prevents one sibling from satisfying another edge.
-        v_dependency_snapshot_id:=coalesce(j.dependency_cause_snapshot_id,s_id);
+        -- Root identity is stable across the retained correction graph, while
+        -- each immediate dependency edge is the snapshot published by this
+        -- rebuilt consumer. This prevents one sibling from satisfying another.
+        v_dependency_snapshot_id:=s_id;
         v_root_snapshot_id:=coalesce(j.correction_root_snapshot_id,v_dependency_snapshot_id);
         v_consumer_snapshot_id:=s_id;
         update public.m25_feature_extraction_jobs
