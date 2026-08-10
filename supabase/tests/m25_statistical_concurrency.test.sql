@@ -336,6 +336,8 @@ select
   (select count(*) from public.m25_signal_evaluations where signal_id='rejection_rate_shift' and scope_key_hash=repeat('7',64)) evaluation_count,
   (select count(*) from public.m25_signal_review_history where signal_id='25000000-0000-0000-0000-000000000071') review_count,
   (select promoted_alert_id from public.m25_statistical_signals where id='25000000-0000-0000-0000-000000000071') alert_id;
+select set_config('kootha_test.m25_episode_alert_id',alert_id::text,true)
+from m25_episode_history_counts;
 
 select lives_ok($$
   insert into public.m25_signal_evaluations(evaluation_id,signal_id,scope_key_hash,synthetic,period_end,state,anomalous,baseline_version,source_generation)
@@ -388,7 +390,7 @@ set local role authenticated;
 select set_config('request.jwt.claims',json_build_object('sub','25000000-0000-0000-0000-000000000013')::text,true);
 select lives_ok($$select public.admin_list_m22_alerts_v1(p_limit=>20)$$,
   'alert list behavior remains available after statistical episode closure');
-select lives_ok($$select public.admin_get_m22_alert_detail_v1((select alert_id from m25_episode_history_counts))$$,
+select lives_ok($$select public.admin_get_m22_alert_detail_v1(current_setting('kootha_test.m25_episode_alert_id')::uuid)$$,
   'terminal statistical alert detail remains available after cohort reopening');
 reset role;
 
