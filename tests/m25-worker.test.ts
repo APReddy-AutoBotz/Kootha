@@ -272,6 +272,28 @@ describe("M25 bounded statistical worker", () => {
     );
   });
 
+  it("preserves retained root laws alongside per-consumer correction progress", () => {
+    const closure = readFileSync(
+      "supabase/migrations/20260808230000_m25_retained_correction_law_closure.sql",
+      "utf8",
+    );
+
+    expect(closure).toContain(
+      "v_dependency_snapshot_id:=coalesce(j.dependency_cause_snapshot_id,s_id)",
+    );
+    expect(closure).toContain("correction_consumer_snapshot_id=v_consumer_snapshot_id");
+    expect(closure).toContain("correction_root_snapshot_id=v_root_snapshot_id");
+    expect(closure).toContain("order by later.id limit 200");
+    expect(closure).toContain("later.period_end=(select min(next_period.period_end)");
+    expect(closure).toContain("blocker.state in ('pending','processing','failed')");
+    expect(closure).toContain(
+      "when generation=claimed_generation and not dirty_after_claim then false",
+    );
+    expect(closure).toContain("if v_propagation_remaining then");
+    expect(closure).toContain("set authoritative_correction_pending=true");
+    expect(closure).not.toContain("exceeds bounded fallback dependency window");
+  });
+
   it("uses bounded queue waves and count-only output", async () => {
     const calls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
