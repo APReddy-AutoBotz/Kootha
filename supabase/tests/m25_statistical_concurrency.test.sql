@@ -6,7 +6,7 @@
 
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(93);
+select plan(110);
 
 select has_function('public','m25_enqueue_feature_scope_v1',array['text','text','timestamp with time zone','timestamp with time zone','uuid','uuid','text','text','boolean'],'bounded M25 enqueue RPC exists');
 select has_function('public','m25_process_statistical_queue',array['integer','timestamp with time zone'],'bounded M25 queue RPC exists');
@@ -327,6 +327,70 @@ select ok(regexp_replace(pg_get_functiondef('public.m25_process_statistical_queu
 select ok(regexp_replace(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure),'[[:space:]]','','g')
   ilike '%count(distinct(fs.device_model,fs.period_start::date))filter(%',
   'qualifying model evidence counts exact distinct model-day identities');
+
+-- A promoted statistical cohort remains frozen while its alert is active. Once
+-- the authoritative lifecycle closes that alert, a strictly newer evaluation
+-- opens a new current episode without rewriting prior evaluations or reviews.
+create temporary table m25_episode_history_counts as
+select
+  (select count(*) from public.m25_signal_evaluations where signal_id='rejection_rate_shift' and scope_key_hash=repeat('7',64)) evaluation_count,
+  (select count(*) from public.m25_signal_review_history where signal_id='25000000-0000-0000-0000-000000000071') review_count,
+  (select promoted_alert_id from public.m25_statistical_signals where id='25000000-0000-0000-0000-000000000071') alert_id;
+
+select lives_ok($$
+  insert into public.m25_signal_evaluations(evaluation_id,signal_id,scope_key_hash,synthetic,period_end,state,anomalous,baseline_version,source_generation)
+  values(repeat('4',64),'rejection_rate_shift',repeat('7',64),true,'2026-08-15 00:00+00','watch',true,'active-alert-freeze-v1',2)
+$$,'a newer evaluation may be retained immutably while the linked alert is active');
+select ok((select promoted_alert_id is not null from public.m25_statistical_signals where id='25000000-0000-0000-0000-000000000071'),
+  'an active promoted alert freezes the current signal episode');
+
+set local role authenticated;
+select set_config('request.jwt.claims',json_build_object('sub','25000000-0000-0000-0000-000000000013')::text,true);
+select lives_ok($$select public.admin_transition_alert((select promoted_alert_id from public.m25_statistical_signals where id='25000000-0000-0000-0000-000000000071'),'acknowledged','episode lifecycle','Acknowledged statistical alert.')$$,
+  'statistical alerts retain acknowledge behavior');
+select lives_ok($$select public.admin_transition_alert((select promoted_alert_id from public.m25_statistical_signals where id='25000000-0000-0000-0000-000000000071'),'investigating','episode lifecycle','Investigating statistical alert.')$$,
+  'statistical alerts retain investigate behavior');
+select lives_ok($$select public.admin_transition_alert((select promoted_alert_id from public.m25_statistical_signals where id='25000000-0000-0000-0000-000000000071'),'resolved','episode lifecycle','Resolved statistical alert.')$$,
+  'statistical alerts retain resolve behavior');
+reset role;
+
+select is((select condition_active from public.alerts where id=(select promoted_alert_id from public.m25_statistical_signals where id='25000000-0000-0000-0000-000000000071')),false,
+  'terminal statistical transition clears the active condition');
+select ok((select condition_cleared_at is not null from public.alerts where id=(select promoted_alert_id from public.m25_statistical_signals where id='25000000-0000-0000-0000-000000000071')),
+  'terminal statistical transition persists the condition-cleared timestamp');
+select is((select status::text from public.alerts where id=(select promoted_alert_id from public.m25_statistical_signals where id='25000000-0000-0000-0000-000000000071')),'resolved',
+  'the historical statistical alert remains terminal');
+
+select lives_ok($$
+  insert into public.m25_signal_evaluations(evaluation_id,signal_id,scope_key_hash,synthetic,period_end,state,anomalous,baseline_version,source_generation)
+  values(repeat('5',64),'rejection_rate_shift',repeat('7',64),true,'2026-08-16 00:00+00','watch',true,'new-episode-v1',3)
+$$,'a newer evaluation reopens a cohort after terminal alert closure');
+select is((select promoted_alert_id from public.m25_statistical_signals where id='25000000-0000-0000-0000-000000000071'),null::uuid,
+  'the reopened current projection is eligible for a new reviewed episode');
+select ok((select signal_episode_id like '%'||repeat('5',64) from public.m25_statistical_signals where id='25000000-0000-0000-0000-000000000071'),
+  'the reopened projection has a distinct evaluation-bound episode identity');
+select lives_ok($$
+  insert into public.m25_signal_evaluations(evaluation_id,signal_id,scope_key_hash,synthetic,period_end,state,anomalous,baseline_version,source_generation)
+  values(repeat('5',64),'rejection_rate_shift',repeat('7',64),true,'2026-08-16 00:00+00','watch',true,'new-episode-v1',3)
+  on conflict(evaluation_id) do nothing
+$$,'replaying the new evaluation is idempotent');
+select is(
+  (select count(*) from public.m25_signal_evaluations where signal_id='rejection_rate_shift' and scope_key_hash=repeat('7',64)),
+  (select evaluation_count+2 from m25_episode_history_counts),
+  'episode replay does not duplicate immutable evaluations');
+select is(
+  (select count(*) from public.m25_signal_review_history where signal_id='25000000-0000-0000-0000-000000000071'),
+  (select review_count from m25_episode_history_counts),
+  'episode closure does not mutate immutable review history');
+select ok((select a.status::text='resolved' and not a.condition_active and a.condition_cleared_at is not null from public.alerts a join m25_episode_history_counts h on h.alert_id=a.id),
+  'the prior alert remains immutable after its current projection reopens');
+set local role authenticated;
+select set_config('request.jwt.claims',json_build_object('sub','25000000-0000-0000-0000-000000000013')::text,true);
+select lives_ok($$select public.admin_list_m22_alerts_v1(p_limit=>20)$$,
+  'alert list behavior remains available after statistical episode closure');
+select lives_ok($$select public.admin_get_m22_alert_detail_v1((select alert_id from m25_episode_history_counts))$$,
+  'terminal statistical alert detail remains available after cohort reopening');
+reset role;
 
 select * from finish();
 rollback;

@@ -184,6 +184,18 @@ describe("M25 bounded statistical worker", () => {
     expect(closure).not.toContain("v_feature.sample_count>=8 then 'strong'");
   });
 
+  it("closes terminal statistical alert conditions and reopens only a new evaluation episode", () => {
+    const closure = readFileSync("supabase/migrations/20260808180000_m25_alert_episode_lifecycle_closure.sql", "utf8");
+    expect(closure).toContain("a.status::text in ('resolved','false_alarm','ignored')");
+    expect(closure).toContain("new.period_end>s.generated_at");
+    expect(closure).toContain("set promoted_alert_id=null");
+    expect(closure).toContain("signal_episode_id=concat(new.signal_id,':',new.scope_key_hash,':',new.evaluation_id)");
+    expect(closure).toContain("source='statistical_signal' and p_new_status in ('resolved','false_alarm','ignored')");
+    expect(closure).toContain("then false else condition_active end");
+    expect(closure).toContain("then coalesce(condition_cleared_at,v_transition_at)");
+    expect(closure).toContain("perform public.m25_signal_authority_lock_v1(");
+  });
+
   it("uses bounded queue waves and count-only output", async () => {
     const calls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
