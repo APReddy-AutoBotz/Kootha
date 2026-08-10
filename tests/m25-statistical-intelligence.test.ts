@@ -66,6 +66,23 @@ describe("M25 feature extraction and deterministic statistical intelligence", ()
     expect(selectM25BaselineV1([{ ...base, cohort: { ...fleetRequest, source: "simulator" } }], fleetRequest).fallback).toBe("insufficient_data");
   });
 
+  it("selects exact, model, adapter, then fleet baselines deterministically", () => {
+    const requested = { metric: "rejection_rate" as const, deviceModel: "model-a", adapterVersion: "adapter-a", workCategory: "delivery", source: "physical_device" as const, synthetic: false };
+    const makeBaseline = (baselineId: string, cohort: typeof requested) => computeM25RobustBaselineV1({
+      baselineId, baselineVersion: baselineId, metric: requested.metric, cohort, minimumSupport: 1, active: true,
+      observations: [{ value: 1, capturedAt: "2026-08-01T00:00:00.000Z", scopeKeyHash: baselineId, ...cohort, source: "physical_device" }],
+    });
+    const fleet = makeBaseline("fleet", { ...requested, deviceModel: null, adapterVersion: null, workCategory: null });
+    const adapter = makeBaseline("adapter", { ...requested, deviceModel: null });
+    const model = makeBaseline("model", { ...requested, adapterVersion: null, workCategory: null });
+    const exact = makeBaseline("exact", requested);
+    expect(selectM25BaselineV1([fleet, adapter, model, exact], requested).baseline?.baselineId).toBe("exact");
+    expect(selectM25BaselineV1([fleet, adapter, model], requested).baseline?.baselineId).toBe("model");
+    expect(selectM25BaselineV1([fleet, adapter], requested).baseline?.baselineId).toBe("adapter");
+    expect(selectM25BaselineV1([fleet], requested).fallback).toBe("fleet_cohort");
+    expect(selectM25BaselineV1([{ ...fleet, cohort: { ...fleet.cohort, source: "simulator" } }], requested).fallback).toBe("insufficient_data");
+  });
+
   it("rejects mixed or mismatched synthetic extraction evidence", () => {
     const input = { snapshotId: "snapshot-cohort", scope: "device_day" as const, scopeKeyHash: "d".repeat(64), periodStart: "2026-08-07T00:00:00.000Z", periodEnd: "2026-08-08T00:00:00.000Z", adapter: { adapterVersion: "1.0.0", deviceModel: "model", synthetic: false }, generatedAt: "2026-08-08T00:00:00.000Z" };
     expect(() => extractM25FeatureSnapshotV1({ ...input, evidence: [evidence({ synthetic: false }), evidence({ evidenceId: "e-2", synthetic: true })] })).toThrow("M25_FEATURE_SYNTHETIC_COHORT_MISMATCH");

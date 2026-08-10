@@ -123,7 +123,7 @@ export function selectM25BaselineV1(
   const active = baselines.filter((baseline) => baseline.active && baseline.metric === requested.metric && baseline.cohort.synthetic === requested.synthetic);
   const exact = active.find((baseline) => sameCohort(baseline.cohort, requested) && baseline.sampleCount > 0);
   if (exact) return { baseline: { ...exact, fallback: "exact_supported_cohort" }, fallback: "exact_supported_cohort" };
-  const broader = active.find((baseline) => {
+  const compatibleBroader = active.filter((baseline) => {
     const modelMatches = requested.deviceModel !== null
       && baseline.cohort.deviceModel === requested.deviceModel;
     const adapterMatches = requested.adapterVersion !== null
@@ -139,6 +139,12 @@ export function selectM25BaselineV1(
       && compatibleWorkCategory
       && compatibleSource;
   });
+  // Keep selection independent of persistence/query order: a compatible model
+  // cohort precedes an adapter-only cohort, matching the SQL worker contract.
+  const broader = compatibleBroader.find((baseline) => requested.deviceModel !== null
+    && baseline.cohort.deviceModel === requested.deviceModel)
+    ?? compatibleBroader.find((baseline) => requested.adapterVersion !== null
+      && baseline.cohort.adapterVersion === requested.adapterVersion);
   if (broader && broader.sampleCount > 0) return { baseline: { ...broader, fallback: "broader_model_adapter_cohort" }, fallback: "broader_model_adapter_cohort" };
   const fleet = active.find((baseline) =>
     baseline.cohort.deviceModel === null

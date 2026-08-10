@@ -113,6 +113,19 @@ describe("M25 bounded statistical worker", () => {
     expect(closure).toContain("promoted_alert_id is null");
   });
 
+  it("scores from prior authoritative generations with canonical baseline fallbacks", () => {
+    const closure = readFileSync("supabase/migrations/20260808200000_m25_prior_fallback_baseline_closure.sql", "utf8");
+    expect(closure).toContain("fs.period_end<p_period_end");
+    expect(closure).not.toContain("fs.period_end<=p_period_end");
+    expect(closure).toContain("newer.generation>fs.generation");
+    expect(closure).toContain("when a.scope=p_scope and a.scope_key_hash=p_scope_key_hash then 0");
+    expect(closure).toContain("a.scope='device_model_day'");
+    expect(closure).toContain("a.scope='adapter_version_day'");
+    expect(closure).toContain("a.scope='fleet_day'");
+    expect(closure).toContain("having count(*)>=p_minimum_support order by tier limit 1");
+    expect(closure).toContain("from public.m25_select_prior_baseline_v1");
+  });
+
   it("advances reviewed signals to the newest authoritative period", () => {
     const closure = readFileSync("supabase/migrations/20260808120000_m25_authority_cohort_integrity_closure.sql", "utf8");
     expect(closure).toContain("generated_at < excluded.generated_at");

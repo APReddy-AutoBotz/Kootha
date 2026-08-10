@@ -6,7 +6,7 @@
 
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(128);
+select plan(139);
 
 select has_function('public','m25_enqueue_feature_scope_v1',array['text','text','timestamp with time zone','timestamp with time zone','uuid','uuid','text','text','boolean'],'bounded M25 enqueue RPC exists');
 select has_function('public','m25_process_statistical_queue',array['integer','timestamp with time zone'],'bounded M25 queue RPC exists');
@@ -502,6 +502,47 @@ select lives_ok($$select public.admin_list_m22_alerts_v1(p_limit=>20)$$,
 select lives_ok($$select public.admin_get_m22_alert_detail_v1(current_setting('kootha_test.m25_episode_alert_id')::uuid)$$,
   'terminal statistical alert detail remains available after cohort reopening');
 reset role;
+
+-- Baseline selection uses only strictly earlier authoritative observations.
+insert into public.m25_feature_snapshots(id,feature_version,scope,scope_key_hash,period_start,period_end,device_model,adapter_version,source_completeness,synthetic,generation,build_complete)
+select gen_random_uuid(),'m25-features-v1','device_day',repeat('1',64),d,d+interval '1 day','model-exact','adapter-exact',1,false,1,true
+from generate_series('2026-09-01'::timestamptz,'2026-09-07'::timestamptz,interval '1 day') d;
+insert into public.m25_feature_values(snapshot_id,feature_id,numeric_value,sample_count,coverage_score,source_kind,observation_status)
+select id,'event_count',extract(day from period_start),1,1,'telemetry_receipt','observed' from public.m25_feature_snapshots where scope_key_hash=repeat('1',64);
+insert into public.m25_feature_snapshots(id,feature_version,scope,scope_key_hash,period_start,period_end,device_model,adapter_version,source_completeness,synthetic,generation,build_complete)
+values(gen_random_uuid(),'m25-features-v1','device_day',repeat('1',64),'2026-09-10','2026-09-11','model-exact','adapter-exact',1,false,1,true);
+insert into public.m25_feature_values(snapshot_id,feature_id,numeric_value,sample_count,coverage_score,source_kind,observation_status)
+select id,'event_count',999,1,1,'telemetry_receipt','observed' from public.m25_feature_snapshots where scope_key_hash=repeat('1',64) and period_end='2026-09-11';
+select is((select sample_count from public.m25_select_prior_baseline_v1('event_count','telemetry_receipt','device_day',repeat('1',64),'model-exact','adapter-exact',false,'2026-09-11',8)),7,'seven prior plus current does not satisfy eight-prior support');
+select is((select fallback_used from public.m25_select_prior_baseline_v1('event_count','telemetry_receipt','device_day',repeat('1',64),'model-exact','adapter-exact',false,'2026-09-11',8)),'insufficient_data','current window cannot provide its own baseline support');
+insert into public.m25_feature_snapshots(id,feature_version,scope,scope_key_hash,period_start,period_end,device_model,adapter_version,source_completeness,synthetic,generation,build_complete)
+values(gen_random_uuid(),'m25-features-v1','device_day',repeat('1',64),'2026-09-08','2026-09-09','model-exact','adapter-exact',1,false,1,true);
+insert into public.m25_feature_values(snapshot_id,feature_id,numeric_value,sample_count,coverage_score,source_kind,observation_status)
+select id,'event_count',8,1,1,'telemetry_receipt','observed' from public.m25_feature_snapshots where scope_key_hash=repeat('1',64) and period_end='2026-09-09';
+select is((select sample_count from public.m25_select_prior_baseline_v1('event_count','telemetry_receipt','device_day',repeat('1',64),'model-exact','adapter-exact',false,'2026-09-11',8)),8,'eight strictly prior authoritative observations satisfy support');
+select is((select median from public.m25_select_prior_baseline_v1('event_count','telemetry_receipt','device_day',repeat('1',64),'model-exact','adapter-exact',false,'2026-09-11',8)),4.5::numeric,'current observation never shifts its own baseline statistic');
+select is((select fallback_used from public.m25_select_prior_baseline_v1('event_count','telemetry_receipt','device_day',repeat('1',64),'model-exact','adapter-exact',false,'2026-09-11',8)),'exact_supported_cohort','sufficient exact-scope baseline wins before every fallback');
+insert into public.m25_feature_snapshots(id,feature_version,scope,scope_key_hash,period_start,period_end,device_model,adapter_version,source_completeness,synthetic,generation,build_complete)
+values(gen_random_uuid(),'m25-features-v1','device_day',repeat('1',64),'2026-09-01','2026-09-02','model-exact','adapter-exact',1,false,2,true);
+insert into public.m25_feature_values(snapshot_id,feature_id,numeric_value,sample_count,coverage_score,source_kind,observation_status)
+select id,'event_count',100,1,1,'telemetry_receipt','observed' from public.m25_feature_snapshots where scope_key_hash=repeat('1',64) and period_end='2026-09-02' and generation=2;
+select is((select sample_count from public.m25_select_prior_baseline_v1('event_count','telemetry_receipt','device_day',repeat('1',64),'model-exact','adapter-exact',false,'2026-09-11',8)),8,'superseded generations never inflate prior baseline support');
+
+-- Representative SQL selection fixtures mirror exact -> model -> adapter -> fleet.
+insert into public.m25_feature_snapshots(id,feature_version,scope,scope_key_hash,period_start,period_end,device_model,adapter_version,source_completeness,synthetic,generation,build_complete)
+select gen_random_uuid(),'m25-features-v1',scope,hash,d,d+interval '1 day',model,adapter,1,false,1,true
+from (values ('device_model_day',repeat('2',64),'model-a',null::text),('adapter_version_day',repeat('3',64),null::text,'adapter-a'),('fleet_day',repeat('4',64),null::text,null::text)) x(scope,hash,model,adapter)
+cross join generate_series('2026-08-01'::timestamptz,'2026-08-08'::timestamptz,interval '1 day') d;
+insert into public.m25_feature_values(snapshot_id,feature_id,numeric_value,sample_count,coverage_score,source_kind,observation_status)
+select id,'event_count',case scope when 'device_model_day' then 10 when 'adapter_version_day' then 20 else 30 end,1,1,'telemetry_receipt','observed'
+from public.m25_feature_snapshots where scope_key_hash in (repeat('2',64),repeat('3',64),repeat('4',64));
+select is((select fallback_used from public.m25_select_prior_baseline_v1('event_count','telemetry_receipt','device_day',repeat('5',64),'model-a','adapter-a',false,'2026-08-10',8)),'broader_model_adapter_cohort','compatible model fallback precedes adapter and fleet');
+select is((select median from public.m25_select_prior_baseline_v1('event_count','telemetry_receipt','device_day',repeat('5',64),'model-x','adapter-a',false,'2026-08-10',8)),20::numeric,'compatible adapter fallback is selected when model is unavailable');
+select is((select fallback_used from public.m25_select_prior_baseline_v1('event_count','telemetry_receipt','device_day',repeat('5',64),'model-x','adapter-x',false,'2026-08-10',8)),'fleet_cohort','compatible fleet fallback follows broader cohorts');
+select is((select fallback_used from public.m25_select_prior_baseline_v1('event_count','telemetry_receipt','device_day',repeat('5',64),'model-x','adapter-x',true,'2026-08-10',8)),'insufficient_data','incompatible synthetic candidates are rejected');
+select ok(pg_get_functiondef('public.m25_select_prior_baseline_v1(text,text,text,text,text,text,boolean,timestamptz,integer)'::regprocedure) ilike '%fs.period_end<p_period_end%'
+  and pg_get_functiondef('public.m25_select_prior_baseline_v1(text,text,text,text,text,text,boolean,timestamptz,integer)'::regprocedure) ilike '%newer.generation>fs.generation%','SQL selector rejects current/future and superseded generations');
+select ok(pg_get_functiondef('public.m25_process_statistical_queue(integer,timestamptz)'::regprocedure) ilike '%m25_select_prior_baseline_v1%','authoritative worker applies the canonical prior baseline selector');
 
 select * from finish();
 rollback;
