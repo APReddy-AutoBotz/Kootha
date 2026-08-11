@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import "./admin-workflow.css";
 import type { FormEvent, ReactNode } from "react";
 import { BrainCircuit, CheckCircle2, ClipboardCheck, Cpu, FileClock, Globe2, Inbox, LayoutDashboard, LogOut, Megaphone, RefreshCw, Truck, UserRoundCheck, Users } from "lucide-react";
@@ -5882,6 +5882,9 @@ function DeviceRegistryView({ config, session }: { config: SupabaseConfig; sessi
   const [vehicles, setVehicles] = useState<VehicleRow[]>([]);
   const [physicalReadiness, setPhysicalReadiness] = useState<ReadinessRow | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selectedIdRef = useRef<string | null>(null);
+  const readinessRequestSequence = useRef(0);
+  selectedIdRef.current = selectedId;
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [vendorFilter, setVendorFilter] = useState("all");
@@ -5988,12 +5991,14 @@ function DeviceRegistryView({ config, session }: { config: SupabaseConfig; sessi
   }
 
   async function loadPhysicalReadiness(deviceId: string | null = selectedId) {
+    const requestSequence = ++readinessRequestSequence.current;
     if (!deviceId) { setPhysicalReadiness(null); return; }
     const response = await adminFetch(config, session, config.url + "/rest/v1/rpc/admin_get_physical_pilot_readiness_v1", {
       method: "POST", headers: createHeaders(config, session.accessToken, true), body: JSON.stringify({ p_device_id: deviceId })
     });
     if (!response.ok) throw new Error("Could not load physical-pilot readiness.");
-    setPhysicalReadiness(await response.json() as ReadinessRow);
+    const readiness = await response.json() as ReadinessRow;
+    if (requestSequence === readinessRequestSequence.current && selectedIdRef.current === deviceId) setPhysicalReadiness(readiness);
   }
 
   useEffect(() => { void loadRegistry(); }, [config, session.accessToken]);

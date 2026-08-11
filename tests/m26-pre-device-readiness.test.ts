@@ -52,6 +52,9 @@ describe("M26 database authority closure", () => {
     expect(transition).toContain("v_from:=v_row.state");
     expect(transition).toContain("Transition key request mismatch");
     expect(transition).toContain("expected_heartbeat_seconds");
+    expect(transition).toContain("p_expected_version is null");
+    expect(transition).toContain("v_receipt.expected_version is distinct from p_expected_version");
+    expect(transition).toContain("'expected_version',p_expected_version");
   });
 
   it("revalidates current version, candidate, device, link, install, credential, network, head and outcomes", () => {
@@ -63,5 +66,36 @@ describe("M26 database authority closure", () => {
     ]) expect(migration).toContain(binding);
     expect(migration).toContain("c.state<>'commissioning'");
     expect(migration).toContain("k.last_verified_at is null");
+    expect(migration).toContain("e.certification_run_id=c.selected_certification_run_id");
+  });
+
+  it("uses the current successful run and AP approval rather than default manifest certification state", () => {
+    expect(migration).toContain("m26_current_certification_run_v1");
+    expect(migration).toContain("h.certification_run_id=r.id");
+    expect(migration).toContain("r.certification_state='passed'");
+    expect(migration).not.toContain("m.certification_state<>'passed'");
+  });
+
+  it("rejects unsafe immutable reason codes at ingest and table-trigger boundaries", () => {
+    expect(migration).toContain("physical_pilot_evidence_reason_codes_safe");
+    expect(migration).toContain("char_length(v_reason) not between 1 and 80");
+    expect(migration).toContain("not public.m24f_is_safe_metadata(v_reason)");
+    expect(migration).toContain("not public.m24f_is_safe_metadata(reason)");
+  });
+});
+
+describe("M26 admin readiness request fencing", () => {
+  const admin = readFileSync("apps/web/src/admin.tsx", "utf8");
+
+  it("binds readiness responses to both the latest sequence and selected device", () => {
+    expect(admin).toContain("const readinessRequestSequence = useRef(0)");
+    expect(admin).toContain("const requestSequence = ++readinessRequestSequence.current");
+    expect(admin).toContain("requestSequence === readinessRequestSequence.current && selectedIdRef.current === deviceId");
+  });
+
+  it("retains a readiness refresh after successful registry mutations", () => {
+    const mutation = admin.slice(admin.indexOf("async function callDeviceRpc"), admin.indexOf("function identityBody"));
+    expect(mutation).toContain("await loadRegistry()");
+    expect(mutation).toContain("await loadPhysicalReadiness(selectedId)");
   });
 });
