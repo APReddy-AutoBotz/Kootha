@@ -5874,11 +5874,13 @@ function AdminExecutionPanel({
 function DeviceRegistryView({ config, session }: { config: SupabaseConfig; session: AuthSession }) {
   type DeviceRow = GpsDeviceRegistryRecord & { current_vehicle_id?: string | null };
   type VehicleRow = { id: string; vehicle_number: string; city: string | null };
+  type ReadinessRow = { contractVersion: string; stage: string; blockingReasons: string[]; selectedAdapter: { adapterId: string; adapterVersion: string } | null; credentialReady: boolean; installationReady: boolean; networkReady: boolean; physicalEvidence: boolean };
   const [devices, setDevices] = useState<DeviceRow[]>([]);
   const [links, setLinks] = useState<GpsDeviceVehicleLinkRecord[]>([]);
   const [events, setEvents] = useState<GpsDeviceLifecycleEventRecord[]>([]);
   const [credentials, setCredentials] = useState<GpsDeviceCredentialMetadataRecord[]>([]);
   const [vehicles, setVehicles] = useState<VehicleRow[]>([]);
+  const [physicalReadiness, setPhysicalReadiness] = useState<ReadinessRow | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -5986,6 +5988,19 @@ function DeviceRegistryView({ config, session }: { config: SupabaseConfig; sessi
   }
 
   useEffect(() => { void loadRegistry(); }, [config, session.accessToken]);
+
+  useEffect(() => {
+    if (!selectedId) { setPhysicalReadiness(null); return; }
+    let cancelled = false;
+    void adminFetch(config, session, config.url + "/rest/v1/rpc/admin_get_physical_pilot_readiness_v1", {
+      method: "POST", headers: createHeaders(config, session.accessToken, true), body: JSON.stringify({ p_device_id: selectedId })
+    }).then(async (response) => {
+      if (!response.ok) throw new Error("Could not load physical-pilot readiness.");
+      const readiness = await response.json() as ReadinessRow;
+      if (!cancelled) setPhysicalReadiness(readiness);
+    }).catch((readinessError) => { if (!cancelled) setError(readinessError instanceof Error ? readinessError.message : "Could not load readiness."); });
+    return () => { cancelled = true; };
+  }, [config, session.accessToken, selectedId]);
 
   useEffect(() => {
     if (!selected || !editing) return;
@@ -6197,6 +6212,16 @@ function DeviceRegistryView({ config, session }: { config: SupabaseConfig; sessi
             <div><dt>Last Update</dt><dd>{formatTime(selected.last_telemetry_at)}</dd></div>
             <div><dt>Updated</dt><dd>{formatTime(selected.updated_at)}</dd></div>
           </dl>
+          <section className="form-section" aria-labelledby="physical-readiness-title">
+            <h3 id="physical-readiness-title">Physical-pilot readiness</h3>
+            {!physicalReadiness ? <p>Server readiness is loading.</p> : <>
+              <p><strong>Stage:</strong> {physicalReadiness.stage.replaceAll("_", " ")}</p>
+              <p><strong>Missing prerequisites:</strong> {physicalReadiness.blockingReasons.length ? physicalReadiness.blockingReasons.map((reason) => reason.replaceAll("_", " ")).join(", ") : "None"}</p>
+              <p><strong>Selected adapter:</strong> {physicalReadiness.selectedAdapter ? `${physicalReadiness.selectedAdapter.adapterId} ${physicalReadiness.selectedAdapter.adapterVersion}` : "Not selected"}</p>
+              <p>Credential: {physicalReadiness.credentialReady ? "ready" : "needed"} · Installation/link: {physicalReadiness.installationReady ? "ready" : "needed"} · Network: {physicalReadiness.networkReady ? "validated" : "not validated"}</p>
+              <p><strong>Real-device evidence:</strong> {physicalReadiness.physicalEvidence ? "validated physical receipt" : "not recorded"}. Simulation and certification evidence never count as physical evidence.</p>
+            </>}
+          </section>
           <DeviceM22HealthPanel connection={{ url: config.url, anonKey: config.anonKey, accessToken: session.accessToken }} deviceId={selected.id} />
           {selected.admin_note && <p className="quiet-note"><strong>Admin note:</strong> {selected.admin_note}</p>}
           <fieldset className="form-section device-actions" disabled={busy || selected.status === "retired"}><legend>Admin actions</legend>

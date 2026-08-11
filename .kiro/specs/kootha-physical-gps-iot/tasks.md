@@ -51,7 +51,7 @@ M19 is a planning-only stream. M18 real-device Phone Location Proof evidence rem
 - [x] M20B-T004 Prove synthetic marking and absence of real routes, people, and production credentials.
   - Requirements: SIM-001, PRIVACY-004
 
-M18 remains incomplete and in progress. M20A, M20B, M21, M22, and M23 are complete. M24 through M26 remain Not Started.
+M18 remains incomplete and in progress. M20A, M20B, M21, M22, M23, M24F, and M25 are complete. Selected-device M24 and physical M26 remain incomplete pending AP selection and real hardware/network evidence.
 
 ## M21 — Generic Secure HTTP Ingestion
 
@@ -92,15 +92,15 @@ M18 remains incomplete and in progress. M20A, M20B, M21, M22, and M23 are comple
 
 ## M24F — Vendor-Neutral Adapter Certification Foundation (software-only)
 
-M24F is In Progress pending merge and post-merge verification. It prepares a
+M24F is complete from the merged implementation and post-merge verification. It prepares a
 future selected adapter without selecting a vendor, storing credentials,
 connecting hardware, or claiming physical evidence.
 
-- [~] M24F-T001 Add versioned adapter capability manifests and safe candidate decision metadata.
+- [x] M24F-T001 Add versioned adapter capability manifests and safe candidate decision metadata.
   - Requirements: ADAPTER-001, ING-SEC-002, ADMIN-001
-- [~] M24F-T002 Add the explicitly synthetic reference vendor-cloud webhook adapter and conformance harness.
+- [x] M24F-T002 Add the explicitly synthetic reference vendor-cloud webhook adapter and conformance harness.
   - Requirements: ADAPTER-001, ING-SEC-001, ING-SEC-004, PRIVACY-001 through PRIVACY-004
-- [~] M24F-T003 Add certification evidence, server-only secret boundary, admin readiness, and audit behavior.
+- [x] M24F-T003 Add certification evidence, server-only secret boundary, admin readiness, and audit behavior.
   - Requirements: ING-SEC-002, ADMIN-001, RETENTION-001
 
 ## M24 — Selected Vendor or Device Adapter
@@ -113,11 +113,11 @@ connecting hardware, or claiming physical evidence.
 
 ## M25 — Statistical and AI/ML Readiness
 
-- [~] M25-T001 Assess observed event quality, label availability, anomaly targets, and provisional data assumptions.
+- [x] M25-T001 Assess observed event quality, label availability, anomaly targets, and provisional data assumptions.
   - Requirements: AI-READY-001, AI-READY-002
-- [~] M25-T002 Add explainable statistical signals before any production ML claim.
+- [x] M25-T002 Add explainable statistical signals before any production ML claim.
   - Requirements: AI-READY-001
-- [~] M25-T003 Add model/version/confidence/explanation, rule fallback, and human-review evidence only when justified.
+- [x] M25-T003 Add model/version/confidence/explanation, rule fallback, and human-review evidence only when justified.
   - Requirements: AI-READY-001
 
 ## M26 — Real Physical Device Pilot Evidence
