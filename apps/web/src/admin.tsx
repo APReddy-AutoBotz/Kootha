@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import "./admin-workflow.css";
 import type { FormEvent, ReactNode } from "react";
-import { CheckCircle2, ClipboardCheck, Cpu, FileClock, Globe2, Inbox, LayoutDashboard, LogOut, Megaphone, RefreshCw, Truck, UserRoundCheck, Users } from "lucide-react";
+import { BrainCircuit, CheckCircle2, ClipboardCheck, Cpu, FileClock, Globe2, Inbox, LayoutDashboard, LogOut, Megaphone, RefreshCw, Truck, UserRoundCheck, Users } from "lucide-react";
 import {
   adWorkAssignmentStatusOptions,
   adWorkExecutionDayStatusOptions,
@@ -82,6 +82,7 @@ import {
   yesNoNotSureOptions
 } from "@kootha/shared";
 import { AlertsView, DeviceM22HealthPanel, TrackingHealthView } from "./admin-m22";
+import { IntelligenceAdapterReadinessView } from "./admin-intelligence";
 import type {
   AdWorkAssignmentStatus,
   AdWorkExecutionDayStatus,
@@ -288,7 +289,7 @@ type AreaRecord = {
   active: boolean;
 };
 
-type AdminView = "enquiries" | "adWorks" | "driverApplications" | "drivers" | "vehicles" | "devices" | "trackingHealth" | "alerts" | "audit" | "dashboard";
+type AdminView = "enquiries" | "adWorks" | "driverApplications" | "drivers" | "vehicles" | "devices" | "trackingHealth" | "alerts" | "intelligence" | "audit" | "dashboard";
 type AdWorkWorkflowStep = "plan" | "assign" | "release" | "proof" | "close";
 
 type AdminFilters = {
@@ -6298,6 +6299,7 @@ function AdminShell({
     { id: "devices", label: businessLabels.admin.devices, icon: Cpu },
     { id: "trackingHealth", label: "Tracking Health", icon: Cpu },
     { id: "alerts", label: "Alerts", icon: FileClock },
+    { id: "intelligence", label: "Intelligence & Adapters", icon: BrainCircuit },
     { id: "audit", label: "Activity", icon: FileClock }
   ];
 
@@ -6811,6 +6813,7 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
               {activeView === "devices" && businessLabels.admin.devices}
               {activeView === "trackingHealth" && "Tracking Health"}
               {activeView === "alerts" && "Alerts"}
+              {activeView === "intelligence" && "Intelligence and Adapter Readiness"}
               {activeView === "audit" && "Activity history"}
             </h1>
             <p>
@@ -6823,6 +6826,7 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
               {activeView === "devices" && "Manage physical device identity, vehicle links, installation, lifecycle, and safe credential metadata."}
               {activeView === "trackingHealth" && "Review phone and physical-device health separately without maps or M23 comparison."}
               {activeView === "alerts" && "Review deterministic operational alerts and lifecycle history."}
+              {activeView === "intelligence" && "Review vendor-neutral adapter readiness, data quality, explainable statistical signals, and model-governance gates."}
               {activeView === "audit" && "Review safe operational changes without exposing private values."}
             </p>
           </div>
@@ -6854,6 +6858,7 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
         {activeView === "devices" && <DeviceRegistryView config={config} session={session} />}
         {activeView === "trackingHealth" && <TrackingHealthView connection={{ url: config.url, anonKey: config.anonKey, accessToken: session.accessToken }} />}
         {activeView === "alerts" && <AlertsView connection={{ url: config.url, anonKey: config.anonKey, accessToken: session.accessToken }} />}
+        {activeView === "intelligence" && <IntelligenceAdapterReadinessView connection={{ url: config.url, anonKey: config.anonKey, accessToken: session.accessToken }} />}
         {activeView === "audit" && <AuditView config={config} session={session} />}
 
         {activeView === "enquiries" && (

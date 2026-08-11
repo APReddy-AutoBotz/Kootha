@@ -4,6 +4,7 @@ import { execFileSync } from "node:child_process";
 import { test } from "vitest";
 
 const root = process.cwd();
+const isM24fM25Scope = (path: string) => /(?:m24f|m25|admin-intelligence)/i.test(path);
 
 test("M21 changed implementation stays inside the approved HTTP telemetry scope", () => {
   const changed = execFileSync(
@@ -16,6 +17,7 @@ test("M21 changed implementation stays inside the approved HTTP telemetry scope"
     .map((path) => path.replaceAll("\\", "/"));
 
   for (const path of changed) {
+    if (isM24fM25Scope(path)) continue;
     assert.doesNotMatch(path, /(?:^|\/)(?:ios|customer-app|pwa)(?:\/|$)/i);
     assert.doesNotMatch(path, /(?:mqtt|udp|tcp).*(?:listener|gateway)/i);
     assert.doesNotMatch(path, /(?:vendor).*(?:adapter)/i);
@@ -33,6 +35,7 @@ test("M21 runtime sources add no forbidden protocol, alert, comparison, map, or 
     .split(/\r?\n/)
     .filter((path) => /\.(?:ts|tsx|mjs|sql)$/.test(path))
     .filter((path) => !/^(?:tests|scripts)\//.test(path.replaceAll("\\", "/")))
+    .filter((path) => !isM24fM25Scope(path))
     .filter((path) => !/(?:^|\/)m23(?:-|\/|\.)/i.test(path.replaceAll("\\", "/")));
 
   const source = changed
@@ -54,7 +57,9 @@ test("M21 evidence explicitly remains local-only", () => {
   assert.match(guide, /no hosted Supabase migration/i);
   assert.match(guide, /no Netlify deployment/i);
   assert.match(guide, /M21 is Completed/i);
-  assert.match(guide, /M22 (?:is|are) Completed/i);
-  assert.match(guide, /M23 is In Progress/i);
-  assert.match(guide, /M24(?:\u2013|-| through )M26 remain Not Started/i);
+  assert.match(guide, /M22.*Completed/i);
+  assert.match(guide, /M23 are Completed/i);
+  assert.match(guide, /M24F\/M25 are In Progress/i);
+  assert.match(guide, /original M24 remains AP-gated/i);
+  assert.match(guide, /M26 remains Not Started/i);
 });

@@ -17,3 +17,8 @@ M22_RETENTION_BATCH_SIZE=250
 
 # M23 server-only phone/device comparison worker. Disabled by default; policy and thresholds are database-owned.
 M23_COMPARISON_ENGINE_ENABLED=false
+
+# M24F synthetic certification and M25 statistical intelligence. Disabled by default.
+# The reference secret is only a local/server test placeholder; never use a real vendor credential here.
+M24F_REFERENCE_SYNTHETIC_TEST_SECRET=replace-with-synthetic-certification-secret
+M25_STATISTICAL_ENGINE_ENABLED=false
