@@ -5987,18 +5987,21 @@ function DeviceRegistryView({ config, session }: { config: SupabaseConfig; sessi
     }
   }
 
+  async function loadPhysicalReadiness(deviceId: string | null = selectedId) {
+    if (!deviceId) { setPhysicalReadiness(null); return; }
+    const response = await adminFetch(config, session, config.url + "/rest/v1/rpc/admin_get_physical_pilot_readiness_v1", {
+      method: "POST", headers: createHeaders(config, session.accessToken, true), body: JSON.stringify({ p_device_id: deviceId })
+    });
+    if (!response.ok) throw new Error("Could not load physical-pilot readiness.");
+    setPhysicalReadiness(await response.json() as ReadinessRow);
+  }
+
   useEffect(() => { void loadRegistry(); }, [config, session.accessToken]);
 
   useEffect(() => {
     if (!selectedId) { setPhysicalReadiness(null); return; }
     let cancelled = false;
-    void adminFetch(config, session, config.url + "/rest/v1/rpc/admin_get_physical_pilot_readiness_v1", {
-      method: "POST", headers: createHeaders(config, session.accessToken, true), body: JSON.stringify({ p_device_id: selectedId })
-    }).then(async (response) => {
-      if (!response.ok) throw new Error("Could not load physical-pilot readiness.");
-      const readiness = await response.json() as ReadinessRow;
-      if (!cancelled) setPhysicalReadiness(readiness);
-    }).catch((readinessError) => { if (!cancelled) setError(readinessError instanceof Error ? readinessError.message : "Could not load readiness."); });
+    void loadPhysicalReadiness(selectedId).catch((readinessError) => { if (!cancelled) setError(readinessError instanceof Error ? readinessError.message : "Could not load readiness."); });
     return () => { cancelled = true; };
   }, [config, session.accessToken, selectedId]);
 
@@ -6044,6 +6047,7 @@ function DeviceRegistryView({ config, session }: { config: SupabaseConfig; sessi
       setMessage(success);
       setOperation((current) => ({ ...current, reason: "", note: "" }));
       await loadRegistry();
+      await loadPhysicalReadiness(selectedId);
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "Device change could not be saved.");
     } finally {

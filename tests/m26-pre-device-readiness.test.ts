@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import { M26_READINESS_CONTRACT_VERSION_V1, physicalPilotReadinessStagesV1, validatePhysicalEvidenceManifestV1 } from "@kootha/shared";
 
 const physicalManifest = () => ({
   contractVersion: M26_READINESS_CONTRACT_VERSION_V1, classification: "physical" as const, physicalEvidence: true,
-  repository: { headSha: "a".repeat(64), workflowRunId: "run-31" },
+  repository: { headSha: "a".repeat(40), workflowRunId: "run-31" },
   adapter: { manifestId: "manifest-1", adapterId: "selected-adapter", adapterVersion: "1.0.0" },
   device: { identityHash: "b".repeat(64), installationReceiptId: "install-1", vehicleLinkReceiptId: "link-1" },
   network: { configurationClass: "approved-class", validationReceiptId: "network-1" },
@@ -14,11 +15,18 @@ const physicalManifest = () => ({
 
 describe("M26 pre-device readiness", () => {
   it("exposes every stable server readiness stage", () => expect(physicalPilotReadinessStagesV1).toHaveLength(9));
-  it("accepts an exact-bound physical evidence receipt", () => expect(validatePhysicalEvidenceManifestV1(physicalManifest()).ok).toBe(true));
+  it("accepts an exact-bound physical evidence receipt and a normal Git SHA-1", () => expect(validatePhysicalEvidenceManifestV1(physicalManifest(), { sequenceSupported: true, reconnectSupported: false }).ok).toBe(true));
   it("structurally rejects synthetic evidence claiming to be physical", () => expect(validatePhysicalEvidenceManifestV1({ ...physicalManifest(), classification: "synthetic" }).ok).toBe(false));
+  it("rejects physical classification without physical evidence", () => expect(validatePhysicalEvidenceManifestV1({ ...physicalManifest(), physicalEvidence: false }).ok).toBe(false));
   it("rejects changed or missing repository and adapter bindings", () => {
     expect(validatePhysicalEvidenceManifestV1({ ...physicalManifest(), repository: { headSha: "changed", workflowRunId: "run-31" } }).ok).toBe(false);
     expect(validatePhysicalEvidenceManifestV1({ ...physicalManifest(), adapter: { manifestId: "", adapterId: "selected-adapter", adapterVersion: "1" } }).ok).toBe(false);
+  });
+  it("requires sequence and reconnect to pass unless the certified capability is unsupported", () => {
+    const base = physicalManifest();
+    expect(validatePhysicalEvidenceManifestV1({ ...base, outcomes: { ...base.outcomes, sequence: "failed" } }, { sequenceSupported: true, reconnectSupported: false }).ok).toBe(false);
+    expect(validatePhysicalEvidenceManifestV1(base, { sequenceSupported: true, reconnectSupported: true }).ok).toBe(false);
+    expect(validatePhysicalEvidenceManifestV1(base, { sequenceSupported: true, reconnectSupported: false }).ok).toBe(true);
   });
   it("rejects failed replay, empty telemetry, invalid windows and partial physical claims", () => {
     const base = physicalManifest();
@@ -28,3 +36,32 @@ describe("M26 pre-device readiness", () => {
   });
 });
 
+describe("M26 database authority closure", () => {
+  const migration = readFileSync("supabase/migrations/20260811010000_m26_pre_device_commissioning_readiness.sql", "utf8");
+
+  it("uses canonical admin authority and gives evidence ingestion only to service role", () => {
+    expect(migration).toContain("public.m20a_require_admin()");
+    expect(migration).not.toMatch(/public\.require_admin\(\)/);
+    expect(migration).toContain("coalesce(auth.role(),'')<>'service_role'");
+    expect(migration).toMatch(/revoke all on function public\.service_record_physical_pilot_network_validation_v1[\s\S]+from public,anon,authenticated/);
+  });
+
+  it("does not accept a browser network timestamp and preserves transition lineage and exact replay", () => {
+    const transition = migration.slice(migration.indexOf("admin_transition_physical_pilot_commissioning_v1"), migration.indexOf("service_record_physical_pilot_network_validation_v1"));
+    expect(transition).not.toContain("p_network_validated_at");
+    expect(transition).toContain("v_from:=v_row.state");
+    expect(transition).toContain("Transition key request mismatch");
+    expect(transition).toContain("expected_heartbeat_seconds");
+  });
+
+  it("revalidates current version, candidate, device, link, install, credential, network, head and outcomes", () => {
+    for (const binding of [
+      "commissioning_version=c.version", "selected_candidate_id=c.selected_candidate_id", "e.gps_device_id=p_device_id",
+      "e.vehicle_link_id=l.id", "e.installation_receipt_id=i.id", "e.credential_id=k.id",
+      "e.network_validation_receipt_id=n.id", "app.repository_head_sha", "app.repository_workflow_run_id",
+      "e.sequence_outcome<>'failed'", "e.reconnect_outcome<>'failed'",
+    ]) expect(migration).toContain(binding);
+    expect(migration).toContain("c.state<>'commissioning'");
+    expect(migration).toContain("k.last_verified_at is null");
+  });
+});

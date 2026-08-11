@@ -54,6 +54,7 @@ export interface PhysicalEvidenceManifestV1 {
   readonly recordedAt: string;
 }
 
+const gitObjectId = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 const sha256 = /^[a-f0-9]{64}$/;
 const bounded = (value: unknown, max = 160): value is string =>
   typeof value === "string" && value.length > 0 && value.length <= max;
@@ -61,21 +62,33 @@ const timestamp = (value: unknown): value is string =>
   typeof value === "string" && Number.isFinite(Date.parse(value));
 
 /** Fail-closed validation. Synthetic fixtures can never assert physical evidence. */
-export function validatePhysicalEvidenceManifestV1(value: unknown): ValidationResultV1<PhysicalEvidenceManifestV1> {
+export interface PhysicalEvidenceCapabilitiesV1 {
+  readonly sequenceSupported: boolean;
+  readonly reconnectSupported: boolean;
+}
+
+export function validatePhysicalEvidenceManifestV1(
+  value: unknown,
+  capabilities?: PhysicalEvidenceCapabilitiesV1,
+): ValidationResultV1<PhysicalEvidenceManifestV1> {
   const issues: Array<{ path: string; code: "invalid_type" | "invalid_value" | "unsupported" }> = [];
   if (!value || typeof value !== "object" || Array.isArray(value)) return { ok: false, issues: [{ path: "$", code: "invalid_type" }] };
   const v = value as Partial<PhysicalEvidenceManifestV1>;
   if (v.contractVersion !== M26_READINESS_CONTRACT_VERSION_V1) issues.push({ path: "contractVersion", code: "unsupported" });
   if (!(["physical", "synthetic"] as const).includes(v.classification as never)) issues.push({ path: "classification", code: "invalid_value" });
-  if (typeof v.physicalEvidence !== "boolean" || (v.classification === "synthetic" && v.physicalEvidence)) issues.push({ path: "physicalEvidence", code: "invalid_value" });
-  if (!v.repository || !sha256.test(v.repository.headSha) || !bounded(v.repository.workflowRunId)) issues.push({ path: "repository", code: "invalid_value" });
+  if (typeof v.physicalEvidence !== "boolean" || v.physicalEvidence !== (v.classification === "physical")) issues.push({ path: "physicalEvidence", code: "invalid_value" });
+  if (!v.repository || !gitObjectId.test(v.repository.headSha) || !bounded(v.repository.workflowRunId)) issues.push({ path: "repository", code: "invalid_value" });
   if (!v.adapter || !bounded(v.adapter.manifestId) || !bounded(v.adapter.adapterId) || !bounded(v.adapter.adapterVersion)) issues.push({ path: "adapter", code: "invalid_value" });
   if (!v.device || !sha256.test(v.device.identityHash) || !bounded(v.device.installationReceiptId) || !bounded(v.device.vehicleLinkReceiptId)) issues.push({ path: "device", code: "invalid_value" });
   if (!v.network || !bounded(v.network.configurationClass) || !bounded(v.network.validationReceiptId)) issues.push({ path: "network", code: "invalid_value" });
   if (!v.observation || !timestamp(v.observation.startedAt) || !timestamp(v.observation.endedAt) || Date.parse(v.observation.endedAt) <= Date.parse(v.observation.startedAt) || !Number.isSafeInteger(v.observation.telemetryCount) || v.observation.telemetryCount < 1) issues.push({ path: "observation", code: "invalid_value" });
-  if (!v.outcomes || v.outcomes.authentication !== "passed" || v.outcomes.replay !== "passed" || v.outcomes.freshness !== "passed" || v.outcomes.health !== "passed") issues.push({ path: "outcomes", code: "invalid_value" });
+  const outcomeSupported = (outcome: unknown, supported: boolean | undefined) =>
+    outcome === "passed" || (outcome === "not_supported" && supported === false);
+  if (!v.outcomes || v.outcomes.authentication !== "passed" || v.outcomes.replay !== "passed"
+    || !outcomeSupported(v.outcomes.sequence, capabilities?.sequenceSupported)
+    || !outcomeSupported(v.outcomes.reconnect, capabilities?.reconnectSupported)
+    || v.outcomes.freshness !== "passed" || v.outcomes.health !== "passed") issues.push({ path: "outcomes", code: "invalid_value" });
   if (!(["pass", "partial", "blocked"] as const).includes(v.disposition as never) || (v.physicalEvidence && v.disposition !== "pass")) issues.push({ path: "disposition", code: "invalid_value" });
   if (!Array.isArray(v.reasonCodes) || v.reasonCodes.some((reason) => !bounded(reason, 80)) || !sha256.test(v.operatorIdHash ?? "") || !bounded(v.receiptId) || !timestamp(v.recordedAt)) issues.push({ path: "receipt", code: "invalid_value" });
   return issues.length ? { ok: false, issues } : { ok: true, value: v as PhysicalEvidenceManifestV1 };
 }
-
