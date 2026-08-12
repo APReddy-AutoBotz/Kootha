@@ -139,11 +139,22 @@ reset role; insert into public.vehicles(id,vehicle_number,vehicle_type,city) val
 set local role authenticated; select set_config('request.jwt.claim.sub','26000000-0000-0000-0000-000000000001',true); select set_config('request.jwt.claim.role','authenticated',true);
 select lives_ok($$select public.admin_link_gps_device_vehicle((select id from public.gps_devices where device_code='M26-FIXTURE'),'26000000-0000-0000-0000-000000000014',clock_timestamp(),null,'fixture reassignment')$$,'vehicle reassignment executes');
 select is((select vehicle_id::text from public.gps_device_vehicle_links where gps_device_id=(select id from public.gps_devices where device_code='M26-FIXTURE') and effective_until is null),'26000000-0000-0000-0000-000000000014','reassignment rotates the current link authority');
-select public.admin_record_gps_device_event((select id from public.gps_devices where device_code='M26-FIXTURE'),'installed',clock_timestamp(),'26000000-0000-0000-0000-000000000014',null,'fixture reinstall','fixture reinstall');
-select public.admin_change_gps_device_status((select id from public.gps_devices where device_code='M26-FIXTURE'),'active',null);
-select public.admin_record_gps_device_event((select id from public.gps_devices where device_code='M26-FIXTURE'),'removed',clock_timestamp(),'26000000-0000-0000-0000-000000000014',null,'fixture removal','fixture removal');
-select lives_ok($$select public.admin_record_gps_device_event((select id from public.gps_devices where device_code='M26-FIXTURE'),'setup_reopened',clock_timestamp(),'26000000-0000-0000-0000-000000000014',null,'fixture reopen','fixture reopen')$$,'setup reopen executes');
-select is(public.admin_get_physical_pilot_readiness_v1((select id from public.gps_devices where device_code='M26-FIXTURE'))->>'stage','blocked','reassignment and setup reopen remain fail closed');
+select ok(exists(
+ select 1
+ from public.gps_devices d
+ join public.gps_device_vehicle_links l on l.gps_device_id=d.id and l.is_primary and l.effective_until is null
+ join lateral (
+  select e.* from public.gps_device_lifecycle_events e
+  where e.gps_device_id=d.id
+  order by e.effective_at desc,e.created_at desc limit 1
+ ) e on true
+ where d.device_code='M26-FIXTURE'
+  and d.status='pending_setup' and d.installation_state='planned'
+  and l.vehicle_id='26000000-0000-0000-0000-000000000014'
+  and e.event_type='installation_planned' and e.vehicle_id=l.vehicle_id
+  and e.effective_at=l.effective_from
+),'reassignment produces canonical planned pending-setup state and lifecycle binding');
+select is(public.admin_get_physical_pilot_readiness_v1((select id from public.gps_devices where device_code='M26-FIXTURE'))->>'stage','blocked','reassignment remains non-ready until current physical setup evidence is completed');
 
 reset role;
 insert into public.m24f_certification_runs(id,candidate_id,manifest_id,adapter_id,adapter_version,certification_level,certification_state,synthetic,scenario_count,passed_count,failed_count,result_digest,safe_summary,completed_at)
