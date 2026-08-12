@@ -7,8 +7,22 @@ create table public.physical_pilot_evidence_telemetry_receipts (
  primary key(evidence_receipt_id,telemetry_receipt_id), unique(telemetry_receipt_id)
 );
 alter table public.physical_pilot_evidence_telemetry_receipts enable row level security;
-revoke all on public.physical_pilot_evidence_telemetry_receipts from public,anon,authenticated;
+revoke all on public.physical_pilot_evidence_telemetry_receipts from public,anon,authenticated,service_role;
 create trigger physical_pilot_evidence_telemetry_immutable before update or delete on public.physical_pilot_evidence_telemetry_receipts for each row execute function public.m26_reject_immutable_change();
+
+create or replace function public.m26_is_authoritative_observation_v1(
+ p_received_at timestamptz,p_captured_at timestamptz,p_network_validated_at timestamptz,
+ p_observation_started_at timestamptz,p_observation_ended_at timestamptz
+) returns boolean language sql immutable set search_path=pg_catalog,public as $$
+ select coalesce(
+  p_received_at>=greatest(p_network_validated_at,p_observation_started_at)
+  and p_received_at<=p_observation_ended_at
+  and p_captured_at>=p_observation_started_at
+  and p_captured_at<=p_observation_ended_at,
+  false
+ )
+$$;
+revoke all on function public.m26_is_authoritative_observation_v1(timestamptz,timestamptz,timestamptz,timestamptz,timestamptz) from public,anon,authenticated,service_role;
 
 create or replace function public.service_record_physical_pilot_evidence_v1(
  p_receipt_id uuid,p_commissioning_id uuid,p_expected_version bigint,p_candidate_id uuid,p_manifest_id uuid,p_repository_head_sha text,p_workflow_run_id text,
@@ -76,13 +90,14 @@ begin
     and t.adapter_id=m.adapter_id and t.adapter_version=m.adapter_version
     and not t.synthetic and t.disposition in ('accepted_live','accepted_delayed')
     and t.quality in ('valid','degraded') and t.freshness in ('live','delayed','degraded_freshness')
-    and t.captured_at>=p_observation_started_at and t.captured_at<=p_observation_ended_at;
+    and public.m26_is_authoritative_observation_v1(t.received_at,t.captured_at,n.validated_at,p_observation_started_at,p_observation_ended_at);
   if v_sequence_proven then
    select not exists(
     select 1 from public.telemetry_receipts t
     where t.gps_device_id=p_device_id and t.credential_id=p_credential_id and t.gps_device_vehicle_link_id=p_vehicle_link_id
       and t.adapter_id=m.adapter_id and t.adapter_version=m.adapter_version and not t.synthetic
-      and t.disposition in ('accepted_live','accepted_delayed') and t.captured_at>=p_observation_started_at and t.captured_at<=p_observation_ended_at
+      and t.disposition in ('accepted_live','accepted_delayed')
+      and public.m26_is_authoritative_observation_v1(t.received_at,t.captured_at,n.validated_at,p_observation_started_at,p_observation_ended_at)
     group by t.stream_epoch having count(distinct t.sequence)<>(max(t.sequence)-min(t.sequence)+1)
    ) into v_sequence_proven;
   end if;
@@ -102,7 +117,8 @@ begin
   where t.gps_device_id=p_device_id and t.credential_id=p_credential_id and t.gps_device_vehicle_link_id=p_vehicle_link_id
     and t.adapter_id=m.adapter_id and t.adapter_version=m.adapter_version and not t.synthetic
     and t.disposition in ('accepted_live','accepted_delayed') and t.quality in ('valid','degraded')
-    and t.freshness in ('live','delayed','degraded_freshness') and t.captured_at>=p_observation_started_at and t.captured_at<=p_observation_ended_at;
+    and t.freshness in ('live','delayed','degraded_freshness')
+    and public.m26_is_authoritative_observation_v1(t.received_at,t.captured_at,n.validated_at,p_observation_started_at,p_observation_ended_at);
  end if;
  return p_receipt_id;
 end $$;
@@ -137,7 +153,7 @@ begin
    and e.network_validation_receipt_id=n.id and e.network_configuration_class=c.network_configuration_class
    and e.repository_authority_generation=r.generation and e.repository_head_sha=r.repository_head_sha and e.workflow_run_id=r.workflow_run_id
    and e.classification='physical' and e.physical_evidence and e.disposition='pass'
-   and e.telemetry_count=(select count(*) from public.physical_pilot_evidence_telemetry_receipts et join public.telemetry_receipts t on t.id=et.telemetry_receipt_id where et.evidence_receipt_id=e.id and not t.synthetic and t.gps_device_id=e.gps_device_id and t.credential_id=e.credential_id and t.gps_device_vehicle_link_id=e.vehicle_link_id and t.adapter_id=m.adapter_id and t.adapter_version=m.adapter_version and t.captured_at>=e.observation_started_at and t.captured_at<=e.observation_ended_at) and e.authentication_passed and e.replay_passed and e.freshness_passed and e.health_passed
+   and e.telemetry_count=(select count(*) from public.physical_pilot_evidence_telemetry_receipts et join public.telemetry_receipts t on t.id=et.telemetry_receipt_id where et.evidence_receipt_id=e.id and not t.synthetic and t.gps_device_id=e.gps_device_id and t.credential_id=e.credential_id and t.gps_device_vehicle_link_id=e.vehicle_link_id and t.adapter_id=m.adapter_id and t.adapter_version=m.adapter_version and public.m26_is_authoritative_observation_v1(t.received_at,t.captured_at,n.validated_at,e.observation_started_at,e.observation_ended_at)) and e.authentication_passed and e.replay_passed and e.freshness_passed and e.health_passed
    and e.sequence_outcome<>'failed' and e.reconnect_outcome<>'failed' and (e.sequence_outcome<>'not_supported' or not m.sequence_available) and (e.reconnect_outcome<>'not_supported' or not m.offline_buffering_supported)) into v_physical;
  end if;
  if c.id is null then v_stage:='awaiting_hardware_selection';v_reasons:=array['hardware_not_selected'];
@@ -159,3 +175,16 @@ begin
   'credentialReady',k.id is not null,'installationReady',l.id is not null and i.event_type='installed' and i.vehicle_id=l.vehicle_id and i.effective_at>=l.effective_from and d.installation_state='installed',
   'networkReady',n.id is not null,'physicalEvidence',v_physical,'derivedAt',clock_timestamp());
 end $$;
+
+-- The service credential is an RPC caller, never a table writer.  Supabase's
+-- default service-role grants bypass RLS, so every table capable of minting or
+-- rewriting commissioning, network, telemetry, evidence, or readiness truth is
+-- explicitly closed to direct DML (including TRUNCATE).
+revoke all on public.physical_pilot_commissioning,
+ public.physical_pilot_commissioning_receipts,
+ public.physical_pilot_network_validation_receipts,
+ public.physical_pilot_evidence_receipts,
+ public.physical_pilot_evidence_telemetry_receipts,
+ public.physical_pilot_repository_authority,
+ public.telemetry_receipts
+from service_role;

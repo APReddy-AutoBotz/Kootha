@@ -2,7 +2,7 @@
 \connect postgres supabase_admin
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(66);
+select plan(76);
 select has_table('public','physical_pilot_evidence_telemetry_receipts','physical passes freeze authoritative M21 receipt bindings');
 select has_trigger('public','physical_pilot_evidence_telemetry_receipts','physical_pilot_evidence_telemetry_immutable','physical telemetry bindings are immutable');
 select ok(pg_get_functiondef('public.service_record_physical_pilot_evidence_v1(uuid,uuid,bigint,uuid,uuid,text,text,uuid,text,uuid,uuid,uuid,uuid,text,timestamptz,timestamptz,bigint,boolean,boolean,text,text,boolean,boolean,text,text[],text)'::regprocedure) ilike '%Physical pass requires authoritative non-synthetic telemetry%','physical pass requires database-proven M21 telemetry');
@@ -41,6 +41,21 @@ select ok(pg_get_functiondef('public.admin_transition_physical_pilot_commissioni
 select ok(pg_get_functiondef('public.service_record_physical_pilot_network_validation_v1(uuid,uuid,bigint,uuid,uuid,uuid,uuid,text,text,timestamptz,text,text)'::regprocedure) ilike '%setup_reopened%' and pg_get_functiondef('public.service_record_physical_pilot_network_validation_v1(uuid,uuid,bigint,uuid,uuid,uuid,uuid,text,text,timestamptz,text,text)'::regprocedure) not ilike '%event_type in (''reactivated''%','routine reactivation does not invalidate installation authority');
 select ok(pg_get_functiondef('public.admin_get_physical_pilot_readiness_v1(uuid)'::regprocedure) ilike '%repository_authority_generation=r.generation%','readiness rejects replaced repository authority');
 select ok(has_function_privilege('service_role','public.service_rotate_physical_pilot_repository_authority_v1(text,text)','EXECUTE') and not has_function_privilege('authenticated','public.service_rotate_physical_pilot_repository_authority_v1(text,text)','EXECUTE'),'clients cannot rotate repository authority');
+select ok(not exists(
+ select 1 from unnest(array['anon','authenticated','service_role']) role_name,
+  unnest(array['physical_pilot_commissioning','physical_pilot_commissioning_receipts','physical_pilot_network_validation_receipts','physical_pilot_evidence_receipts','physical_pilot_evidence_telemetry_receipts','physical_pilot_repository_authority']) table_name,
+  unnest(array['INSERT','UPDATE','DELETE','TRUNCATE']) privilege_name
+ where has_table_privilege(role_name,format('public.%I',table_name),privilege_name)
+),'browser and service roles have no direct DML or truncate path across the M26 authority surface');
+select ok(not exists(select 1 from unnest(array['INSERT','UPDATE','DELETE','TRUNCATE']) privilege_name where has_table_privilege('service_role','public.telemetry_receipts',privilege_name)),'service role cannot forge authoritative M21 telemetry rows');
+select ok(has_function_privilege('service_role','public.service_record_physical_pilot_network_validation_v1(uuid,uuid,bigint,uuid,uuid,uuid,uuid,text,text,timestamptz,text,text)','EXECUTE'),'service role retains the sanctioned network-validation RPC');
+select ok(has_function_privilege('service_role','public.service_record_physical_pilot_evidence_v1(uuid,uuid,bigint,uuid,uuid,text,text,uuid,text,uuid,uuid,uuid,uuid,text,timestamptz,timestamptz,bigint,boolean,boolean,text,text,boolean,boolean,text,text[],text)','EXECUTE'),'service role retains the sanctioned evidence RPC');
+select ok(pg_get_functiondef('public.service_record_physical_pilot_evidence_v1(uuid,uuid,bigint,uuid,uuid,text,text,uuid,text,uuid,uuid,uuid,uuid,text,timestamptz,timestamptz,bigint,boolean,boolean,text,text,boolean,boolean,text,text[],text)'::regprocedure) ilike '%m26_is_authoritative_observation_v1(t.received_at,t.captured_at,n.validated_at,p_observation_started_at,p_observation_ended_at)%','physical ingest uses the canonical authoritative receipt boundary');
+select ok(pg_get_functiondef('public.admin_get_physical_pilot_readiness_v1(uuid)'::regprocedure) ilike '%m26_is_authoritative_observation_v1(t.received_at,t.captured_at,n.validated_at,e.observation_started_at,e.observation_ended_at)%','readiness revalidates the canonical authoritative receipt boundary');
+select ok(pg_get_functiondef('public.m26_is_authoritative_observation_v1(timestamptz,timestamptz,timestamptz,timestamptz,timestamptz)'::regprocedure) ilike '%p_captured_at>=%' and pg_get_functiondef('public.m26_is_authoritative_observation_v1(timestamptz,timestamptz,timestamptz,timestamptz,timestamptz)'::regprocedure) ilike '%p_received_at>=%','captured-time validity remains separate from server receipt chronology');
+select is(public.m26_is_authoritative_observation_v1('2026-08-12 10:00:00+00','2026-08-12 10:00:06+00','2026-08-12 10:00:05+00','2026-08-12 10:00:05+00','2026-08-12 10:01:00+00'),false,'receipt arriving before validation is rejected despite post-validation captured time');
+select is(public.m26_is_authoritative_observation_v1('2026-08-12 10:00:05+00','2026-08-12 10:00:05+00','2026-08-12 10:00:05+00','2026-08-12 10:00:05+00','2026-08-12 10:01:00+00'),true,'exact server validation and observation boundary is inclusive');
+select is(public.m26_is_authoritative_observation_v1('2026-08-12 10:00:06+00','2026-08-12 10:00:05+00','2026-08-12 10:00:05+00','2026-08-12 10:00:05+00','2026-08-12 10:01:00+00'),true,'receipt after validation counts while captured-time validity is evaluated separately');
 
 -- Fixture-backed acceptance: these assertions invoke the real writers and read
 -- their persisted effects. All observations are explicit synthetic test data;

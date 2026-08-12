@@ -62,7 +62,14 @@ describe("M26 database authority closure", () => {
   it("derives physical acceptance from immutable current non-synthetic M21 receipts", () => {
     for (const proof of ["create table public.physical_pilot_evidence_telemetry_receipts", "not t.synthetic", "t.credential_id=p_credential_id",
       "t.gps_device_vehicle_link_id=p_vehicle_link_id", "v_authoritative_telemetry_count is distinct from p_telemetry_count",
+      "m26_is_authoritative_observation_v1(t.received_at,t.captured_at,n.validated_at,p_observation_started_at,p_observation_ended_at)",
+      "m26_is_authoritative_observation_v1(t.received_at,t.captured_at,n.validated_at,e.observation_started_at,e.observation_ended_at)",
       "Physical pass requires authoritative non-synthetic telemetry", "e.telemetry_count=(select count(*)"]) expect(telemetryTruth).toContain(proof);
+    expect(telemetryTruth).toContain("from service_role");
+    for (const table of ["physical_pilot_commissioning", "physical_pilot_commissioning_receipts",
+      "physical_pilot_network_validation_receipts", "physical_pilot_evidence_receipts",
+      "physical_pilot_evidence_telemetry_receipts", "physical_pilot_repository_authority", "telemetry_receipts"])
+      expect(telemetryTruth).toContain(table);
   });
 
   it("uses canonical admin authority and gives evidence ingestion only to service role", () => {
