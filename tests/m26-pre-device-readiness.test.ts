@@ -61,7 +61,7 @@ describe("M26 database authority closure", () => {
     for (const binding of [
       "commissioning_version=c.version", "selected_candidate_id=c.selected_candidate_id", "e.gps_device_id=p_device_id",
       "e.vehicle_link_id=l.id", "e.installation_receipt_id=i.id", "e.credential_id=k.id",
-      "e.network_validation_receipt_id=n.id", "app.repository_head_sha", "app.repository_workflow_run_id",
+      "e.network_validation_receipt_id=n.id", "e.repository_authority_generation=r.generation", "e.repository_head_sha=r.repository_head_sha",
       "e.sequence_outcome<>'failed'", "e.reconnect_outcome<>'failed'",
     ]) expect(migration).toContain(binding);
     expect(migration).toContain("c.state<>'commissioning'");
@@ -81,6 +81,33 @@ describe("M26 database authority closure", () => {
     expect(migration).toContain("char_length(v_reason) not between 1 and 80");
     expect(migration).toContain("not public.m24f_is_safe_metadata(v_reason)");
     expect(migration).toContain("not public.m24f_is_safe_metadata(reason)");
+  });
+
+  it("uses a service-owned immutable repository authority instead of unset session settings", () => {
+    expect(migration).toContain("create table public.physical_pilot_repository_authority");
+    expect(migration).toContain("service_rotate_physical_pilot_repository_authority_v1");
+    expect(migration).toContain("coalesce(auth.role(),'')<>'service_role'");
+    expect(migration).toContain("physical_pilot_repository_authority_immutable");
+    expect(migration).not.toContain("current_setting('app.repository_head_sha'");
+  });
+
+  it("supports exact evidence replay while fencing changed requests", () => {
+    expect(migration).toContain("pg_advisory_xact_lock(hashtext(p_receipt_id::text))");
+    expect(migration).toContain("Physical evidence receipt replay conflict");
+    expect(migration).toContain("e.reason_codes is distinct from p_reason_codes");
+    expect(migration).toContain("e.repository_authority_generation is distinct from r.generation");
+  });
+
+  it("preserves same-credential verification and safely bounds network metadata", () => {
+    expect(migration).toContain("e.credential_verified_at<=k.last_verified_at");
+    expect(migration).toContain("k.last_verified_at>p_observation_ended_at");
+    expect(migration).toContain("Unsafe network configuration class");
+    expect(migration).toContain("not public.m24f_is_safe_metadata(p_network_configuration_class)");
+  });
+
+  it("does not let routine reactivation supersede the current installation", () => {
+    expect(migration).toContain("x.event_type in ('installed','removed','replaced','lost','stolen','retired','setup_reopened')");
+    expect(migration).not.toMatch(/x\.gps_device_id=p_device_id and \(x\.effective_at,x\.created_at\)>\(i\.effective_at,i\.created_at\)/);
   });
 });
 
