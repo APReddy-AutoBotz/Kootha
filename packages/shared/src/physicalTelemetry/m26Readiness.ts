@@ -5,7 +5,7 @@ export const M26_READINESS_CONTRACT_VERSION_V1 = "m26-readiness-v1" as const;
 export const physicalPilotReadinessStagesV1 = [
   "awaiting_hardware_selection", "awaiting_adapter_implementation", "awaiting_credentials",
   "awaiting_device_registration", "awaiting_installation", "awaiting_network_validation",
-  "awaiting_real_telemetry", "ready_for_controlled_physical_pilot", "blocked",
+  "physical_evidence_required", "ready_for_controlled_physical_pilot", "blocked",
 ] as const;
 export type PhysicalPilotReadinessStageV1 = typeof physicalPilotReadinessStagesV1[number];
 
@@ -13,7 +13,9 @@ export const physicalPilotBlockingReasonsV1 = [
   "hardware_not_selected", "selected_candidate_not_approved", "adapter_not_certified",
   "adapter_manifest_mismatch", "device_not_registered", "device_not_operational",
   "credential_not_active", "vehicle_link_missing", "installation_not_recorded",
-  "network_not_validated", "physical_evidence_missing", "physical_evidence_invalid",
+  "network_not_validated", "physical_evidence_missing", "physical_evidence_pass",
+  "physical_evidence_partial", "physical_evidence_blocked", "synthetic_evidence_non_ready",
+  "physical_outcomes_not_passed",
 ] as const;
 export type PhysicalPilotBlockingReasonV1 = typeof physicalPilotBlockingReasonsV1[number];
 
@@ -82,13 +84,14 @@ export function validatePhysicalEvidenceManifestV1(
   if (!v.device || !sha256.test(v.device.identityHash) || !bounded(v.device.installationReceiptId) || !bounded(v.device.vehicleLinkReceiptId)) issues.push({ path: "device", code: "invalid_value" });
   if (!v.network || !bounded(v.network.configurationClass) || !bounded(v.network.validationReceiptId)) issues.push({ path: "network", code: "invalid_value" });
   if (!v.observation || !timestamp(v.observation.startedAt) || !timestamp(v.observation.endedAt) || Date.parse(v.observation.endedAt) <= Date.parse(v.observation.startedAt) || !Number.isSafeInteger(v.observation.telemetryCount) || v.observation.telemetryCount < 1) issues.push({ path: "observation", code: "invalid_value" });
-  const outcomeSupported = (outcome: unknown, supported: boolean | undefined) =>
-    outcome === "passed" || (outcome === "not_supported" && supported === false);
-  if (!v.outcomes || v.outcomes.authentication !== "passed" || v.outcomes.replay !== "passed"
-    || !outcomeSupported(v.outcomes.sequence, capabilities?.sequenceSupported)
-    || !outcomeSupported(v.outcomes.reconnect, capabilities?.reconnectSupported)
-    || v.outcomes.freshness !== "passed" || v.outcomes.health !== "passed") issues.push({ path: "outcomes", code: "invalid_value" });
-  if (!(["pass", "partial", "blocked"] as const).includes(v.disposition as never) || (v.physicalEvidence && v.disposition !== "pass")) issues.push({ path: "disposition", code: "invalid_value" });
+  const binaryOutcome = (outcome: unknown) => outcome === "passed" || outcome === "failed";
+  const capabilityOutcome = (outcome: unknown, supported: boolean | undefined) =>
+    outcome === "passed" || outcome === "failed" || (outcome === "not_supported" && supported === false);
+  if (!v.outcomes || !binaryOutcome(v.outcomes.authentication) || !binaryOutcome(v.outcomes.replay)
+    || !capabilityOutcome(v.outcomes.sequence, capabilities?.sequenceSupported)
+    || !capabilityOutcome(v.outcomes.reconnect, capabilities?.reconnectSupported)
+    || !binaryOutcome(v.outcomes.freshness) || !binaryOutcome(v.outcomes.health)) issues.push({ path: "outcomes", code: "invalid_value" });
+  if (!(["pass", "partial", "blocked"] as const).includes(v.disposition as never)) issues.push({ path: "disposition", code: "invalid_value" });
   if (!Array.isArray(v.reasonCodes) || v.reasonCodes.some((reason) => !bounded(reason, 80)) || !sha256.test(v.operatorIdHash ?? "") || !bounded(v.receiptId) || !timestamp(v.recordedAt)) issues.push({ path: "receipt", code: "invalid_value" });
   return issues.length ? { ok: false, issues } : { ok: true, value: v as PhysicalEvidenceManifestV1 };
 }

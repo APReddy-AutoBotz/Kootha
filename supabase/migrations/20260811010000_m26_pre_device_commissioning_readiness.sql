@@ -123,6 +123,10 @@ declare v_actor uuid; v_row public.physical_pilot_commissioning%rowtype; v_candi
  v_manifest public.m24f_adapter_capability_manifests%rowtype; v_certification_run_id uuid; v_from text; v_receipt public.physical_pilot_commissioning_receipts%rowtype;
 begin
   v_actor:=public.m20a_require_admin();
+  -- Serialize identical in-flight requests before the receipt-first lookup.
+  -- The immutable receipt remains the replay authority after later state or
+  -- certification changes.
+  perform pg_advisory_xact_lock(hashtext(p_transition_key::text));
   if p_expected_version is null then raise exception 'Expected commissioning version is required' using errcode='22023'; end if;
   if p_new_state not in ('draft','commissioning','suspended','decommissioned') or p_reason_code !~ '^[a-z0-9_]{1,80}$' then raise exception 'Invalid commissioning transition' using errcode='22023'; end if;
   if p_network_configuration_class is not null and (char_length(p_network_configuration_class) not between 1 and 80 or not public.m24f_is_safe_metadata(p_network_configuration_class))
@@ -255,7 +259,6 @@ begin
   or n.commissioning_id is distinct from c.id or n.commissioning_version<>c.version or n.gps_device_id<>p_device_id or n.vehicle_link_id<>l.id or n.installation_event_id<>i.id or n.credential_id<>k.id or n.network_configuration_class<>c.network_configuration_class
   or n.certification_run_id<>c.selected_certification_run_id or n.repository_authority_generation<>r.generation or n.repository_head_sha<>r.repository_head_sha or n.workflow_run_id<>r.workflow_run_id
   or n.validated_at>p_observation_started_at or p_classification not in ('synthetic','physical') or p_disposition not in ('pass','partial','blocked')
-  or (p_classification='synthetic' and p_disposition='pass')
   or p_sequence_outcome not in ('passed','failed','not_supported') or p_reconnect_outcome not in ('passed','failed','not_supported')
   or (p_sequence_outcome='not_supported' and m.sequence_available) or (p_reconnect_outcome='not_supported' and m.offline_buffering_supported)
   or exists(select 1 from unnest(p_reason_codes) reason where reason is null or char_length(reason) not between 1 and 80 or not public.m24f_is_safe_metadata(reason))
@@ -299,7 +302,9 @@ begin
    and e.sequence_outcome<>'failed' and e.reconnect_outcome<>'failed' and (e.sequence_outcome<>'not_supported' or not m.sequence_available) and (e.reconnect_outcome<>'not_supported' or not m.offline_buffering_supported)) into v_physical;
  end if;
  if c.id is null then v_stage:='awaiting_hardware_selection';v_reasons:=array['hardware_not_selected'];
- elsif c.state in ('suspended','decommissioned') or d.status::text is distinct from 'active' then v_stage:='blocked';v_reasons:=array['device_not_operational'];
+ elsif c.state in ('suspended','decommissioned') or d.status::text is distinct from 'active'
+   or d.gps_readiness is distinct from 'ready' or d.gsm_readiness not in ('ready','degraded')
+ then v_stage:='blocked';v_reasons:=array['device_not_operational'];
  elsif c.state<>'commissioning' then v_stage:='awaiting_adapter_implementation';v_reasons:=array['selected_candidate_not_approved'];
  elsif public.m26_current_certification_run_v1(c.selected_candidate_id,c.selected_manifest_id) is distinct from c.selected_certification_run_id then v_stage:='awaiting_adapter_implementation';v_reasons:=array['adapter_not_certified'];
  elsif d.id is null then v_stage:='awaiting_device_registration';v_reasons:=array['device_not_registered'];

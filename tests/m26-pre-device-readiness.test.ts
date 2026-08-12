@@ -14,7 +14,11 @@ const physicalManifest = () => ({
 });
 
 describe("M26 pre-device readiness", () => {
-  it("exposes every stable server readiness stage", () => expect(physicalPilotReadinessStagesV1).toHaveLength(9));
+  it("exposes every stable server readiness stage", () => {
+    expect(physicalPilotReadinessStagesV1).toHaveLength(9);
+    expect(physicalPilotReadinessStagesV1).toContain("physical_evidence_required");
+    expect(physicalPilotReadinessStagesV1).not.toContain("awaiting_real_telemetry" as never);
+  });
   it("accepts an exact-bound physical evidence receipt and a normal Git SHA-1", () => expect(validatePhysicalEvidenceManifestV1(physicalManifest(), { sequenceSupported: true, reconnectSupported: false }).ok).toBe(true));
   it("structurally rejects synthetic evidence claiming to be physical", () => expect(validatePhysicalEvidenceManifestV1({ ...physicalManifest(), classification: "synthetic" }).ok).toBe(false));
   it("rejects physical classification without physical evidence", () => expect(validatePhysicalEvidenceManifestV1({ ...physicalManifest(), physicalEvidence: false }).ok).toBe(false));
@@ -22,17 +26,18 @@ describe("M26 pre-device readiness", () => {
     expect(validatePhysicalEvidenceManifestV1({ ...physicalManifest(), repository: { headSha: "changed", workflowRunId: "run-31" } }).ok).toBe(false);
     expect(validatePhysicalEvidenceManifestV1({ ...physicalManifest(), adapter: { manifestId: "", adapterId: "selected-adapter", adapterVersion: "1" } }).ok).toBe(false);
   });
-  it("requires sequence and reconnect to pass unless the certified capability is unsupported", () => {
+  it("accepts failed outcomes as truthful non-ready evidence and validates capability claims", () => {
     const base = physicalManifest();
-    expect(validatePhysicalEvidenceManifestV1({ ...base, outcomes: { ...base.outcomes, sequence: "failed" } }, { sequenceSupported: true, reconnectSupported: false }).ok).toBe(false);
+    expect(validatePhysicalEvidenceManifestV1({ ...base, outcomes: { ...base.outcomes, sequence: "failed" }, disposition: "blocked" }, { sequenceSupported: true, reconnectSupported: false }).ok).toBe(true);
     expect(validatePhysicalEvidenceManifestV1(base, { sequenceSupported: true, reconnectSupported: true }).ok).toBe(false);
     expect(validatePhysicalEvidenceManifestV1(base, { sequenceSupported: true, reconnectSupported: false }).ok).toBe(true);
   });
-  it("rejects failed replay, empty telemetry, invalid windows and partial physical claims", () => {
+  it("preserves partial, blocked, failed, and synthetic evidence while rejecting malformed observations", () => {
     const base = physicalManifest();
-    expect(validatePhysicalEvidenceManifestV1({ ...base, outcomes: { ...base.outcomes, replay: "failed" } }).ok).toBe(false);
+    expect(validatePhysicalEvidenceManifestV1({ ...base, outcomes: { ...base.outcomes, replay: "failed" }, disposition: "blocked" }, { sequenceSupported: true, reconnectSupported: false }).ok).toBe(true);
     expect(validatePhysicalEvidenceManifestV1({ ...base, observation: { ...base.observation, telemetryCount: 0 } }).ok).toBe(false);
-    expect(validatePhysicalEvidenceManifestV1({ ...base, disposition: "partial" }).ok).toBe(false);
+    expect(validatePhysicalEvidenceManifestV1({ ...base, disposition: "partial" }, { sequenceSupported: true, reconnectSupported: false }).ok).toBe(true);
+    expect(validatePhysicalEvidenceManifestV1({ ...base, classification: "synthetic", physicalEvidence: false, disposition: "pass" }, { sequenceSupported: true, reconnectSupported: false }).ok).toBe(true);
   });
 });
 
@@ -55,6 +60,7 @@ describe("M26 database authority closure", () => {
     expect(transition).toContain("p_expected_version is null");
     expect(transition).toContain("v_receipt.expected_version is distinct from p_expected_version");
     expect(transition).toContain("'expected_version',p_expected_version");
+    expect(transition.indexOf("pg_advisory_xact_lock(hashtext(p_transition_key::text))")).toBeLessThan(transition.indexOf("where transition_key=p_transition_key"));
   });
 
   it("revalidates current version, candidate, device, link, install, credential, network, head and outcomes", () => {
@@ -67,6 +73,8 @@ describe("M26 database authority closure", () => {
     expect(migration).toContain("c.state<>'commissioning'");
     expect(migration).toContain("k.last_verified_at is null");
     expect(migration).toContain("e.certification_run_id=c.selected_certification_run_id");
+    expect(migration).toContain("d.gps_readiness is distinct from 'ready'");
+    expect(migration).toContain("d.gsm_readiness not in ('ready','degraded')");
   });
 
   it("uses the current successful run and AP approval rather than default manifest certification state", () => {
