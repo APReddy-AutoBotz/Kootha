@@ -44,10 +44,12 @@ describe("M26 pre-device readiness", () => {
     expect(validatePhysicalEvidenceManifestV1({ ...base, reasonCodes: Array.from({ length: 20 }, (_, index) => `reason_${index}`) }, { sequenceSupported: true, reconnectSupported: false }).ok).toBe(true);
     expect(validatePhysicalEvidenceManifestV1({ ...base, reasonCodes: Array.from({ length: 21 }, (_, index) => `reason_${index}`) }, { sequenceSupported: true, reconnectSupported: false }).ok).toBe(false);
     const cases = [
-      ["ordinary_reason", true], ["a".repeat(23), true], ["a".repeat(24), false], ["f".repeat(32), false], ["F".repeat(32), false],
-      ["prefix-" + "a".repeat(24), false], ["a".repeat(12) + " " + "b".repeat(12), true], ["credential=fixture-secret", false],
+      ["ordinary_reason", true], ["a".repeat(23), true], ["a".repeat(24), true], ["f".repeat(32), true], ["F".repeat(32), true],
+      ["prefix-" + "a".repeat(24), true], ["a".repeat(12) + " " + "b".repeat(12), true], ["credential=fixture-secret", false],
       ["https://evidence.example/path", false], ["evidence.example/path", false], ["12.34567, 77.45678", false],
-      ["12.34567 77.45678", true], ["raw_payload fragment", false], ["{\"payload\":true}", false],
+      ["12.34567 77.45678", false], ["raw_payload fragment", false], ["{\"payload\":true}", false],
+      ["Abcdefghijklmnopqrstuvwx12345678", false], ["0123456789abcdef0123456789abcdef", true],
+      ["aa:bb:cc:dd:ee:ff", false], ["490154203237518", false], ["adapter_generation_7", true],
     ] as const;
     for (const [reason, expected] of cases) expect(validatePhysicalEvidenceManifestV1({ ...base, reasonCodes: [reason] }, { sequenceSupported: true, reconnectSupported: false }).ok).toBe(expected);
   });

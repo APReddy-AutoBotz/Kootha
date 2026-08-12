@@ -7,10 +7,12 @@ select has_table('public','physical_pilot_evidence_telemetry_receipts','physical
 select has_trigger('public','physical_pilot_evidence_telemetry_receipts','physical_pilot_evidence_telemetry_immutable','physical telemetry bindings are immutable');
 select ok(pg_get_functiondef('public.service_record_physical_pilot_evidence_v1(uuid,uuid,bigint,uuid,uuid,text,text,uuid,text,uuid,uuid,uuid,uuid,text,timestamptz,timestamptz,bigint,boolean,boolean,text,text,boolean,boolean,text,text[],text)'::regprocedure) ilike '%Physical pass requires authoritative non-synthetic telemetry%','physical pass requires database-proven M21 telemetry');
 select ok(not exists(select 1 from (values
- ('ordinary_reason',true),(repeat('a',23),true),(repeat('a',24),false),(repeat('f',32),false),(repeat('F',32),false),
- ('prefix-'||repeat('a',24),false),(repeat('a',12)||' '||repeat('b',12),true),('credential=fixture-secret',false),
+ ('ordinary_reason',true),(repeat('a',23),true),(repeat('a',24),true),(repeat('f',32),true),(repeat('F',32),true),
+ ('prefix-'||repeat('a',24),true),(repeat('a',12)||' '||repeat('b',12),true),('credential=fixture-secret',false),
  ('https://evidence.example/path',false),('evidence.example/path',false),('12.34567, 77.45678',false),
- ('12.34567 77.45678',true),('raw_payload fragment',false),('{"payload":true}',false)
+ ('12.34567 77.45678',false),('raw_payload fragment',false),('{"payload":true}',false),
+ ('Abcdefghijklmnopqrstuvwx12345678',false),('0123456789abcdef0123456789abcdef',true),
+ ('aa:bb:cc:dd:ee:ff',false),('490154203237518',false),('adapter_generation_7',true)
 ) as cases(value,expected) where public.m24f_is_safe_metadata(value) is distinct from expected),'database safe-metadata boundary table matches shared parity cases');
 select has_table('public','physical_pilot_repository_authority','repository authority is database owned');
 select has_column('public','physical_pilot_repository_authority','generation','repository authority has immutable generations');
