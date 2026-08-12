@@ -39,6 +39,15 @@ describe("M26 pre-device readiness", () => {
     expect(validatePhysicalEvidenceManifestV1({ ...base, disposition: "partial" }, { sequenceSupported: true, reconnectSupported: false }).ok).toBe(true);
     expect(validatePhysicalEvidenceManifestV1({ ...base, classification: "synthetic", physicalEvidence: false, disposition: "pass" }, { sequenceSupported: true, reconnectSupported: false }).ok).toBe(true);
   });
+  it("matches database count and safe-metadata bounds for evidence reasons", () => {
+    const base = physicalManifest();
+    expect(validatePhysicalEvidenceManifestV1({ ...base, reasonCodes: Array.from({ length: 20 }, (_, index) => `reason_${index}`) }, { sequenceSupported: true, reconnectSupported: false }).ok).toBe(true);
+    expect(validatePhysicalEvidenceManifestV1({ ...base, reasonCodes: Array.from({ length: 21 }, (_, index) => `reason_${index}`) }, { sequenceSupported: true, reconnectSupported: false }).ok).toBe(false);
+    for (const unsafeReason of [
+      "credential=fixture-secret", "AbCdEfGhIjKlMnOpQrStUvWxYz012345", "https://evidence.example/path", "evidence.example/path", "12.34567, 77.45678",
+      "raw_payload fragment", "{\"payload\":true}", "AA:BB:CC:DD:EE:FF",
+    ]) expect(validatePhysicalEvidenceManifestV1({ ...base, reasonCodes: [unsafeReason] }, { sequenceSupported: true, reconnectSupported: false }).ok).toBe(false);
+  });
 });
 
 describe("M26 database authority closure", () => {

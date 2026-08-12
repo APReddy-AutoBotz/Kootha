@@ -63,6 +63,40 @@ const bounded = (value: unknown, max = 160): value is string =>
 const timestamp = (value: unknown): value is string =>
   typeof value === "string" && Number.isFinite(Date.parse(value));
 
+const opaqueCredential = /^[A-Za-z0-9_+/=-]{32,160}$/;
+const hexadecimal = /^[0-9a-f]{32,160}$/i;
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const secretTerm = /(^|[^a-z0-9])(password|passwd|pwd|credential|secret|bearer|token|api[_ -]?key|auth(?:entication|orization)?[_ -]?header|private[_ -]?key|client[_ -]?secret)([^a-z0-9]|$)/i;
+const endpointProtocol = ["https?", "wss?", `m${"qtt"}`, "t" + "cp", "u" + "dp"].join("|");
+const endpoint = new RegExp(`(?:${endpointProtocol})://|(^|\\s)(?:[0-9]{1,3}\\.){3}[0-9]{1,3}(?::[0-9]{1,5})?(?:/\\S*)?`, "i");
+const hostname = /(^|[^a-z0-9@_-])(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}(?::[0-9]{1,5})?(?:\/\S*)?(?:[^a-z0-9._~:/?#\[\]@!$&'()*+,;=%-]|$)/i;
+const coordinates = /(^|[^0-9])[+-]?[0-9]{1,2}\.[0-9]{4,}[,\s]+[+-]?[0-9]{1,3}\.[0-9]{4,}([^0-9]|$)/i;
+const rawPayload = /<[!?/]?[a-z][^>]*>|[{}\[\]]|(^|[^a-z])(?:raw[_ -]?(?:payload|body)|payload[_ -]?(?:body|fragment|xml|json))([^a-z]|$)/i;
+const sensitiveIdentifier = /(^|[^a-z0-9])(?:imei|imsi|iccid|serial[_ -]?number|physical[_ -]?device[_ -]?(?:evidence|photo|identifier))([^a-z0-9]|$)/i;
+const macAddress = /(^|[^0-9a-f])(?:[0-9a-f]{2}:){5}[0-9a-f]{2}([^0-9a-f]|$)/i;
+
+function isLuhn15Identifier(value: string): boolean {
+  if (!/^\d{15}$/.test(value)) return false;
+  const sum = [...value].reduce((total, character, index) => {
+    let digit = Number(character);
+    if (index % 2 === 1) digit = digit * 2 > 9 ? digit * 2 - 9 : digit * 2;
+    return total + digit;
+  }, 0);
+  return sum % 10 === 0;
+}
+
+/** Mirrors the canonical m24f_is_safe_metadata privacy boundary for shared clients. */
+export function isSafeMetadataV1(value: unknown): value is string {
+  if (typeof value !== "string" || value.length > 500 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/.test(value)) return false;
+  const trimmed = value.trim();
+  const credentialShaped = opaqueCredential.test(trimmed) && !hexadecimal.test(trimmed) && !uuid.test(trimmed)
+    && ((/[A-Z]/.test(trimmed) && /[a-z]/.test(trimmed) && /[0-9]/.test(trimmed))
+      || (/[A-Za-z]/.test(trimmed) && /[0-9]/.test(trimmed) && /[_+/=]/.test(trimmed)));
+  return !credentialShaped && !secretTerm.test(value) && !endpoint.test(value) && !hostname.test(value)
+    && !coordinates.test(value) && !rawPayload.test(value) && !sensitiveIdentifier.test(value)
+    && !macAddress.test(value) && !isLuhn15Identifier(trimmed);
+}
+
 /** Fail-closed validation. Synthetic fixtures can never assert physical evidence. */
 export interface PhysicalEvidenceCapabilitiesV1 {
   readonly sequenceSupported: boolean;
@@ -92,6 +126,8 @@ export function validatePhysicalEvidenceManifestV1(
     || !capabilityOutcome(v.outcomes.reconnect, capabilities?.reconnectSupported)
     || !binaryOutcome(v.outcomes.freshness) || !binaryOutcome(v.outcomes.health)) issues.push({ path: "outcomes", code: "invalid_value" });
   if (!(["pass", "partial", "blocked"] as const).includes(v.disposition as never)) issues.push({ path: "disposition", code: "invalid_value" });
-  if (!Array.isArray(v.reasonCodes) || v.reasonCodes.some((reason) => !bounded(reason, 80)) || !sha256.test(v.operatorIdHash ?? "") || !bounded(v.receiptId) || !timestamp(v.recordedAt)) issues.push({ path: "receipt", code: "invalid_value" });
+  if (!Array.isArray(v.reasonCodes) || v.reasonCodes.length > 20
+    || v.reasonCodes.some((reason) => !bounded(reason, 80) || !isSafeMetadataV1(reason))
+    || !sha256.test(v.operatorIdHash ?? "") || !bounded(v.receiptId) || !timestamp(v.recordedAt)) issues.push({ path: "receipt", code: "invalid_value" });
   return issues.length ? { ok: false, issues } : { ok: true, value: v as PhysicalEvidenceManifestV1 };
 }
