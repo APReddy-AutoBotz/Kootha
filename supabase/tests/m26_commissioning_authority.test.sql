@@ -2,7 +2,7 @@
 \connect postgres supabase_admin
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(60);
+select plan(62);
 select has_table('public','physical_pilot_repository_authority','repository authority is database owned');
 select has_column('public','physical_pilot_repository_authority','generation','repository authority has immutable generations');
 select has_column('public','physical_pilot_evidence_receipts','repository_authority_generation','evidence freezes the authority generation');
@@ -40,7 +40,11 @@ insert into public.vehicles(id,vehicle_number,vehicle_type,city) values('2600000
 set local role authenticated;
 select set_config('request.jwt.claim.sub','26000000-0000-0000-0000-000000000001',true);
 select set_config('request.jwt.claim.role','authenticated',true);
-select public.admin_create_m24f_capability_manifest_v1('m26-fixture','1','synthetic fixture','direct_http','hmac_signature',true,true,true,true,true,false,true,true,array['gps_fix','gsm_signal'],'synthetic test only','synthetic test only');
+select public.admin_create_m24f_capability_manifest_v1('m26-fixture','1','synthetic fixture','direct_http','hmac_signature',true,true,true,true,true,false,true,false,array['gps_fix','gsm_signal'],'synthetic test only','synthetic test only');
+select ok((select battery_supported and external_power_supported and gps_fix_supported and gsm_signal_supported and not location_supported from public.m24f_adapter_capability_manifests where adapter_id='m26-fixture' and adapter_version='1'),'manifest RPC maps battery, external power, GPS, GSM, and requested location=false exactly');
+select set_config('request.jwt.claim.sub','26000000-0000-0000-0000-000000000099',true);
+select throws_ok($$select public.admin_create_m24f_capability_manifest_v1('m26-non-admin','1','synthetic fixture','direct_http','hmac_signature',true,true,true,true,true,false,true,false,'{}','synthetic test only','synthetic test only')$$,'42501',null,'non-admin manifest creation remains denied');
+select set_config('request.jwt.claim.sub','26000000-0000-0000-0000-000000000001',true);
 select public.admin_create_m24f_candidate_v1('M26 fixture','synthetic fixture','direct_http','hmac_signature','unknown','not_required','unknown','supported','stable_event_id','synthetic test only');
 select public.admin_update_m24f_candidate_metadata_v1(
  (select id from public.m24f_adapter_candidates where safe_display_name='M26 fixture'),
