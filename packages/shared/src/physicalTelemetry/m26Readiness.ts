@@ -63,38 +63,17 @@ const bounded = (value: unknown, max = 160): value is string =>
 const timestamp = (value: unknown): value is string =>
   typeof value === "string" && Number.isFinite(Date.parse(value));
 
-const opaqueCredential = /^[A-Za-z0-9_+/=-]{32,160}$/;
-const hexadecimal = /^[0-9a-f]{32,160}$/i;
-const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const secretTerm = /(^|[^a-z0-9])(password|passwd|pwd|credential|secret|bearer|token|api[_ -]?key|auth(?:entication|orization)?[_ -]?header|private[_ -]?key|client[_ -]?secret)([^a-z0-9]|$)/i;
-const endpointProtocol = ["https?", "wss?", `m${"qtt"}`, "t" + "cp", "u" + "dp"].join("|");
-const endpoint = new RegExp(`(?:${endpointProtocol})://|(^|\\s)(?:[0-9]{1,3}\\.){3}[0-9]{1,3}(?::[0-9]{1,5})?(?:/\\S*)?`, "i");
-const hostname = /(^|[^a-z0-9@_-])(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}(?::[0-9]{1,5})?(?:\/\S*)?(?:[^a-z0-9._~:/?#\[\]@!$&'()*+,;=%-]|$)/i;
-const coordinates = /(^|[^0-9])[+-]?[0-9]{1,2}\.[0-9]{4,}[,\s]+[+-]?[0-9]{1,3}\.[0-9]{4,}([^0-9]|$)/i;
-const rawPayload = /<[!?/]?[a-z][^>]*>|[{}\[\]]|(^|[^a-z])(?:raw[_ -]?(?:payload|body)|payload[_ -]?(?:body|fragment|xml|json))([^a-z]|$)/i;
-const sensitiveIdentifier = /(^|[^a-z0-9])(?:imei|imsi|iccid|serial[_ -]?number|physical[_ -]?device[_ -]?(?:evidence|photo|identifier))([^a-z0-9]|$)/i;
-const macAddress = /(^|[^0-9a-f])(?:[0-9a-f]{2}:){5}[0-9a-f]{2}([^0-9a-f]|$)/i;
-
-function isLuhn15Identifier(value: string): boolean {
-  if (!/^\d{15}$/.test(value)) return false;
-  const sum = [...value].reduce((total, character, index) => {
-    let digit = Number(character);
-    if (index % 2 === 1) digit = digit * 2 > 9 ? digit * 2 - 9 : digit * 2;
-    return total + digit;
-  }, 0);
-  return sum % 10 === 0;
-}
+const secretAssignment = /(^|[\s\p{P}])(bearer\s+[a-z0-9._~+/=-]{8,}|(api[_ -]?key|access[_ -]?token|refresh[_ -]?token|authorization|credential|password|secret)\s*[:=]\s*[^\s]{4,})/iu;
+const endpoint = /(https?|mqtts?|wss?):\/\/|([a-z0-9-]+\.)+[a-z]{2,}([/:][^\s]*)?/iu;
+const standaloneCredentialToken = /(^|[^A-Za-z0-9_+/=-])[A-Za-z0-9_+/=-]{24,}([^A-Za-z0-9_+/=-]|$)/;
+const coordinates = /(^|[^0-9])[-+]?[0-9]{1,3}\.[0-9]{4,}\s*[,/]\s*[-+]?[0-9]{1,3}\.[0-9]{4,}([^0-9]|$)/iu;
+const rawPayload = /(^|\s)(raw[_ -]?payload|payload[_ -]?(fragment|body|contents?|data))(\s|:|=|$)/iu;
 
 /** Mirrors the canonical m24f_is_safe_metadata privacy boundary for shared clients. */
 export function isSafeMetadataV1(value: unknown): value is string {
-  if (typeof value !== "string" || value.length > 500 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/.test(value)) return false;
-  const trimmed = value.trim();
-  const credentialShaped = opaqueCredential.test(trimmed) && !hexadecimal.test(trimmed) && !uuid.test(trimmed)
-    && ((/[A-Z]/.test(trimmed) && /[a-z]/.test(trimmed) && /[0-9]/.test(trimmed))
-      || (/[A-Za-z]/.test(trimmed) && /[0-9]/.test(trimmed) && /[_+/=]/.test(trimmed)));
-  return !credentialShaped && !secretTerm.test(value) && !endpoint.test(value) && !hostname.test(value)
-    && !coordinates.test(value) && !rawPayload.test(value) && !sensitiveIdentifier.test(value)
-    && !macAddress.test(value) && !isLuhn15Identifier(trimmed);
+  return typeof value === "string" && !/[{}\[\]]/.test(value) && !secretAssignment.test(value)
+    && !endpoint.test(value) && !standaloneCredentialToken.test(value)
+    && !coordinates.test(value) && !rawPayload.test(value);
 }
 
 /** Fail-closed validation. Synthetic fixtures can never assert physical evidence. */
@@ -117,7 +96,7 @@ export function validatePhysicalEvidenceManifestV1(
   if (!v.adapter || !bounded(v.adapter.manifestId) || !bounded(v.adapter.adapterId) || !bounded(v.adapter.adapterVersion)) issues.push({ path: "adapter", code: "invalid_value" });
   if (!v.device || !sha256.test(v.device.identityHash) || !bounded(v.device.installationReceiptId) || !bounded(v.device.vehicleLinkReceiptId)) issues.push({ path: "device", code: "invalid_value" });
   if (!v.network || !bounded(v.network.configurationClass) || !bounded(v.network.validationReceiptId)) issues.push({ path: "network", code: "invalid_value" });
-  if (!v.observation || !timestamp(v.observation.startedAt) || !timestamp(v.observation.endedAt) || Date.parse(v.observation.endedAt) <= Date.parse(v.observation.startedAt) || !Number.isSafeInteger(v.observation.telemetryCount) || v.observation.telemetryCount < 1) issues.push({ path: "observation", code: "invalid_value" });
+  if (!v.observation || !timestamp(v.observation.startedAt) || !timestamp(v.observation.endedAt) || Date.parse(v.observation.endedAt) <= Date.parse(v.observation.startedAt) || Date.parse(v.observation.endedAt) - Date.parse(v.observation.startedAt) > 86_400_000 || !Number.isSafeInteger(v.observation.telemetryCount) || v.observation.telemetryCount < 1 || v.observation.telemetryCount > 10_000_000) issues.push({ path: "observation", code: "invalid_value" });
   const binaryOutcome = (outcome: unknown) => outcome === "passed" || outcome === "failed";
   const capabilityOutcome = (outcome: unknown, supported: boolean | undefined) =>
     outcome === "passed" || outcome === "failed" || (outcome === "not_supported" && supported === false);

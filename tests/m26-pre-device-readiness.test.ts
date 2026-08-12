@@ -43,15 +43,25 @@ describe("M26 pre-device readiness", () => {
     const base = physicalManifest();
     expect(validatePhysicalEvidenceManifestV1({ ...base, reasonCodes: Array.from({ length: 20 }, (_, index) => `reason_${index}`) }, { sequenceSupported: true, reconnectSupported: false }).ok).toBe(true);
     expect(validatePhysicalEvidenceManifestV1({ ...base, reasonCodes: Array.from({ length: 21 }, (_, index) => `reason_${index}`) }, { sequenceSupported: true, reconnectSupported: false }).ok).toBe(false);
-    for (const unsafeReason of [
-      "credential=fixture-secret", "AbCdEfGhIjKlMnOpQrStUvWxYz012345", "https://evidence.example/path", "evidence.example/path", "12.34567, 77.45678",
-      "raw_payload fragment", "{\"payload\":true}", "AA:BB:CC:DD:EE:FF",
-    ]) expect(validatePhysicalEvidenceManifestV1({ ...base, reasonCodes: [unsafeReason] }, { sequenceSupported: true, reconnectSupported: false }).ok).toBe(false);
+    const cases = [
+      ["ordinary_reason", true], ["a".repeat(23), true], ["a".repeat(24), false], ["f".repeat(32), false], ["F".repeat(32), false],
+      ["prefix-" + "a".repeat(24), false], ["a".repeat(12) + " " + "b".repeat(12), true], ["credential=fixture-secret", false],
+      ["https://evidence.example/path", false], ["evidence.example/path", false], ["12.34567, 77.45678", false],
+      ["12.34567 77.45678", true], ["raw_payload fragment", false], ["{\"payload\":true}", false],
+    ] as const;
+    for (const [reason, expected] of cases) expect(validatePhysicalEvidenceManifestV1({ ...base, reasonCodes: [reason] }, { sequenceSupported: true, reconnectSupported: false }).ok).toBe(expected);
   });
 });
 
 describe("M26 database authority closure", () => {
   const migration = readFileSync("supabase/migrations/20260811010000_m26_pre_device_commissioning_readiness.sql", "utf8");
+  const telemetryTruth = readFileSync("supabase/migrations/20260812020000_m26_physical_telemetry_truth_convergence.sql", "utf8");
+
+  it("derives physical acceptance from immutable current non-synthetic M21 receipts", () => {
+    for (const proof of ["create table public.physical_pilot_evidence_telemetry_receipts", "not t.synthetic", "t.credential_id=p_credential_id",
+      "t.gps_device_vehicle_link_id=p_vehicle_link_id", "v_authoritative_telemetry_count is distinct from p_telemetry_count",
+      "Physical pass requires authoritative non-synthetic telemetry", "e.telemetry_count=(select count(*)"]) expect(telemetryTruth).toContain(proof);
+  });
 
   it("uses canonical admin authority and gives evidence ingestion only to service role", () => {
     expect(migration).toContain("public.m20a_require_admin()");
