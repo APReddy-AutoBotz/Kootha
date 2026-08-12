@@ -35,6 +35,10 @@ create table public.physical_pilot_network_validation_receipts (
   vehicle_link_id uuid not null references public.gps_device_vehicle_links(id) on delete restrict,
   installation_event_id uuid not null references public.gps_device_lifecycle_events(id) on delete restrict,
   credential_id uuid not null references public.gps_device_credential_metadata(id) on delete restrict,
+  certification_run_id uuid not null references public.m24f_certification_runs(id) on delete restrict,
+  repository_authority_generation bigint not null references public.physical_pilot_repository_authority(generation) on delete restrict,
+  repository_head_sha text not null check (repository_head_sha ~ '^([a-f0-9]{40}|[a-f0-9]{64})$'),
+  workflow_run_id text not null check (char_length(workflow_run_id) between 1 and 160 and public.m24f_is_safe_metadata(workflow_run_id)),
   network_configuration_class text not null check (char_length(network_configuration_class) between 1 and 80),
   configuration_identity_hash text not null check (configuration_identity_hash ~ '^[a-f0-9]{64}$'),
   validated_at timestamptz not null, recorded_at timestamptz not null default clock_timestamp()
@@ -61,7 +65,6 @@ create table public.physical_pilot_evidence_receipts (
   health_passed boolean not null, freshness_passed boolean not null, disposition text not null check (disposition in ('pass','partial','blocked')),
   reason_codes text[] not null default '{}', operator_id_hash text not null check (operator_id_hash ~ '^[a-f0-9]{64}$'), recorded_at timestamptz not null default clock_timestamp(),
   check (observation_ended_at > observation_started_at),
-  check (classification <> 'physical' or (disposition='pass' and authentication_passed and replay_passed and sequence_outcome<>'failed' and reconnect_outcome<>'failed' and health_passed and freshness_passed)),
   check (cardinality(reason_codes) <= 20)
 );
 
@@ -124,20 +127,24 @@ begin
   if p_new_state not in ('draft','commissioning','suspended','decommissioned') or p_reason_code !~ '^[a-z0-9_]{1,80}$' then raise exception 'Invalid commissioning transition' using errcode='22023'; end if;
   if p_network_configuration_class is not null and (char_length(p_network_configuration_class) not between 1 and 80 or not public.m24f_is_safe_metadata(p_network_configuration_class))
   then raise exception 'Unsafe network configuration class' using errcode='22023'; end if;
+  -- Receipt-first replay is deliberately independent of mutable certification and
+  -- current commissioning state. It makes response-loss recovery durable even
+  -- after another transition or authority rotation.
+  select * into v_receipt from public.physical_pilot_commissioning_receipts where transition_key=p_transition_key;
+  if v_receipt.id is not null then
+    if v_receipt.expected_version is distinct from p_expected_version or v_receipt.to_state is distinct from p_new_state or v_receipt.reason_code is distinct from p_reason_code
+      or v_receipt.safe_receipt->>'device_id' is distinct from p_device_id::text
+      or v_receipt.safe_receipt->>'candidate_id' is distinct from p_candidate_id::text or v_receipt.safe_receipt->>'manifest_id' is distinct from p_manifest_id::text
+      or v_receipt.safe_receipt->>'network_configuration_class' is distinct from p_network_configuration_class
+      or v_receipt.safe_receipt->>'expected_heartbeat_seconds' is distinct from p_expected_heartbeat_seconds::text
+    then raise exception 'Transition key request mismatch' using errcode='22023'; end if;
+    return jsonb_build_object('receipt_id',v_receipt.id,'version',v_receipt.resulting_version,'replayed',true);
+  end if;
   select * into v_candidate from public.m24f_adapter_candidates where id=p_candidate_id;
   select * into v_manifest from public.m24f_adapter_capability_manifests where id=p_manifest_id;
   v_certification_run_id:=public.m26_current_certification_run_v1(p_candidate_id,p_manifest_id);
   if v_candidate.id is null or v_manifest.id is null or v_certification_run_id is null then raise exception 'Selected adapter is not approved by the current successful certification authority' using errcode='42501'; end if;
   select * into v_row from public.physical_pilot_commissioning where gps_device_id=p_device_id for update;
-  if v_row.id is not null and v_row.last_transition_key=p_transition_key then
-    select * into v_receipt from public.physical_pilot_commissioning_receipts where transition_key=p_transition_key;
-    if v_receipt.expected_version is distinct from p_expected_version or v_receipt.to_state is distinct from p_new_state or v_receipt.reason_code is distinct from p_reason_code
-      or v_receipt.safe_receipt->>'candidate_id' is distinct from p_candidate_id::text or v_receipt.safe_receipt->>'manifest_id' is distinct from p_manifest_id::text
-      or v_receipt.safe_receipt->>'network_configuration_class' is distinct from p_network_configuration_class
-      or v_receipt.safe_receipt->>'expected_heartbeat_seconds' is distinct from coalesce(p_expected_heartbeat_seconds::text,null)
-    then raise exception 'Transition key request mismatch' using errcode='22023'; end if;
-    return jsonb_build_object('receipt_id',v_receipt.id,'version',v_receipt.resulting_version,'replayed',true);
-  end if;
   if v_row.id is null then
     if p_expected_version is distinct from 0 or p_new_state<>'draft' then raise exception 'Stale commissioning version' using errcode='40001'; end if;
     v_from:=null;
@@ -160,26 +167,43 @@ end $$;
 -- are locked and checked before the immutable receipt is written.
 create or replace function public.service_record_physical_pilot_network_validation_v1(
  p_receipt_id uuid,p_commissioning_id uuid,p_expected_version bigint,p_device_id uuid,p_vehicle_link_id uuid,p_installation_event_id uuid,
- p_credential_id uuid,p_network_configuration_class text,p_configuration_identity_hash text,p_validated_at timestamptz
+ p_credential_id uuid,p_network_configuration_class text,p_configuration_identity_hash text,p_validated_at timestamptz,
+ p_repository_head_sha text,p_workflow_run_id text
 ) returns uuid language plpgsql security definer set search_path=pg_catalog,public as $$
 declare c public.physical_pilot_commissioning%rowtype; l public.gps_device_vehicle_links%rowtype; i public.gps_device_lifecycle_events%rowtype; k public.gps_device_credential_metadata%rowtype;
+ r public.physical_pilot_repository_authority%rowtype; n public.physical_pilot_network_validation_receipts%rowtype;
 begin
  if coalesce(auth.role(),'')<>'service_role' then raise exception 'Service authority required' using errcode='42501'; end if;
  if p_network_configuration_class is null or char_length(p_network_configuration_class) not between 1 and 80 or not public.m24f_is_safe_metadata(p_network_configuration_class)
  then raise exception 'Unsafe network configuration class' using errcode='22023'; end if;
+ perform pg_advisory_xact_lock(hashtext(p_receipt_id::text));
+ select * into n from public.physical_pilot_network_validation_receipts where id=p_receipt_id;
+ if n.id is not null then
+  if n.commissioning_id is distinct from p_commissioning_id or n.commissioning_version is distinct from p_expected_version
+   or n.gps_device_id is distinct from p_device_id or n.vehicle_link_id is distinct from p_vehicle_link_id
+   or n.installation_event_id is distinct from p_installation_event_id or n.credential_id is distinct from p_credential_id
+   or n.network_configuration_class is distinct from p_network_configuration_class or n.configuration_identity_hash is distinct from p_configuration_identity_hash
+   or n.validated_at is distinct from p_validated_at or n.repository_head_sha is distinct from p_repository_head_sha
+   or n.workflow_run_id is distinct from p_workflow_run_id
+  then raise exception 'Network validation receipt replay conflict' using errcode='22023'; end if;
+  return n.id;
+ end if;
  select * into c from public.physical_pilot_commissioning where id=p_commissioning_id for update;
  select * into l from public.gps_device_vehicle_links where id=p_vehicle_link_id for share;
  select * into i from public.gps_device_lifecycle_events where id=p_installation_event_id for share;
  select * into k from public.gps_device_credential_metadata where id=p_credential_id for share;
+ select * into r from public.physical_pilot_repository_authority order by generation desc limit 1 for share;
  if c.id is null or c.state<>'commissioning' or c.version is distinct from p_expected_version or c.gps_device_id<>p_device_id or c.network_configuration_class is distinct from p_network_configuration_class
    or l.gps_device_id is distinct from p_device_id or l.effective_until is not null or not l.is_primary
    or i.gps_device_id is distinct from p_device_id or i.vehicle_id is distinct from l.vehicle_id or i.event_type<>'installed' or i.effective_at<l.effective_from
    or exists(select 1 from public.gps_device_lifecycle_events x where x.gps_device_id=p_device_id and x.event_type in ('installed','removed','replaced','lost','stolen','retired','setup_reopened') and (x.effective_at,x.created_at)>(i.effective_at,i.created_at))
    or k.gps_device_id is distinct from p_device_id or k.status<>'active' or k.last_verified_at is null or k.last_verified_at<i.effective_at or (k.expires_at is not null and k.expires_at<=p_validated_at)
+   or r.generation is null or r.repository_head_sha is distinct from p_repository_head_sha or r.workflow_run_id is distinct from p_workflow_run_id
+   or c.selected_certification_run_id is distinct from public.m26_current_certification_run_v1(c.selected_candidate_id,c.selected_manifest_id)
    or p_configuration_identity_hash !~ '^[a-f0-9]{64}$' or p_validated_at>clock_timestamp() or p_validated_at<greatest(i.effective_at,k.last_verified_at)
  then raise exception 'Network validation is not bound to current authority' using errcode='42501'; end if;
- insert into public.physical_pilot_network_validation_receipts(id,commissioning_id,commissioning_version,gps_device_id,vehicle_link_id,installation_event_id,credential_id,network_configuration_class,configuration_identity_hash,validated_at)
- values(p_receipt_id,c.id,c.version,p_device_id,l.id,i.id,k.id,p_network_configuration_class,p_configuration_identity_hash,p_validated_at);
+ insert into public.physical_pilot_network_validation_receipts(id,commissioning_id,commissioning_version,gps_device_id,vehicle_link_id,installation_event_id,credential_id,certification_run_id,repository_authority_generation,repository_head_sha,workflow_run_id,network_configuration_class,configuration_identity_hash,validated_at)
+ values(p_receipt_id,c.id,c.version,p_device_id,l.id,i.id,k.id,c.selected_certification_run_id,r.generation,r.repository_head_sha,r.workflow_run_id,p_network_configuration_class,p_configuration_identity_hash,p_validated_at);
  return p_receipt_id;
 end $$;
 
@@ -206,7 +230,6 @@ begin
  if e.id is not null then
   if e.commissioning_id is distinct from p_commissioning_id or e.commissioning_version is distinct from p_expected_version
    or e.selected_candidate_id is distinct from p_candidate_id or e.manifest_id is distinct from p_manifest_id
-   or e.certification_run_id is distinct from c.selected_certification_run_id or e.repository_authority_generation is distinct from r.generation
    or e.repository_head_sha is distinct from p_repository_head_sha or e.workflow_run_id is distinct from p_workflow_run_id
    or e.gps_device_id is distinct from p_device_id or e.device_identity_hash is distinct from p_device_identity_hash
    or e.installation_receipt_id is distinct from p_installation_receipt_id or e.vehicle_link_id is distinct from p_vehicle_link_id
@@ -230,9 +253,11 @@ begin
   or exists(select 1 from public.gps_device_lifecycle_events x where x.gps_device_id=p_device_id and x.event_type in ('installed','removed','replaced','lost','stolen','retired','setup_reopened') and (x.effective_at,x.created_at)>(i.effective_at,i.created_at))
   or k.gps_device_id is distinct from p_device_id or k.status<>'active' or k.last_verified_at is null or k.last_verified_at<i.effective_at or k.last_verified_at>p_observation_ended_at or (k.expires_at is not null and k.expires_at<=p_observation_ended_at)
   or n.commissioning_id is distinct from c.id or n.commissioning_version<>c.version or n.gps_device_id<>p_device_id or n.vehicle_link_id<>l.id or n.installation_event_id<>i.id or n.credential_id<>k.id or n.network_configuration_class<>c.network_configuration_class
-  or n.validated_at>p_observation_started_at or p_classification<>'physical' or p_disposition<>'pass' or not p_authentication_passed or not p_replay_passed or not p_freshness_passed or not p_health_passed
-  or p_sequence_outcome='failed' or p_reconnect_outcome='failed' or (p_sequence_outcome='not_supported' and m.sequence_available) or (p_reconnect_outcome='not_supported' and m.offline_buffering_supported)
-  or p_sequence_outcome not in ('passed','not_supported') or p_reconnect_outcome not in ('passed','not_supported')
+  or n.certification_run_id<>c.selected_certification_run_id or n.repository_authority_generation<>r.generation or n.repository_head_sha<>r.repository_head_sha or n.workflow_run_id<>r.workflow_run_id
+  or n.validated_at>p_observation_started_at or p_classification not in ('synthetic','physical') or p_disposition not in ('pass','partial','blocked')
+  or (p_classification='synthetic' and p_disposition='pass')
+  or p_sequence_outcome not in ('passed','failed','not_supported') or p_reconnect_outcome not in ('passed','failed','not_supported')
+  or (p_sequence_outcome='not_supported' and m.sequence_available) or (p_reconnect_outcome='not_supported' and m.offline_buffering_supported)
   or exists(select 1 from unnest(p_reason_codes) reason where reason is null or char_length(reason) not between 1 and 80 or not public.m24f_is_safe_metadata(reason))
   or p_observation_ended_at<=p_observation_started_at or p_observation_ended_at>clock_timestamp() or p_telemetry_count not between 1 and 10000000 or cardinality(p_reason_codes)>20 or p_operator_id_hash !~ '^[a-f0-9]{64}$'
  then raise exception 'Physical evidence is not bound to current authority' using errcode='42501'; end if;
@@ -246,6 +271,7 @@ returns jsonb language plpgsql security definer set search_path=pg_catalog,publi
 declare d public.gps_devices%rowtype; c public.physical_pilot_commissioning%rowtype; a public.m24f_adapter_candidates%rowtype; m public.m24f_adapter_capability_manifests%rowtype;
  l public.gps_device_vehicle_links%rowtype; i public.gps_device_lifecycle_events%rowtype; k public.gps_device_credential_metadata%rowtype; n public.physical_pilot_network_validation_receipts%rowtype;
  r public.physical_pilot_repository_authority%rowtype;
+ e_latest public.physical_pilot_evidence_receipts%rowtype;
  v_stage text; v_reasons text[]='{}'; v_physical boolean=false;
 begin
  perform public.m20a_require_admin();
@@ -260,7 +286,10 @@ begin
  select * into r from public.physical_pilot_repository_authority order by generation desc limit 1;
  if c.id is not null then
   select * into n from public.physical_pilot_network_validation_receipts x where x.commissioning_id=c.id and x.commissioning_version=c.version and x.gps_device_id=p_device_id
-   and x.vehicle_link_id=l.id and x.installation_event_id=i.id and x.credential_id=k.id and x.network_configuration_class=c.network_configuration_class order by x.validated_at desc limit 1;
+   and x.vehicle_link_id=l.id and x.installation_event_id=i.id and x.credential_id=k.id and x.network_configuration_class=c.network_configuration_class
+   and x.certification_run_id=c.selected_certification_run_id and x.repository_authority_generation=r.generation
+   and x.repository_head_sha=r.repository_head_sha and x.workflow_run_id=r.workflow_run_id order by x.validated_at desc limit 1;
+  select * into e_latest from public.physical_pilot_evidence_receipts e where e.commissioning_id=c.id and e.commissioning_version=c.version order by e.recorded_at desc,e.id desc limit 1;
   select exists(select 1 from public.physical_pilot_evidence_receipts e where e.commissioning_id=c.id and e.commissioning_version=c.version and e.selected_candidate_id=c.selected_candidate_id
    and e.certification_run_id=c.selected_certification_run_id and e.manifest_id=c.selected_manifest_id and e.gps_device_id=p_device_id and e.device_identity_hash=public.m22_safe_digest(p_device_id::text)
    and e.vehicle_link_id=l.id and e.installation_receipt_id=i.id and e.credential_id=k.id and e.credential_verified_at<=k.last_verified_at
@@ -270,17 +299,19 @@ begin
    and e.sequence_outcome<>'failed' and e.reconnect_outcome<>'failed' and (e.sequence_outcome<>'not_supported' or not m.sequence_available) and (e.reconnect_outcome<>'not_supported' or not m.offline_buffering_supported)) into v_physical;
  end if;
  if c.id is null then v_stage:='awaiting_hardware_selection';v_reasons:=array['hardware_not_selected'];
- elsif c.state in ('suspended','decommissioned') or d.status::text in ('suspended','retired','removed','not_working') then v_stage:='blocked';v_reasons:=array['device_not_operational'];
+ elsif c.state in ('suspended','decommissioned') or d.status::text is distinct from 'active' then v_stage:='blocked';v_reasons:=array['device_not_operational'];
  elsif c.state<>'commissioning' then v_stage:='awaiting_adapter_implementation';v_reasons:=array['selected_candidate_not_approved'];
  elsif public.m26_current_certification_run_v1(c.selected_candidate_id,c.selected_manifest_id) is distinct from c.selected_certification_run_id then v_stage:='awaiting_adapter_implementation';v_reasons:=array['adapter_not_certified'];
  elsif d.id is null then v_stage:='awaiting_device_registration';v_reasons:=array['device_not_registered'];
  elsif k.id is null then v_stage:='awaiting_credentials';v_reasons:=array['credential_not_active'];
  elsif l.id is null or i.id is null or i.event_type<>'installed' or i.vehicle_id is distinct from l.vehicle_id or i.effective_at<l.effective_from or d.installation_state<>'installed' then v_stage:='awaiting_installation';v_reasons:=array['installation_not_recorded'];
  elsif n.id is null then v_stage:='awaiting_network_validation';v_reasons:=array['network_not_validated'];
- elsif not v_physical then v_stage:='awaiting_real_telemetry';v_reasons:=array['physical_evidence_missing'];
+ elsif not v_physical and e_latest.id is not null then v_stage:='physical_evidence_required';v_reasons:=array['physical_evidence_'||e_latest.disposition,case when e_latest.classification='synthetic' then 'synthetic_evidence_non_ready' else 'physical_outcomes_not_passed' end];
+ elsif not v_physical then v_stage:='physical_evidence_required';v_reasons:=array['physical_evidence_missing'];
  else v_stage:='ready_for_controlled_physical_pilot'; end if;
  return jsonb_build_object('contractVersion','m26-readiness-v1','deviceId',p_device_id,'stage',v_stage,'blockingReasons',v_reasons,
-  'selectedAdapter',case when c.id is null then null else jsonb_build_object('candidateId',c.selected_candidate_id,'adapterId',m.adapter_id,'adapterVersion',m.adapter_version) end,
+  'commissioning',case when c.id is null then null else jsonb_build_object('id',c.id,'state',c.state,'version',c.version,'candidateId',c.selected_candidate_id,'manifestId',c.selected_manifest_id,'certificationRunId',c.selected_certification_run_id,'networkConfigurationClass',c.network_configuration_class,'expectedHeartbeatSeconds',c.expected_heartbeat_seconds) end,
+  'selectedAdapter',case when c.id is null then null else jsonb_build_object('candidateId',c.selected_candidate_id,'manifestId',c.selected_manifest_id,'certificationRunId',c.selected_certification_run_id,'adapterId',m.adapter_id,'adapterVersion',m.adapter_version) end,
   'credentialReady',k.id is not null,'installationReady',l.id is not null and i.event_type='installed' and i.vehicle_id=l.vehicle_id and i.effective_at>=l.effective_from and d.installation_state='installed',
   'networkReady',n.id is not null,'physicalEvidence',v_physical,'derivedAt',clock_timestamp());
 end $$;
@@ -302,5 +333,5 @@ revoke all on function public.service_rotate_physical_pilot_repository_authority
 grant execute on function public.service_rotate_physical_pilot_repository_authority_v1(text,text) to service_role;
 revoke all on function public.admin_transition_physical_pilot_commissioning_v1(uuid,uuid,uuid,bigint,uuid,text,text,text,integer),public.admin_get_physical_pilot_readiness_v1(uuid) from public,anon;
 grant execute on function public.admin_transition_physical_pilot_commissioning_v1(uuid,uuid,uuid,bigint,uuid,text,text,text,integer),public.admin_get_physical_pilot_readiness_v1(uuid) to authenticated;
-revoke all on function public.service_record_physical_pilot_network_validation_v1(uuid,uuid,bigint,uuid,uuid,uuid,uuid,text,text,timestamptz),public.service_record_physical_pilot_evidence_v1(uuid,uuid,bigint,uuid,uuid,text,text,uuid,text,uuid,uuid,uuid,uuid,text,timestamptz,timestamptz,bigint,boolean,boolean,text,text,boolean,boolean,text,text[],text) from public,anon,authenticated;
-grant execute on function public.service_record_physical_pilot_network_validation_v1(uuid,uuid,bigint,uuid,uuid,uuid,uuid,text,text,timestamptz),public.service_record_physical_pilot_evidence_v1(uuid,uuid,bigint,uuid,uuid,text,text,uuid,text,uuid,uuid,uuid,uuid,text,timestamptz,timestamptz,bigint,boolean,boolean,text,text,boolean,boolean,text,text[],text) to service_role;
+revoke all on function public.service_record_physical_pilot_network_validation_v1(uuid,uuid,bigint,uuid,uuid,uuid,uuid,text,text,timestamptz,text,text),public.service_record_physical_pilot_evidence_v1(uuid,uuid,bigint,uuid,uuid,text,text,uuid,text,uuid,uuid,uuid,uuid,text,timestamptz,timestamptz,bigint,boolean,boolean,text,text,boolean,boolean,text,text[],text) from public,anon,authenticated;
+grant execute on function public.service_record_physical_pilot_network_validation_v1(uuid,uuid,bigint,uuid,uuid,uuid,uuid,text,text,timestamptz,text,text),public.service_record_physical_pilot_evidence_v1(uuid,uuid,bigint,uuid,uuid,text,text,uuid,text,uuid,uuid,uuid,uuid,text,timestamptz,timestamptz,bigint,boolean,boolean,text,text,boolean,boolean,text,text[],text) to service_role;

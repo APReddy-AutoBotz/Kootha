@@ -95,7 +95,8 @@ describe("M26 database authority closure", () => {
     expect(migration).toContain("pg_advisory_xact_lock(hashtext(p_receipt_id::text))");
     expect(migration).toContain("Physical evidence receipt replay conflict");
     expect(migration).toContain("e.reason_codes is distinct from p_reason_codes");
-    expect(migration).toContain("e.repository_authority_generation is distinct from r.generation");
+    expect(migration).toContain("e.repository_head_sha is distinct from p_repository_head_sha");
+    expect(migration).not.toContain("e.repository_authority_generation is distinct from r.generation");
   });
 
   it("preserves same-credential verification and safely bounds network metadata", () => {
@@ -123,6 +124,6 @@ describe("M26 admin readiness request fencing", () => {
   it("retains a readiness refresh after successful registry mutations", () => {
     const mutation = admin.slice(admin.indexOf("async function callDeviceRpc"), admin.indexOf("function identityBody"));
     expect(mutation).toContain("await loadRegistry()");
-    expect(mutation).toContain("await loadPhysicalReadiness(selectedId)");
+    expect(mutation).toContain("await loadPhysicalReadiness(selectedIdRef.current)");
   });
 });

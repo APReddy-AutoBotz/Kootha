@@ -1,0 +1,13 @@
+{
+  "contractVersion": "m26-field-handoff-template-v1",
+  "productionEvidence": false,
+  "classification": "template",
+  "selectedAdapter": { "candidateId": "", "manifestId": "", "certificationRunId": "" },
+  "device": { "identityDigest": "", "vehicleLinkReceiptId": "", "installationReceiptId": "", "credentialId": "", "credentialVerifiedAt": "" },
+  "network": { "configurationClass": "", "validationReceiptId": "" },
+  "repositoryAuthority": { "generation": null, "headSha": "", "workflowRunId": "" },
+  "fieldWindow": { "startedAt": "", "endedAt": "", "telemetryCount": 0 },
+  "outcomes": { "authentication": "not_run", "replay": "not_run", "sequence": "not_run", "reconnect": "not_run", "freshness": "not_run", "health": "not_run" },
+  "disposition": "blocked",
+  "blockingReasons": ["template_values_are_not_evidence", "physical_evidence_required"]
+}

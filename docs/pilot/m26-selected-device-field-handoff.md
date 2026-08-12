@@ -2,6 +2,8 @@
 
 This runbook starts **only after AP selects hardware**. It does not select or recommend a vendor, device, protocol, transport, SIM/network, installation method, compliance position, or cost. Synthetic fixtures and CI are conformance evidence only and never physical evidence.
 
+The machine-readable companion template is [`m26-field-handoff.template.json`](./m26-field-handoff.template.json). Its `productionEvidence: false`, `classification: template`, empty authority selectors, zero observations, `not_run` outcomes and blocked disposition are intentional: the template cannot be ingested as physical evidence.
+
 ## Required AP handoff
 
 - Approved vendor, model/device family and privacy-safe device identifiers.
@@ -24,3 +26,9 @@ This runbook starts **only after AP selects hardware**. It does not select or re
 
 Suspend commissioning, revoke/rotate credentials in the server-side store, stop ingestion, close the effective vehicle link, record removal/replacement, and decommission the commissioning record. Preserve immutable safe receipts; never copy coordinates, raw payloads or secrets into audit/evidence. Re-entry uses a new transition key and current version after the cause is resolved.
 
+
+## Response-loss and recovery
+
+Retry a lost RPC response with the identical transition key or receipt ID and every original selector unchanged. Exact replay returns the frozen receipt even if current authority later rotates; changed reuse conflicts. Reopen only after refreshing current certification, link, installation, credential, repository and network authority. Routine verification of the same active credential is allowed, but rotation or revocation requires new network and physical evidence.
+
+Software-complete scope covers state transitions, immutable receipts, server-derived blocking reasons, replay recovery and the empty handoff contract. AP selection, production credentials, network approval, installation, the real field window and physical outcomes remain hardware/field gated.
