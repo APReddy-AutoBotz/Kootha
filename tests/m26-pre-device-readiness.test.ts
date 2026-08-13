@@ -72,9 +72,12 @@ describe("M26 database authority closure", () => {
     expect(telemetryTruth).toContain("telemetry_identity_conflicts_m26_scope_idx");
     expect(telemetryTruth).toContain("c.last_seen_at>=p_observation_started_at");
     expect(telemetryTruth).toContain("c.first_seen_at<=p_observation_ended_at");
-    expect(telemetryTruth).not.toContain("t.received_at>=p_observation_started_at");
+    expect(telemetryTruth).not.toContain("and c.reason_code in ('event_identity_conflict','sequence_replay_invalid')\n    and t.received_at>=p_observation_started_at");
     expect(telemetryTruth).toContain("telemetry_identity_conflicts_m26_serialize");
     expect(telemetryTruth).toContain("m26_lock_device_authority_v1(p_device_id)");
+    expect(telemetryTruth).toContain("t.reason_code='sequence_replay_invalid'");
+    expect(telemetryTruth).toContain("returns jsonb language plpgsql security definer set search_path=pg_catalog,public volatile");
+    expect(telemetryTruth).not.toContain("t.credential_id=p_credential_id and t.gps_device_vehicle_link_id=p_vehicle_link_id\n    and t.adapter_id=p_adapter_id and t.adapter_version=p_adapter_version\n    and c.reason_code");
     expect(telemetryTruth).toContain("from service_role");
     for (const table of ["physical_pilot_commissioning", "physical_pilot_commissioning_receipts",
       "physical_pilot_network_validation_receipts", "physical_pilot_evidence_receipts",

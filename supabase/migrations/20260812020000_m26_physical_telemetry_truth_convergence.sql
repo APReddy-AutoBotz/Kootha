@@ -56,11 +56,19 @@ create or replace function public.m26_has_authoritative_conflict_v1(
   from public.telemetry_identity_conflicts c
   join public.telemetry_receipts t on t.id=c.original_receipt_id
   where c.gps_device_id=p_device_id and t.gps_device_id=p_device_id
-    and t.credential_id=p_credential_id and t.gps_device_vehicle_link_id=p_vehicle_link_id
     and t.adapter_id=p_adapter_id and t.adapter_version=p_adapter_version
     and c.reason_code in ('event_identity_conflict','sequence_replay_invalid')
     and c.last_seen_at>=p_observation_started_at
     and c.first_seen_at<=p_observation_ended_at
+ ) or exists(
+  select 1
+  from public.telemetry_receipts t
+  where t.gps_device_id=p_device_id
+    and t.credential_id=p_credential_id and t.gps_device_vehicle_link_id=p_vehicle_link_id
+    and t.adapter_id=p_adapter_id and t.adapter_version=p_adapter_version
+    and t.reason_code='sequence_replay_invalid'
+    and t.received_at>=p_observation_started_at
+    and t.received_at<=p_observation_ended_at
  )
 $$;
 revoke all on function public.m26_has_authoritative_conflict_v1(uuid,uuid,uuid,text,text,timestamptz,timestamptz) from public,anon,authenticated,service_role;
@@ -167,7 +175,7 @@ begin
 end $$;
 
 create or replace function public.admin_get_physical_pilot_readiness_v1(p_device_id uuid)
-returns jsonb language plpgsql security definer set search_path=pg_catalog,public stable as $$
+returns jsonb language plpgsql security definer set search_path=pg_catalog,public volatile as $$
 declare d public.gps_devices%rowtype; c public.physical_pilot_commissioning%rowtype; a public.m24f_adapter_candidates%rowtype; m public.m24f_adapter_capability_manifests%rowtype;
  l public.gps_device_vehicle_links%rowtype; i public.gps_device_lifecycle_events%rowtype; k public.gps_device_credential_metadata%rowtype; n public.physical_pilot_network_validation_receipts%rowtype;
  r public.physical_pilot_repository_authority%rowtype;

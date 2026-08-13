@@ -2,7 +2,7 @@
 \connect postgres supabase_admin
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(90);
+select plan(93);
 select has_table('public','physical_pilot_evidence_telemetry_receipts','physical passes freeze authoritative M21 receipt bindings');
 select has_trigger('public','physical_pilot_evidence_telemetry_receipts','physical_pilot_evidence_telemetry_immutable','physical telemetry bindings are immutable');
 select ok(pg_get_functiondef('public.service_record_physical_pilot_evidence_v1(uuid,uuid,bigint,uuid,uuid,text,text,uuid,text,uuid,uuid,uuid,uuid,text,timestamptz,timestamptz,bigint,boolean,boolean,text,text,boolean,boolean,text,text[],text)'::regprocedure) ilike '%Physical pass requires authoritative non-synthetic telemetry%','physical pass requires database-proven M21 telemetry');
@@ -65,11 +65,14 @@ select ok(pg_get_functiondef('public.service_record_physical_pilot_evidence_v1(u
 select ok(pg_get_functiondef('public.admin_get_physical_pilot_readiness_v1(uuid)'::regprocedure) ilike '%not public.m26_has_authoritative_conflict_v1%','readiness revalidates conflicts discovered after evidence ingestion');
 select ok(not exists(select 1 from unnest(array['INSERT','UPDATE','DELETE','TRUNCATE']) privilege_name where has_table_privilege('service_role','public.telemetry_identity_conflicts',privilege_name)),'service role cannot forge or erase replay conflict authority');
 select ok(pg_get_functiondef('public.m26_has_authoritative_conflict_v1(uuid,uuid,uuid,text,text,timestamptz,timestamptz)'::regprocedure) ilike '%c.last_seen_at>=%' and pg_get_functiondef('public.m26_has_authoritative_conflict_v1(uuid,uuid,uuid,text,text,timestamptz,timestamptz)'::regprocedure) ilike '%c.first_seen_at<=%','conflict scope follows the authoritative attempt interval');
-select ok(pg_get_functiondef('public.m26_has_authoritative_conflict_v1(uuid,uuid,uuid,text,text,timestamptz,timestamptz)'::regprocedure) not ilike '%t.received_at>=%' and pg_get_functiondef('public.m26_has_authoritative_conflict_v1(uuid,uuid,uuid,text,text,timestamptz,timestamptz)'::regprocedure) not ilike '%t.captured_at<=%','original receipt chronology cannot hide an in-window replay attempt');
+select ok((select count(*) from regexp_matches(pg_get_functiondef('public.m26_has_authoritative_conflict_v1(uuid,uuid,uuid,text,text,timestamptz,timestamptz)'::regprocedure),'t\.received_at','g'))=2 and pg_get_functiondef('public.m26_has_authoritative_conflict_v1(uuid,uuid,uuid,text,text,timestamptz,timestamptz)'::regprocedure) not ilike '%t.captured_at%','original receipt chronology cannot hide an in-window replay attempt');
 select has_trigger('public','telemetry_identity_conflicts','telemetry_identity_conflicts_m26_serialize','conflict writes serialize with evidence authority');
 select ok(pg_get_functiondef('public.service_record_physical_pilot_evidence_v1(uuid,uuid,bigint,uuid,uuid,text,text,uuid,text,uuid,uuid,uuid,uuid,text,timestamptz,timestamptz,bigint,boolean,boolean,text,text,boolean,boolean,text,text[],text)'::regprocedure) ilike '%m26_lock_device_authority_v1(p_device_id)%','evidence ingest takes the shared device authority lock');
 select ok(pg_get_functiondef('public.admin_get_physical_pilot_readiness_v1(uuid)'::regprocedure) ilike '%m26_lock_device_authority_v1(p_device_id)%','readiness projection takes the shared device authority lock');
 select ok(pg_get_functiondef('public.m26_serialize_conflict_authority_v1()'::regprocedure) ilike '%m26_lock_device_authority_v1(new.gps_device_id)%','conflict attempts take the shared device authority lock');
+select ok(pg_get_functiondef('public.m26_has_authoritative_conflict_v1(uuid,uuid,uuid,text,text,timestamptz,timestamptz)'::regprocedure) ilike '%t.reason_code=''sequence_replay_invalid''%' and pg_get_functiondef('public.m26_has_authoritative_conflict_v1(uuid,uuid,uuid,text,text,timestamptz,timestamptz)'::regprocedure) ilike '%t.received_at>=%','stream-window replay rejection receipts are authoritative conflict truth');
+select is((select count(*) from regexp_matches(pg_get_functiondef('public.m26_has_authoritative_conflict_v1(uuid,uuid,uuid,text,text,timestamptz,timestamptz)'::regprocedure),'t\.credential_id=p_credential_id','g')),1::bigint,'incoming conflict attempts are not discarded because the original receipt used historical credential or link authority');
+select volatility_is('public','admin_get_physical_pilot_readiness_v1',array['uuid'],'v','readiness obtains a fresh snapshot after acquiring the device authority lock');
 
 -- Fixture-backed acceptance: these assertions invoke the real writers and read
 -- their persisted effects. All observations are explicit synthetic test data;
