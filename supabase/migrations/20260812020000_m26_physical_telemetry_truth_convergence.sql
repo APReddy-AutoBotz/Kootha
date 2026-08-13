@@ -25,9 +25,27 @@ $$;
 revoke all on function public.m26_is_authoritative_observation_v1(timestamptz,timestamptz,timestamptz,timestamptz,timestamptz) from public,anon,authenticated,service_role;
 
 create index if not exists telemetry_identity_conflicts_m26_scope_idx
- on public.telemetry_identity_conflicts(gps_device_id,original_receipt_id,reason_code);
+ on public.telemetry_identity_conflicts(gps_device_id,first_seen_at,last_seen_at,reason_code,original_receipt_id);
 create index if not exists telemetry_receipts_m26_conflict_scope_idx
  on public.telemetry_receipts(gps_device_id,credential_id,gps_device_vehicle_link_id,adapter_id,adapter_version,received_at,captured_at,id);
+
+create or replace function public.m26_lock_device_authority_v1(p_device_id uuid)
+returns void language plpgsql set search_path=pg_catalog,public as $$
+begin
+ perform pg_advisory_xact_lock(hashtextextended(p_device_id::text,0));
+end $$;
+revoke all on function public.m26_lock_device_authority_v1(uuid) from public,anon,authenticated,service_role;
+
+create or replace function public.m26_serialize_conflict_authority_v1()
+returns trigger language plpgsql set search_path=pg_catalog,public as $$
+begin
+ perform public.m26_lock_device_authority_v1(new.gps_device_id);
+ return new;
+end $$;
+revoke all on function public.m26_serialize_conflict_authority_v1() from public,anon,authenticated,service_role;
+create trigger telemetry_identity_conflicts_m26_serialize
+before insert or update on public.telemetry_identity_conflicts
+for each row execute function public.m26_serialize_conflict_authority_v1();
 
 create or replace function public.m26_has_authoritative_conflict_v1(
  p_device_id uuid,p_credential_id uuid,p_vehicle_link_id uuid,p_adapter_id text,p_adapter_version text,
@@ -41,8 +59,8 @@ create or replace function public.m26_has_authoritative_conflict_v1(
     and t.credential_id=p_credential_id and t.gps_device_vehicle_link_id=p_vehicle_link_id
     and t.adapter_id=p_adapter_id and t.adapter_version=p_adapter_version
     and c.reason_code in ('event_identity_conflict','sequence_replay_invalid')
-    and t.received_at>=p_observation_started_at and t.received_at<=p_observation_ended_at
-    and t.captured_at>=p_observation_started_at and t.captured_at<=p_observation_ended_at
+    and c.last_seen_at>=p_observation_started_at
+    and c.first_seen_at<=p_observation_ended_at
  )
 $$;
 revoke all on function public.m26_has_authoritative_conflict_v1(uuid,uuid,uuid,text,text,timestamptz,timestamptz) from public,anon,authenticated,service_role;
@@ -60,6 +78,7 @@ declare c public.physical_pilot_commissioning%rowtype; m public.m24f_adapter_cap
 begin
  if coalesce(auth.role(),'')<>'service_role' then raise exception 'Service authority required' using errcode='42501'; end if;
  if p_observation_ended_at-p_observation_started_at>interval '24 hours' then raise exception 'Physical evidence observation window exceeds 24 hours' using errcode='22023'; end if;
+ perform public.m26_lock_device_authority_v1(p_device_id);
  perform pg_advisory_xact_lock(hashtext(p_receipt_id::text));
  select * into c from public.physical_pilot_commissioning where id=p_commissioning_id for update;
  select * into m from public.m24f_adapter_capability_manifests where id=p_manifest_id for share;
@@ -156,6 +175,7 @@ declare d public.gps_devices%rowtype; c public.physical_pilot_commissioning%rowt
  v_stage text; v_reasons text[]='{}'; v_physical boolean=false;
 begin
  perform public.m20a_require_admin();
+ perform public.m26_lock_device_authority_v1(p_device_id);
  select * into d from public.gps_devices where id=p_device_id;
  select * into c from public.physical_pilot_commissioning where gps_device_id=p_device_id;
  if c.id is not null then select * into a from public.m24f_adapter_candidates where id=c.selected_candidate_id; select * into m from public.m24f_adapter_capability_manifests where id=c.selected_manifest_id; end if;

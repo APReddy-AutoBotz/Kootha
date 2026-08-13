@@ -70,6 +70,11 @@ describe("M26 database authority closure", () => {
       "Physical pass requires authoritative non-synthetic telemetry", "e.telemetry_count=(select count(*)"]) expect(telemetryTruth).toContain(proof);
     expect(telemetryTruth).not.toContain("k.last_verified_at>p_observation_ended_at");
     expect(telemetryTruth).toContain("telemetry_identity_conflicts_m26_scope_idx");
+    expect(telemetryTruth).toContain("c.last_seen_at>=p_observation_started_at");
+    expect(telemetryTruth).toContain("c.first_seen_at<=p_observation_ended_at");
+    expect(telemetryTruth).not.toContain("t.received_at>=p_observation_started_at");
+    expect(telemetryTruth).toContain("telemetry_identity_conflicts_m26_serialize");
+    expect(telemetryTruth).toContain("m26_lock_device_authority_v1(p_device_id)");
     expect(telemetryTruth).toContain("from service_role");
     for (const table of ["physical_pilot_commissioning", "physical_pilot_commissioning_receipts",
       "physical_pilot_network_validation_receipts", "physical_pilot_evidence_receipts",
