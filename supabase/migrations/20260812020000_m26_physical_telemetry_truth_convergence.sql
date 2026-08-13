@@ -24,6 +24,29 @@ create or replace function public.m26_is_authoritative_observation_v1(
 $$;
 revoke all on function public.m26_is_authoritative_observation_v1(timestamptz,timestamptz,timestamptz,timestamptz,timestamptz) from public,anon,authenticated,service_role;
 
+create index if not exists telemetry_identity_conflicts_m26_scope_idx
+ on public.telemetry_identity_conflicts(gps_device_id,original_receipt_id,reason_code);
+create index if not exists telemetry_receipts_m26_conflict_scope_idx
+ on public.telemetry_receipts(gps_device_id,credential_id,gps_device_vehicle_link_id,adapter_id,adapter_version,received_at,captured_at,id);
+
+create or replace function public.m26_has_authoritative_conflict_v1(
+ p_device_id uuid,p_credential_id uuid,p_vehicle_link_id uuid,p_adapter_id text,p_adapter_version text,
+ p_observation_started_at timestamptz,p_observation_ended_at timestamptz
+) returns boolean language sql stable set search_path=pg_catalog,public as $$
+ select exists(
+  select 1
+  from public.telemetry_identity_conflicts c
+  join public.telemetry_receipts t on t.id=c.original_receipt_id
+  where c.gps_device_id=p_device_id and t.gps_device_id=p_device_id
+    and t.credential_id=p_credential_id and t.gps_device_vehicle_link_id=p_vehicle_link_id
+    and t.adapter_id=p_adapter_id and t.adapter_version=p_adapter_version
+    and c.reason_code in ('event_identity_conflict','sequence_replay_invalid')
+    and t.received_at>=p_observation_started_at and t.received_at<=p_observation_ended_at
+    and t.captured_at>=p_observation_started_at and t.captured_at<=p_observation_ended_at
+ )
+$$;
+revoke all on function public.m26_has_authoritative_conflict_v1(uuid,uuid,uuid,text,text,timestamptz,timestamptz) from public,anon,authenticated,service_role;
+
 create or replace function public.service_record_physical_pilot_evidence_v1(
  p_receipt_id uuid,p_commissioning_id uuid,p_expected_version bigint,p_candidate_id uuid,p_manifest_id uuid,p_repository_head_sha text,p_workflow_run_id text,
  p_device_id uuid,p_device_identity_hash text,p_installation_receipt_id uuid,p_vehicle_link_id uuid,p_credential_id uuid,p_network_validation_receipt_id uuid,
@@ -33,7 +56,7 @@ create or replace function public.service_record_physical_pilot_evidence_v1(
 declare c public.physical_pilot_commissioning%rowtype; m public.m24f_adapter_capability_manifests%rowtype; n public.physical_pilot_network_validation_receipts%rowtype;
  l public.gps_device_vehicle_links%rowtype; i public.gps_device_lifecycle_events%rowtype; k public.gps_device_credential_metadata%rowtype;
  r public.physical_pilot_repository_authority%rowtype; e public.physical_pilot_evidence_receipts%rowtype;
- v_authoritative_telemetry_count bigint; v_sequence_proven boolean; v_reconnect_proven boolean;
+ v_authoritative_telemetry_count bigint; v_sequence_proven boolean; v_reconnect_proven boolean; v_replay_proven boolean;
 begin
  if coalesce(auth.role(),'')<>'service_role' then raise exception 'Service authority required' using errcode='42501'; end if;
  if p_observation_ended_at-p_observation_started_at>interval '24 hours' then raise exception 'Physical evidence observation window exceeds 24 hours' using errcode='22023'; end if;
@@ -70,7 +93,7 @@ begin
   or l.gps_device_id is distinct from p_device_id or l.effective_until is not null or not l.is_primary
   or i.gps_device_id is distinct from p_device_id or i.vehicle_id is distinct from l.vehicle_id or i.event_type<>'installed' or i.effective_at<l.effective_from
   or exists(select 1 from public.gps_device_lifecycle_events x where x.gps_device_id=p_device_id and x.event_type in ('installed','removed','replaced','lost','stolen','retired','setup_reopened') and (x.effective_at,x.created_at)>(i.effective_at,i.created_at))
-  or k.gps_device_id is distinct from p_device_id or k.status<>'active' or k.last_verified_at is null or k.last_verified_at<i.effective_at or k.last_verified_at>p_observation_ended_at or (k.expires_at is not null and k.expires_at<=p_observation_ended_at)
+  or k.gps_device_id is distinct from p_device_id or k.status<>'active' or k.last_verified_at is null or k.last_verified_at<i.effective_at or (k.expires_at is not null and k.expires_at<=p_observation_ended_at)
   or n.commissioning_id is distinct from c.id or n.commissioning_version<>c.version or n.gps_device_id<>p_device_id or n.vehicle_link_id<>l.id or n.installation_event_id<>i.id or n.credential_id<>k.id or n.network_configuration_class<>c.network_configuration_class
   or n.certification_run_id<>c.selected_certification_run_id or n.repository_authority_generation<>r.generation or n.repository_head_sha<>r.repository_head_sha or n.workflow_run_id<>r.workflow_run_id
   or n.validated_at>p_observation_started_at or p_classification not in ('synthetic','physical') or p_disposition not in ('pass','partial','blocked')
@@ -80,6 +103,7 @@ begin
   or p_observation_ended_at<=p_observation_started_at or p_observation_ended_at>clock_timestamp() or p_telemetry_count not between 1 and 10000000 or cardinality(p_reason_codes)>20 or p_operator_id_hash !~ '^[a-f0-9]{64}$'
  then raise exception 'Physical evidence is not bound to current authority' using errcode='42501'; end if;
  if p_classification='physical' and p_disposition='pass' then
+  v_replay_proven:=not public.m26_has_authoritative_conflict_v1(p_device_id,p_credential_id,p_vehicle_link_id,m.adapter_id,m.adapter_version,p_observation_started_at,p_observation_ended_at);
   select count(*)::bigint,
     coalesce(bool_and(t.stream_epoch is not null and t.sequence is not null),false),
     coalesce(bool_or(t.offline_backfill and t.disposition='accepted_delayed'),false)
@@ -102,7 +126,7 @@ begin
    ) into v_sequence_proven;
   end if;
   if v_authoritative_telemetry_count is distinct from p_telemetry_count
-    or not p_authentication_passed or not p_replay_passed or not p_freshness_passed or not p_health_passed
+    or not p_authentication_passed or not v_replay_proven or p_replay_passed is distinct from v_replay_proven or not p_freshness_passed or not p_health_passed
     or (m.sequence_available and (p_sequence_outcome<>'passed' or not v_sequence_proven))
     or (not m.sequence_available and p_sequence_outcome<>'not_supported')
     or (m.offline_buffering_supported and (p_reconnect_outcome<>'passed' or not v_reconnect_proven))
@@ -153,7 +177,7 @@ begin
    and e.network_validation_receipt_id=n.id and e.network_configuration_class=c.network_configuration_class
    and e.repository_authority_generation=r.generation and e.repository_head_sha=r.repository_head_sha and e.workflow_run_id=r.workflow_run_id
    and e.classification='physical' and e.physical_evidence and e.disposition='pass'
-   and e.telemetry_count=(select count(*) from public.physical_pilot_evidence_telemetry_receipts et join public.telemetry_receipts t on t.id=et.telemetry_receipt_id where et.evidence_receipt_id=e.id and not t.synthetic and t.gps_device_id=e.gps_device_id and t.credential_id=e.credential_id and t.gps_device_vehicle_link_id=e.vehicle_link_id and t.adapter_id=m.adapter_id and t.adapter_version=m.adapter_version and public.m26_is_authoritative_observation_v1(t.received_at,t.captured_at,n.validated_at,e.observation_started_at,e.observation_ended_at)) and e.authentication_passed and e.replay_passed and e.freshness_passed and e.health_passed
+   and e.telemetry_count=(select count(*) from public.physical_pilot_evidence_telemetry_receipts et join public.telemetry_receipts t on t.id=et.telemetry_receipt_id where et.evidence_receipt_id=e.id and not t.synthetic and t.gps_device_id=e.gps_device_id and t.credential_id=e.credential_id and t.gps_device_vehicle_link_id=e.vehicle_link_id and t.adapter_id=m.adapter_id and t.adapter_version=m.adapter_version and public.m26_is_authoritative_observation_v1(t.received_at,t.captured_at,n.validated_at,e.observation_started_at,e.observation_ended_at)) and e.authentication_passed and e.replay_passed and not public.m26_has_authoritative_conflict_v1(e.gps_device_id,e.credential_id,e.vehicle_link_id,m.adapter_id,m.adapter_version,e.observation_started_at,e.observation_ended_at) and e.freshness_passed and e.health_passed
    and e.sequence_outcome<>'failed' and e.reconnect_outcome<>'failed' and (e.sequence_outcome<>'not_supported' or not m.sequence_available) and (e.reconnect_outcome<>'not_supported' or not m.offline_buffering_supported)) into v_physical;
  end if;
  if c.id is null then v_stage:='awaiting_hardware_selection';v_reasons:=array['hardware_not_selected'];
@@ -186,5 +210,6 @@ revoke all on public.physical_pilot_commissioning,
  public.physical_pilot_evidence_receipts,
  public.physical_pilot_evidence_telemetry_receipts,
  public.physical_pilot_repository_authority,
- public.telemetry_receipts
+ public.telemetry_receipts,
+ public.telemetry_identity_conflicts
 from service_role;

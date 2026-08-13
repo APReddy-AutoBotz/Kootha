@@ -64,11 +64,16 @@ describe("M26 database authority closure", () => {
       "t.gps_device_vehicle_link_id=p_vehicle_link_id", "v_authoritative_telemetry_count is distinct from p_telemetry_count",
       "m26_is_authoritative_observation_v1(t.received_at,t.captured_at,n.validated_at,p_observation_started_at,p_observation_ended_at)",
       "m26_is_authoritative_observation_v1(t.received_at,t.captured_at,n.validated_at,e.observation_started_at,e.observation_ended_at)",
+      "m26_has_authoritative_conflict_v1(p_device_id,p_credential_id,p_vehicle_link_id,m.adapter_id,m.adapter_version,p_observation_started_at,p_observation_ended_at)",
+      "p_replay_passed is distinct from v_replay_proven",
+      "not public.m26_has_authoritative_conflict_v1(e.gps_device_id,e.credential_id,e.vehicle_link_id,m.adapter_id,m.adapter_version,e.observation_started_at,e.observation_ended_at)",
       "Physical pass requires authoritative non-synthetic telemetry", "e.telemetry_count=(select count(*)"]) expect(telemetryTruth).toContain(proof);
+    expect(telemetryTruth).not.toContain("k.last_verified_at>p_observation_ended_at");
+    expect(telemetryTruth).toContain("telemetry_identity_conflicts_m26_scope_idx");
     expect(telemetryTruth).toContain("from service_role");
     for (const table of ["physical_pilot_commissioning", "physical_pilot_commissioning_receipts",
       "physical_pilot_network_validation_receipts", "physical_pilot_evidence_receipts",
-      "physical_pilot_evidence_telemetry_receipts", "physical_pilot_repository_authority", "telemetry_receipts"])
+      "physical_pilot_evidence_telemetry_receipts", "physical_pilot_repository_authority", "telemetry_receipts", "telemetry_identity_conflicts"])
       expect(telemetryTruth).toContain(table);
   });
 
