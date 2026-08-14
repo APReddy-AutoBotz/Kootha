@@ -61,8 +61,29 @@ const sha256 = /^[a-f0-9]{64}$/;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 const bounded = (value: unknown, max = 160): value is string =>
   typeof value === "string" && value.length > 0 && value.length <= max;
-const timestamp = (value: unknown): value is string =>
-  typeof value === "string" && Number.isFinite(Date.parse(value));
+const rfc3339Timestamp = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:\d{2})$/;
+const timestamp = (value: unknown): value is string => {
+  if (typeof value !== "string") return false;
+  const match = rfc3339Timestamp.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+  if (year < 1 || month < 1 || month > 12 || day < 1 || hour > 23 || minute > 59 || second > 59) return false;
+  const calendarProbe = new Date(0);
+  calendarProbe.setUTCFullYear(year, month - 1, day);
+  calendarProbe.setUTCHours(0, 0, 0, 0);
+  if (calendarProbe.getUTCFullYear() !== year || calendarProbe.getUTCMonth() !== month - 1 || calendarProbe.getUTCDate() !== day) return false;
+  if (match[8] !== "Z") {
+    const offsetHour = Number(match[8].slice(1, 3));
+    const offsetMinute = Number(match[8].slice(4, 6));
+    if (offsetHour > 23 || offsetMinute > 59) return false;
+  }
+  return Number.isFinite(Date.parse(value));
+};
 
 // Keep this predicate in semantic parity with the final database definition of
 // public.m24f_is_safe_metadata (the catalog/privacy closure intentionally
