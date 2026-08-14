@@ -37,10 +37,14 @@ select ok(
   pg_get_functiondef('public.admin_get_physical_pilot_readiness_v1(uuid)'::regprocedure)
     ilike '%and e.classification=''physical''%'
   and pg_get_functiondef('public.admin_get_physical_pilot_readiness_v1(uuid)'::regprocedure)
-    ilike '%order by e.recorded_at desc,e.id desc%'
+    ilike '%order by e.observation_ended_at desc,%'
+  and pg_get_functiondef('public.admin_get_physical_pilot_readiness_v1(uuid)'::regprocedure)
+    ilike '%e.observation_started_at desc,%'
+  and pg_get_functiondef('public.admin_get_physical_pilot_readiness_v1(uuid)'::regprocedure)
+    ilike '%e.recorded_at desc,%'
   and pg_get_functiondef('public.admin_get_physical_pilot_readiness_v1(uuid)'::regprocedure)
     ilike '%e_latest.disposition=''pass''%',
-  'readiness uses the latest applicable physical run rather than any historical pass'
+  'readiness uses physical observation chronology rather than receipt arrival order'
 );
 select ok(
   pg_get_functiondef('public.admin_transition_physical_pilot_commissioning_v1(uuid,uuid,uuid,bigint,uuid,text,text,text,integer)'::regprocedure)
