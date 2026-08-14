@@ -1,0 +1,253 @@
+name: PR32 controller closure
+
+on:
+  push:
+    branches:
+      - codex/github-mention-m24/m26-pre-device-integration-readiness-c
+    paths:
+      - .github/workflows/pr32-controller-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  close-current-review-findings:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/github-mention-m24/m26-pre-device-integration-readiness-c
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Verify controller base
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD^)" = "7a7c6181122d7c3f7d0bf32a562311d3e0956c0e"
+
+      - name: Apply bounded P1/P2 closure
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          admin_path = Path('apps/web/src/admin.tsx')
+          admin = admin_path.read_text(encoding='utf-8')
+
+          old = 'type ReadinessRow = { contractVersion: string; stage: string;'
+          new = 'type ReadinessRow = { contractVersion: string; deviceId: string | null; stage: string;'
+          assert admin.count(old) == 1, f'ReadinessRow prefix count: {admin.count(old)}'
+          admin = admin.replace(old, new, 1)
+
+          old = '''  async function transitionCommissioning(newState: "draft" | "commissioning" | "suspended" | "decommissioned") {
+            const deviceId = selectedIdRef.current;
+            if (!deviceId) return;
+            const current = physicalReadiness?.commissioning;
+          '''
+          new = '''  async function transitionCommissioning(newState: "draft" | "commissioning" | "suspended" | "decommissioned") {
+            const deviceId = selectedIdRef.current;
+            if (!deviceId) return;
+            const readiness = physicalReadiness;
+            if (!readiness || readiness.deviceId !== deviceId) {
+              setError("Physical-pilot readiness is refreshing for the selected device. Try again after it loads.");
+              return;
+            }
+            const current = readiness.commissioning;
+          '''
+          assert admin.count(old) == 1, f'transition prefix count: {admin.count(old)}'
+          admin = admin.replace(old, new, 1)
+
+          old = 'onClick={() => setSelectedId(device.id)}'
+          new = '''onClick={() => {
+            if (selectedIdRef.current !== device.id) {
+              ++readinessRequestSequence.current;
+              setPhysicalReadiness(null);
+              selectedIdRef.current = device.id;
+            }
+            setSelectedId(device.id);
+          }}'''
+          assert admin.count(old) == 1, f'device selection handler count: {admin.count(old)}'
+          admin = admin.replace(old, new, 1)
+          admin_path.write_text(admin, encoding='utf-8')
+
+          migration = r'''-- M26 accepted/rejected telemetry snapshot serialization closure.
+          -- Every authoritative M21 telemetry receipt write participates in the same
+          -- device-scoped transaction lock used by M26 evidence ingestion/readiness.
+          -- This prevents an accepted receipt from becoming visible immediately after
+          -- an evidence snapshot froze the authoritative telemetry subset.
+
+          drop trigger if exists telemetry_receipts_m26_rejected_serialize on public.telemetry_receipts;
+          drop function if exists public.m26_serialize_rejected_receipt_authority_v1();
+
+          create or replace function public.m26_serialize_telemetry_receipt_authority_v1()
+          returns trigger
+          language plpgsql
+          set search_path = pg_catalog, public
+          as $$
+          begin
+            perform public.m26_lock_device_authority_v1(new.gps_device_id);
+            return new;
+          end
+          $$;
+
+          revoke all on function public.m26_serialize_telemetry_receipt_authority_v1()
+            from public, anon, authenticated, service_role;
+
+          create trigger telemetry_receipts_m26_serialize
+          before insert or update on public.telemetry_receipts
+          for each row
+          execute function public.m26_serialize_telemetry_receipt_authority_v1();
+          '''
+          Path('supabase/migrations/20260814040000_m26_telemetry_snapshot_serialization.sql').write_text(migration, encoding='utf-8')
+
+          pgtap = r'''-- M26 telemetry snapshot serialization guardrails.
+          \connect postgres supabase_admin
+          begin;
+          create extension if not exists pgtap with schema extensions;
+          select plan(7);
+
+          select has_function(
+            'public',
+            'm26_serialize_telemetry_receipt_authority_v1',
+            array[]::text[],
+            'all telemetry receipts share one M26 serialization trigger function'
+          );
+          select has_trigger(
+            'public',
+            'telemetry_receipts',
+            'telemetry_receipts_m26_serialize',
+            'all telemetry receipt writes are serialized with M26 device authority'
+          );
+          select ok(
+            pg_get_functiondef('public.m26_serialize_telemetry_receipt_authority_v1()'::regprocedure)
+              ilike '%m26_lock_device_authority_v1(new.gps_device_id)%',
+            'telemetry serialization uses the exact shared device authority lock'
+          );
+          select ok(
+            pg_get_triggerdef((select oid from pg_trigger where tgname='telemetry_receipts_m26_serialize' and not tgisinternal))
+              not ilike '%when %',
+            'telemetry serialization has no rejected-only WHEN predicate'
+          );
+          select ok(
+            not exists(select 1 from pg_trigger where tgname='telemetry_receipts_m26_rejected_serialize' and not tgisinternal),
+            'legacy rejected-only telemetry trigger is removed'
+          );
+          select ok(
+            to_regprocedure('public.m26_serialize_rejected_receipt_authority_v1()') is null,
+            'legacy rejected-only telemetry trigger function is removed'
+          );
+          select has_trigger(
+            'public',
+            'telemetry_identity_conflicts',
+            'telemetry_identity_conflicts_m26_serialize',
+            'identity-conflict authority remains serialized'
+          );
+
+          select * from finish();
+          rollback;
+          '''
+          Path('supabase/tests/m26_telemetry_snapshot_serialization.test.sql').write_text(pgtap, encoding='utf-8')
+
+          vitest = r'''import { readFileSync } from "node:fs";
+          import { describe, expect, it } from "vitest";
+
+          const admin = readFileSync("apps/web/src/admin.tsx", "utf8");
+          const migration = readFileSync("supabase/migrations/20260814040000_m26_telemetry_snapshot_serialization.sql", "utf8");
+          const truthMigration = readFileSync("supabase/migrations/20260812020000_m26_physical_telemetry_truth_convergence.sql", "utf8");
+
+          describe("M26 accepted telemetry snapshot serialization", () => {
+            it("serializes every telemetry receipt write under the shared device authority lock", () => {
+              expect(migration).toContain("drop trigger if exists telemetry_receipts_m26_rejected_serialize");
+              expect(migration).toContain("drop function if exists public.m26_serialize_rejected_receipt_authority_v1()");
+              expect(migration).toContain("create trigger telemetry_receipts_m26_serialize");
+              expect(migration).toContain("before insert or update on public.telemetry_receipts");
+              expect(migration).toContain("m26_lock_device_authority_v1(new.gps_device_id)");
+              expect(migration.toLowerCase()).not.toContain("when (new.disposition='rejected')");
+              expect(truthMigration).toContain("telemetry_identity_conflicts_m26_serialize");
+            });
+          });
+
+          describe("M26 commissioning current-device fencing", () => {
+            it("binds a transition to the selected device readiness before consuming commissioning data", () => {
+              expect(admin).toContain("deviceId: string | null");
+              const transition = admin.slice(
+                admin.indexOf("async function transitionCommissioning"),
+                admin.indexOf("function identityBody"),
+              );
+              const readinessCapture = transition.indexOf("const readiness = physicalReadiness");
+              const deviceGuard = transition.indexOf("if (!readiness || readiness.deviceId !== deviceId)");
+              const commissioningRead = transition.indexOf("const current = readiness.commissioning");
+              expect(readinessCapture).toBeGreaterThan(-1);
+              expect(deviceGuard).toBeGreaterThan(readinessCapture);
+              expect(commissioningRead).toBeGreaterThan(deviceGuard);
+              expect(transition).not.toContain("physicalReadiness?.commissioning");
+            });
+
+            it("clears and invalidates stale readiness synchronously when selecting another device", () => {
+              const listStart = admin.indexOf('<div className="device-list">');
+              const listEnd = admin.indexOf('No devices match these filters.', listStart);
+              const deviceList = admin.slice(listStart, listEnd);
+              const invalidate = deviceList.indexOf("++readinessRequestSequence.current");
+              const clear = deviceList.indexOf("setPhysicalReadiness(null)");
+              const select = deviceList.indexOf("setSelectedId(device.id)");
+              expect(invalidate).toBeGreaterThan(-1);
+              expect(clear).toBeGreaterThan(invalidate);
+              expect(select).toBeGreaterThan(clear);
+            });
+          });
+          '''
+          Path('tests/m26-controller-concurrency-ui.test.ts').write_text(vitest, encoding='utf-8')
+          PY
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: corepack pnpm install --frozen-lockfile
+
+      - name: Focused application verification
+        run: corepack pnpm test -- --run tests/m26-controller-concurrency-ui.test.ts tests/m26-pre-device-readiness.test.ts
+
+      - name: Typecheck
+        run: corepack pnpm typecheck
+
+      - name: Lint
+        run: corepack pnpm lint
+
+      - name: Migration guardrails
+        run: corepack pnpm migrations:check
+
+      - name: Security guardrails
+        run: corepack pnpm security:scan
+
+      - name: Production build
+        run: corepack pnpm build
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Start disposable Supabase
+        run: supabase start -x studio,imgproxy,inbucket,edge-runtime,logflare,vector,supavisor
+
+      - name: Full pgTAP/RLS verification
+        run: supabase test db
+
+      - name: Diff check
+        run: git diff --check
+
+      - name: Commit bounded closure and remove one-shot workflow
+        shell: bash
+        run: |
+          git config user.name "Kootha Controller"
+          git config user.email "actions@users.noreply.github.com"
+          git rm .github/workflows/pr32-controller-fix.yml
+          git add apps/web/src/admin.tsx \
+            supabase/migrations/20260814040000_m26_telemetry_snapshot_serialization.sql \
+            supabase/tests/m26_telemetry_snapshot_serialization.test.sql \
+            tests/m26-controller-concurrency-ui.test.ts
+          git commit -m "Close M26 telemetry snapshot and device selection races"
+          git push origin HEAD:codex/github-mention-m24/m26-pre-device-integration-readiness-c
