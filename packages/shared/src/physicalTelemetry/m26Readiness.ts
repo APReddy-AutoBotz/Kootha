@@ -58,6 +58,7 @@ export interface PhysicalEvidenceManifestV1 {
 
 const gitObjectId = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 const sha256 = /^[a-f0-9]{64}$/;
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 const bounded = (value: unknown, max = 160): value is string =>
   typeof value === "string" && value.length > 0 && value.length <= max;
 const timestamp = (value: unknown): value is string =>
@@ -71,7 +72,7 @@ const opaqueToken = /^[A-Za-z0-9_+/=-]{32,160}$/;
 const pureHex = /^[0-9a-f]{32,160}$/iu;
 const canonicalUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const sensitiveLabel = /(^|[^a-z0-9])(?:password|passwd|pwd|credential|secret|bearer|token|api[_ -]?key|auth(?:entication|orization)?[_ -]?header|private[_ -]?key|client[_ -]?secret)([^a-z0-9]|$)/iu;
-const protocolOrIp = /(?:https?|wss?|mqtt|tcp|udp):\/\/|(^|\s)(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?::[0-9]{1,5})?(?:\/\S*)?/iu;
+const protocolOrIp = /(?:https?|wss?|mqt{2}|tcp|udp):\/\/|(^|\s)(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?::[0-9]{1,5})?(?:\/\S*)?/iu;
 const hostname = /(^|[^a-z0-9@_-])(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}(?::[0-9]{1,5})?(?:\/\S*)?(?:[^a-z0-9._~:/?#\[\]@!$&'()*+,;=%-]|$)/iu;
 const coordinates = /(^|[^0-9])[+-]?[0-9]{1,2}\.[0-9]{4,}[,\s]+[+-]?[0-9]{1,3}\.[0-9]{4,}([^0-9]|$)/iu;
 const markupOrRawPayload = /<[!?\/]?[a-z][^>]*>|[{}\[\]]|(^|[^a-z])(?:raw[_ -]?(?:payload|body)|payload[_ -]?(?:body|fragment|xml|json))([^a-z]|$)/iu;
@@ -141,17 +142,17 @@ export function validatePhysicalEvidenceManifestV1(
     || !bounded(v.repository.workflowRunId) || !isSafeMetadataV1(v.repository.workflowRunId)) {
     issues.push({ path: "repository", code: "invalid_value" });
   }
-  if (!v.adapter || !bounded(v.adapter.manifestId) || !bounded(v.adapter.adapterId)
+  if (!v.adapter || !uuid.test(v.adapter.manifestId) || !bounded(v.adapter.adapterId)
     || !bounded(v.adapter.adapterVersion) || !isSafeMetadataV1(v.adapter.adapterId)
     || !isSafeMetadataV1(v.adapter.adapterVersion)) {
     issues.push({ path: "adapter", code: "invalid_value" });
   }
-  if (!v.device || !sha256.test(v.device.identityHash) || !bounded(v.device.installationReceiptId)
-    || !bounded(v.device.vehicleLinkReceiptId)) {
+  if (!v.device || !sha256.test(v.device.identityHash) || !uuid.test(v.device.installationReceiptId)
+    || !uuid.test(v.device.vehicleLinkReceiptId)) {
     issues.push({ path: "device", code: "invalid_value" });
   }
   if (!v.network || !bounded(v.network.configurationClass, 80)
-    || !isSafeMetadataV1(v.network.configurationClass) || !bounded(v.network.validationReceiptId)) {
+    || !isSafeMetadataV1(v.network.configurationClass) || !uuid.test(v.network.validationReceiptId)) {
     issues.push({ path: "network", code: "invalid_value" });
   }
 
@@ -197,7 +198,7 @@ export function validatePhysicalEvidenceManifestV1(
 
   if (!Array.isArray(v.reasonCodes) || v.reasonCodes.length > 20
     || v.reasonCodes.some((reason) => !bounded(reason, 80) || !isSafeMetadataV1(reason))
-    || !sha256.test(v.operatorIdHash ?? "") || !bounded(v.receiptId) || !timestamp(v.recordedAt)) {
+    || !sha256.test(v.operatorIdHash ?? "") || !uuid.test(v.receiptId ?? "") || !timestamp(v.recordedAt)) {
     issues.push({ path: "receipt", code: "invalid_value" });
   }
 

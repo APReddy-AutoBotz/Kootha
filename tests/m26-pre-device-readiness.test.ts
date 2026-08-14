@@ -11,9 +11,9 @@ const physicalManifest = () => ({
   classification: "physical" as const,
   physicalEvidence: true,
   repository: { headSha: "a".repeat(40), workflowRunId: "run-31" },
-  adapter: { manifestId: "manifest-1", adapterId: "selected-adapter", adapterVersion: "1.0.0" },
-  device: { identityHash: "b".repeat(64), installationReceiptId: "install-1", vehicleLinkReceiptId: "link-1" },
-  network: { configurationClass: "approved-class", validationReceiptId: "network-1" },
+  adapter: { manifestId: "11111111-1111-4111-8111-111111111111", adapterId: "selected-adapter", adapterVersion: "1.0.0" },
+  device: { identityHash: "b".repeat(64), installationReceiptId: "22222222-2222-4222-8222-222222222222", vehicleLinkReceiptId: "33333333-3333-4333-8333-333333333333" },
+  network: { configurationClass: "approved-class", validationReceiptId: "44444444-4444-4444-8444-444444444444" },
   observation: { startedAt: "2026-08-11T10:00:00Z", endedAt: "2026-08-11T10:30:00Z", telemetryCount: 30 },
   outcomes: {
     authentication: "passed" as const,
@@ -26,7 +26,7 @@ const physicalManifest = () => ({
   disposition: "pass" as const,
   reasonCodes: [],
   operatorIdHash: "c".repeat(64),
-  receiptId: "receipt-1",
+  receiptId: "55555555-5555-4555-8555-555555555555",
   recordedAt: "2026-08-11T10:31:00Z",
 });
 
