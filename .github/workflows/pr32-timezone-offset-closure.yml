@@ -1,0 +1,90 @@
+name: PR32 timezone offset parity closure
+
+on:
+  push:
+    branches:
+      - codex/github-mention-m24/m26-pre-device-integration-readiness-c
+    paths:
+      - .github/workflows/pr32-timezone-offset-closure.yml
+
+permissions:
+  contents: write
+
+jobs:
+  close-review-finding:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/github-mention-m24/m26-pre-device-integration-readiness-c
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Verify exact base
+        shell: bash
+        run: test "$(git rev-parse HEAD^)" = "e453aaa44776803d09fd7ef1eb166c600f6d080f"
+
+      - name: Apply PostgreSQL timezone-offset parity
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          shared_path = Path('packages/shared/src/physicalTelemetry/m26Readiness.ts')
+          shared = shared_path.read_text(encoding='utf-8')
+          old = 'if (offsetHour > 23 || offsetMinute > 59) return false;'
+          new = 'if (offsetHour > 15 || offsetMinute > 59) return false;'
+          assert shared.count(old) == 1
+          shared_path.write_text(shared.replace(old, new, 1), encoding='utf-8')
+
+          test_path = Path('tests/m26-cert-network-time-closure.test.ts')
+          test = test_path.read_text(encoding='utf-8')
+          marker = '''  it("accepts an otherwise valid completed RFC3339 window", () => {\n    const now = Date.now();\n    const manifest = physicalManifest(\n      new Date(now - 120_000).toISOString(),\n      new Date(now - 60_000).toISOString(),\n    );\n    expect(validatePhysicalEvidenceManifestV1(manifest, capabilities).ok).toBe(true);\n  });\n'''
+          addition = marker + '''\n  it("matches PostgreSQL numeric timezone offset bounds", () => {\n    const accepted = physicalManifest(\n      "2026-08-14T00:00:00+15:59",\n      "2026-08-14T00:01:00+15:59",\n    );\n    const rejected = physicalManifest(\n      "2026-08-14T00:00:00+16:00",\n      "2026-08-14T00:01:00+16:00",\n    );\n    expect(validatePhysicalEvidenceManifestV1(accepted, capabilities).ok).toBe(true);\n    expect(validatePhysicalEvidenceManifestV1(rejected, capabilities).ok).toBe(false);\n  });\n'''
+          assert test.count(marker) == 1
+          test_path.write_text(test.replace(marker, addition, 1), encoding='utf-8')
+          PY
+
+      - name: Enable Corepack
+        run: corepack enable
+      - name: Install dependencies
+        run: corepack pnpm install --frozen-lockfile
+      - name: Focused tests
+        run: corepack pnpm test -- --run tests/m26-cert-network-time-closure.test.ts tests/m26-network-lock-order-closure.test.ts tests/m26-pre-device-readiness.test.ts
+      - name: Typecheck
+        run: corepack pnpm typecheck
+      - name: Lint
+        run: corepack pnpm lint
+      - name: Full Vitest
+        run: corepack pnpm test
+      - name: Migration guardrails
+        run: corepack pnpm migrations:check
+      - name: Security guardrails
+        run: corepack pnpm security:scan
+      - name: Production build
+        run: corepack pnpm build
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable Supabase
+        run: supabase start -x studio,imgproxy,inbucket,edge-runtime,logflare,vector,supavisor
+      - name: Full pgTAP/RLS
+        run: supabase test db
+      - name: Diff check
+        run: git diff --check
+
+      - name: Publish closure and remove temporary workflow
+        shell: bash
+        run: |
+          git config user.name "Kootha Controller"
+          git config user.email "actions@users.noreply.github.com"
+          git rm .github/workflows/pr32-timezone-offset-closure.yml
+          git add packages/shared/src/physicalTelemetry/m26Readiness.ts \
+            tests/m26-cert-network-time-closure.test.ts
+          git diff --cached --check
+          git commit -m "Align M26 timezone offset validation with PostgreSQL"
+          git push origin HEAD:codex/github-mention-m24/m26-pre-device-integration-readiness-c
