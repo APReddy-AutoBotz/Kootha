@@ -80,6 +80,10 @@ begin
     );
   end if;
 
+  -- Exact receipt replay remains independent of mutable authority. Only a real
+  -- commissioning mutation enters the shared per-device M26 serialization law.
+  perform public.m26_lock_device_authority_v1(p_device_id);
+
   select * into v_candidate from public.m24f_adapter_candidates where id=p_candidate_id;
   select * into v_manifest from public.m24f_adapter_capability_manifests where id=p_manifest_id;
   v_certification_run_id:=public.m26_current_certification_run_v1(p_candidate_id,p_manifest_id);
@@ -189,6 +193,9 @@ declare
 begin
  perform public.m20a_require_admin();
  perform public.m26_lock_device_authority_v1(p_device_id);
+ -- Repository rotation uses this same lock. Acquiring it before the latest
+ -- generation read prevents a committed rotation from being missed by a ready response.
+ perform pg_advisory_xact_lock(hashtext('m26_repository_authority'));
 
  select * into d from public.gps_devices where id=p_device_id;
  select * into c from public.physical_pilot_commissioning where gps_device_id=p_device_id;
