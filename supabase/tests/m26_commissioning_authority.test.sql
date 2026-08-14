@@ -2,7 +2,7 @@
 \connect postgres supabase_admin
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(93);
+select plan(99);
 select has_table('public','physical_pilot_evidence_telemetry_receipts','physical passes freeze authoritative M21 receipt bindings');
 select has_trigger('public','physical_pilot_evidence_telemetry_receipts','physical_pilot_evidence_telemetry_immutable','physical telemetry bindings are immutable');
 select ok(pg_get_functiondef('public.service_record_physical_pilot_evidence_v1(uuid,uuid,bigint,uuid,uuid,text,text,uuid,text,uuid,uuid,uuid,uuid,text,timestamptz,timestamptz,bigint,boolean,boolean,text,text,boolean,boolean,text,text[],text)'::regprocedure) ilike '%Physical pass requires authoritative non-synthetic telemetry%','physical pass requires database-proven M21 telemetry');
@@ -73,6 +73,10 @@ select ok(pg_get_functiondef('public.m26_serialize_conflict_authority_v1()'::reg
 select ok(pg_get_functiondef('public.m26_has_authoritative_conflict_v1(uuid,uuid,uuid,text,text,timestamptz,timestamptz)'::regprocedure) ilike '%t.reason_code=''sequence_replay_invalid''%' and pg_get_functiondef('public.m26_has_authoritative_conflict_v1(uuid,uuid,uuid,text,text,timestamptz,timestamptz)'::regprocedure) ilike '%t.received_at>=%','stream-window replay rejection receipts are authoritative conflict truth');
 select is((select count(*) from regexp_matches(pg_get_functiondef('public.m26_has_authoritative_conflict_v1(uuid,uuid,uuid,text,text,timestamptz,timestamptz)'::regprocedure),'t\.credential_id=p_credential_id','g')),1::bigint,'incoming conflict attempts are not discarded because the original receipt used historical credential or link authority');
 select volatility_is('public','admin_get_physical_pilot_readiness_v1',array['uuid'],'v','readiness obtains a fresh snapshot after acquiring the device authority lock');
+select has_index('public','telemetry_receipts','telemetry_receipts_m26_replay_rejection_idx','rejected replay lookup has a bounded current-device and credential index');
+select has_trigger('public','telemetry_receipts','telemetry_receipts_m26_replay_rejection_serialize','rejected replay receipts serialize with evidence authority');
+select ok(pg_get_functiondef('public.m26_serialize_replay_rejection_v1()'::regprocedure) ilike '%m26_lock_device_authority_v1(new.gps_device_id)%','rejected replay receipt writes take the shared device lock');
+select ok((select count(*) from regexp_matches(pg_get_functiondef('public.m26_has_authoritative_conflict_v1(uuid,uuid,uuid,text,text,timestamptz,timestamptz)'::regprocedure),'t\.gps_device_vehicle_link_id=p_vehicle_link_id','g'))=0::bigint,'unresolved link is not required for authoritative rejected replay receipts');
 
 -- Fixture-backed acceptance: these assertions invoke the real writers and read
 -- their persisted effects. All observations are explicit synthetic test data;
@@ -140,6 +144,10 @@ select lives_ok($$select public.service_rotate_physical_pilot_repository_authori
 select lives_ok(format('select public.service_record_physical_pilot_network_validation_v1(%L,%L,2,%L,%L,%L,%L,%L,%L,clock_timestamp(),%L,%L)','26000000-0000-0000-0000-000000000009',:'fixture_commissioning_id',:'fixture_device_id',:'fixture_link_id',:'fixture_installation_id','26000000-0000-0000-0000-000000000006','fixture_network',repeat('c',64),repeat('b',40),'fixture_workflow'),'network validation executes');
 reset role;
 select validated_at as fixture_network_validated_at from public.physical_pilot_network_validation_receipts where id='26000000-0000-0000-0000-000000000009' \gset
+insert into public.telemetry_receipts(id,gps_device_id,credential_id,adapter_id,adapter_version,idempotency_identity,content_hash,raw_payload_hash,stream_epoch,sequence,captured_at,received_at,normalized_at,disposition,reason_code,freshness,offline_backfill,quality,synthetic,processing_version)
+values('26000000-0000-0000-0000-000000000016',:'fixture_device_id','26000000-0000-0000-0000-000000000006','m26-fixture','1','fixture-below-window-replay',repeat('1',64),repeat('2',64),'fixture-stream',1,:'fixture_network_validated_at',:'fixture_network_validated_at',:'fixture_network_validated_at','rejected','sequence_replay_invalid','not_applicable',false,'rejected',false,'m21-fixture');
+select is((select gps_device_vehicle_link_id from public.telemetry_receipts where id='26000000-0000-0000-0000-000000000016'),null::uuid,'below-window replay receipt legitimately preserves an unresolved null link');
+select is(public.m26_has_authoritative_conflict_v1(:'fixture_device_id','26000000-0000-0000-0000-000000000006',:'fixture_link_id','m26-fixture','1',:'fixture_network_validated_at',:'fixture_network_validated_at'),true,'null-link below-window rejection remains authoritative replay truth');
 set local role service_role; select set_config('request.jwt.claim.role','service_role',true);
 select lives_ok(format('select public.service_record_physical_pilot_network_validation_v1(%L,%L,2,%L,%L,%L,%L,%L,%L,%L,%L,%L)','26000000-0000-0000-0000-000000000009',:'fixture_commissioning_id',:'fixture_device_id',:'fixture_link_id',:'fixture_installation_id','26000000-0000-0000-0000-000000000006','fixture_network',repeat('c',64),:'fixture_network_validated_at',repeat('b',40),'fixture_workflow'),'exact network replay returns receipt');
 select lives_ok(format('select public.service_record_physical_pilot_evidence_v1(%L,%L,2,%L,%L,%L,%L,%L,%L,%L,%L,%L,%L,%L,%L,clock_timestamp(),10,true,true,%L,%L,true,true,%L,%L,%L)','26000000-0000-0000-0000-000000000010',:'fixture_commissioning_id',:'fixture_candidate_id',:'fixture_manifest_id',repeat('b',40),'fixture_workflow',:'fixture_device_id',:'fixture_device_digest',:'fixture_installation_id',:'fixture_link_id','26000000-0000-0000-0000-000000000006','26000000-0000-0000-0000-000000000009','synthetic',:'fixture_network_validated_at','passed','passed','pass','{}',repeat('d',64)),'synthetic pass receipt is persisted as non-ready truth');

@@ -28,6 +28,9 @@ create index if not exists telemetry_identity_conflicts_m26_scope_idx
  on public.telemetry_identity_conflicts(gps_device_id,first_seen_at,last_seen_at,reason_code,original_receipt_id);
 create index if not exists telemetry_receipts_m26_conflict_scope_idx
  on public.telemetry_receipts(gps_device_id,credential_id,gps_device_vehicle_link_id,adapter_id,adapter_version,received_at,captured_at,id);
+create index if not exists telemetry_receipts_m26_replay_rejection_idx
+ on public.telemetry_receipts(gps_device_id,credential_id,adapter_id,adapter_version,received_at)
+ where reason_code='sequence_replay_invalid';
 
 create or replace function public.m26_lock_device_authority_v1(p_device_id uuid)
 returns void language plpgsql set search_path=pg_catalog,public as $$
@@ -47,6 +50,20 @@ create trigger telemetry_identity_conflicts_m26_serialize
 before insert or update on public.telemetry_identity_conflicts
 for each row execute function public.m26_serialize_conflict_authority_v1();
 
+create or replace function public.m26_serialize_replay_rejection_v1()
+returns trigger language plpgsql set search_path=pg_catalog,public as $$
+begin
+ if new.reason_code='sequence_replay_invalid' then
+  perform public.m26_lock_device_authority_v1(new.gps_device_id);
+ end if;
+ return new;
+end $$;
+revoke all on function public.m26_serialize_replay_rejection_v1() from public,anon,authenticated,service_role;
+create trigger telemetry_receipts_m26_replay_rejection_serialize
+before insert or update on public.telemetry_receipts
+for each row when (new.reason_code='sequence_replay_invalid')
+execute function public.m26_serialize_replay_rejection_v1();
+
 create or replace function public.m26_has_authoritative_conflict_v1(
  p_device_id uuid,p_credential_id uuid,p_vehicle_link_id uuid,p_adapter_id text,p_adapter_version text,
  p_observation_started_at timestamptz,p_observation_ended_at timestamptz
@@ -64,7 +81,7 @@ create or replace function public.m26_has_authoritative_conflict_v1(
   select 1
   from public.telemetry_receipts t
   where t.gps_device_id=p_device_id
-    and t.credential_id=p_credential_id and t.gps_device_vehicle_link_id=p_vehicle_link_id
+    and t.credential_id=p_credential_id
     and t.adapter_id=p_adapter_id and t.adapter_version=p_adapter_version
     and t.reason_code='sequence_replay_invalid'
     and t.received_at>=p_observation_started_at

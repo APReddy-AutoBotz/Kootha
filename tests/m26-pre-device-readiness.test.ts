@@ -76,6 +76,9 @@ describe("M26 database authority closure", () => {
     expect(telemetryTruth).toContain("telemetry_identity_conflicts_m26_serialize");
     expect(telemetryTruth).toContain("m26_lock_device_authority_v1(p_device_id)");
     expect(telemetryTruth).toContain("t.reason_code='sequence_replay_invalid'");
+    expect(telemetryTruth).toContain("telemetry_receipts_m26_replay_rejection_serialize");
+    expect(telemetryTruth).toContain("m26_serialize_replay_rejection_v1");
+    expect(telemetryTruth).toContain("where t.gps_device_id=p_device_id\n    and t.credential_id=p_credential_id\n    and t.adapter_id=p_adapter_id");
     expect(telemetryTruth).toContain("returns jsonb language plpgsql security definer set search_path=pg_catalog,public volatile");
     expect(telemetryTruth).not.toContain("t.credential_id=p_credential_id and t.gps_device_vehicle_link_id=p_vehicle_link_id\n    and t.adapter_id=p_adapter_id and t.adapter_version=p_adapter_version\n    and c.reason_code");
     expect(telemetryTruth).toContain("from service_role");
