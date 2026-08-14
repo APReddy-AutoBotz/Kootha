@@ -25,7 +25,7 @@ jobs:
 
       - name: Verify exact base
         shell: bash
-        run: test "$(git rev-parse HEAD^)" = "3a251ab9e0b4ecbbdbf68f88979282dec839f2db"
+        run: test "$(git rev-parse HEAD^)" = "913f02660cb7b726475a752272c4261359761550"
 
       - name: Apply certification network and timestamp closure
         shell: bash
@@ -35,31 +35,32 @@ jobs:
 
           shared_path = Path('packages/shared/src/physicalTelemetry/m26Readiness.ts')
           shared = shared_path.read_text(encoding='utf-8')
-          old = '''const timestamp = (value: unknown): value is string =>
-  typeof value === "string" && Number.isFinite(Date.parse(value));'''
-          new = '''const rfc3339Timestamp = /^(\\d{4})-(\\d{2})-(\\d{2})T(\\d{2}):(\\d{2}):(\\d{2})(?:\\.(\\d{1,9}))?(Z|[+-]\\d{2}:\\d{2})$/;
-const timestamp = (value: unknown): value is string => {
-  if (typeof value !== "string") return false;
-  const match = rfc3339Timestamp.exec(value);
-  if (!match) return false;
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  const hour = Number(match[4]);
-  const minute = Number(match[5]);
-  const second = Number(match[6]);
-  if (year < 1 || month < 1 || month > 12 || day < 1 || hour > 23 || minute > 59 || second > 59) return false;
-  const calendarProbe = new Date(0);
-  calendarProbe.setUTCFullYear(year, month - 1, day);
-  calendarProbe.setUTCHours(0, 0, 0, 0);
-  if (calendarProbe.getUTCFullYear() !== year || calendarProbe.getUTCMonth() !== month - 1 || calendarProbe.getUTCDate() !== day) return false;
-  if (match[8] !== "Z") {
-    const offsetHour = Number(match[8].slice(1, 3));
-    const offsetMinute = Number(match[8].slice(4, 6));
-    if (offsetHour > 23 || offsetMinute > 59) return false;
-  }
-  return Number.isFinite(Date.parse(value));
-};'''
+          old = 'const timestamp = (value: unknown): value is string =>\n  typeof value === "string" && Number.isFinite(Date.parse(value));'
+          new = "\n".join([
+              'const rfc3339Timestamp = /^(\\d{4})-(\\d{2})-(\\d{2})T(\\d{2}):(\\d{2}):(\\d{2})(?:\\.(\\d{1,9}))?(Z|[+-]\\d{2}:\\d{2})$/;',
+              'const timestamp = (value: unknown): value is string => {',
+              '  if (typeof value !== "string") return false;',
+              '  const match = rfc3339Timestamp.exec(value);',
+              '  if (!match) return false;',
+              '  const year = Number(match[1]);',
+              '  const month = Number(match[2]);',
+              '  const day = Number(match[3]);',
+              '  const hour = Number(match[4]);',
+              '  const minute = Number(match[5]);',
+              '  const second = Number(match[6]);',
+              '  if (year < 1 || month < 1 || month > 12 || day < 1 || hour > 23 || minute > 59 || second > 59) return false;',
+              '  const calendarProbe = new Date(0);',
+              '  calendarProbe.setUTCFullYear(year, month - 1, day);',
+              '  calendarProbe.setUTCHours(0, 0, 0, 0);',
+              '  if (calendarProbe.getUTCFullYear() !== year || calendarProbe.getUTCMonth() !== month - 1 || calendarProbe.getUTCDate() !== day) return false;',
+              '  if (match[8] !== "Z") {',
+              '    const offsetHour = Number(match[8].slice(1, 3));',
+              '    const offsetMinute = Number(match[8].slice(4, 6));',
+              '    if (offsetHour > 23 || offsetMinute > 59) return false;',
+              '  }',
+              '  return Number.isFinite(Date.parse(value));',
+              '};',
+          ])
           assert shared.count(old) == 1, 'timestamp helper shape changed'
           shared_path.write_text(shared.replace(old, new, 1), encoding='utf-8')
           PY
@@ -137,7 +138,6 @@ const timestamp = (value: unknown): value is string => {
             r public.physical_pilot_repository_authority%rowtype;
             v_current_certification uuid;
           begin
-            -- Exact insert authority uses the same lock order as readiness.
             perform public.m26_lock_device_authority_v1(new.gps_device_id);
             perform pg_advisory_xact_lock(hashtext('m26_repository_authority'));
 
