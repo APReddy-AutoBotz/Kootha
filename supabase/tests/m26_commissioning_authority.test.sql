@@ -11,7 +11,7 @@ select has_table('public','physical_pilot_repository_authority','repository auth
 select has_table('public','physical_pilot_evidence_telemetry_receipts','physical passes freeze authoritative M21 receipt bindings');
 select has_trigger('public','physical_pilot_evidence_receipts','physical_pilot_evidence_reason_codes_safe','evidence reasons cross the DB privacy boundary');
 select has_trigger('public','physical_pilot_evidence_telemetry_receipts','physical_pilot_evidence_telemetry_immutable','physical telemetry bindings are immutable');
-select has_trigger('public','telemetry_receipts','telemetry_receipts_m26_rejected_serialize','rejected M21 receipts serialize with M26 evidence authority');
+select has_trigger('public','telemetry_receipts','telemetry_receipts_m26_serialize','all M21 telemetry receipts serialize with M26 evidence authority');
 select has_trigger('public','telemetry_identity_conflicts','telemetry_identity_conflicts_m26_serialize','identity conflicts serialize with M26 evidence authority');
 select ok(
   pg_get_constraintdef((

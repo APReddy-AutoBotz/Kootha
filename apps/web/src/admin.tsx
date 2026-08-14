@@ -5874,7 +5874,7 @@ function AdminExecutionPanel({
 function DeviceRegistryView({ config, session }: { config: SupabaseConfig; session: AuthSession }) {
   type DeviceRow = GpsDeviceRegistryRecord & { current_vehicle_id?: string | null };
   type VehicleRow = { id: string; vehicle_number: string; city: string | null };
-  type ReadinessRow = { contractVersion: string; stage: string; blockingReasons: string[]; commissioning: { id: string; state: string; version: number; candidateId: string; manifestId: string; certificationRunId: string; networkConfigurationClass: string | null; expectedHeartbeatSeconds: number | null } | null; selectedAdapter: { candidateId: string; manifestId: string; certificationRunId: string; adapterId: string; adapterVersion: string } | null; credentialReady: boolean; installationReady: boolean; networkReady: boolean; physicalEvidence: boolean };
+  type ReadinessRow = { contractVersion: string; deviceId: string | null; stage: string; blockingReasons: string[]; commissioning: { id: string; state: string; version: number; candidateId: string; manifestId: string; certificationRunId: string; networkConfigurationClass: string | null; expectedHeartbeatSeconds: number | null } | null; selectedAdapter: { candidateId: string; manifestId: string; certificationRunId: string; adapterId: string; adapterVersion: string } | null; credentialReady: boolean; installationReady: boolean; networkReady: boolean; physicalEvidence: boolean };
   const [devices, setDevices] = useState<DeviceRow[]>([]);
   const [links, setLinks] = useState<GpsDeviceVehicleLinkRecord[]>([]);
   const [events, setEvents] = useState<GpsDeviceLifecycleEventRecord[]>([]);
@@ -6065,7 +6065,12 @@ function DeviceRegistryView({ config, session }: { config: SupabaseConfig; sessi
   async function transitionCommissioning(newState: "draft" | "commissioning" | "suspended" | "decommissioned") {
     const deviceId = selectedIdRef.current;
     if (!deviceId) return;
-    const current = physicalReadiness?.commissioning;
+    const readiness = physicalReadiness;
+    if (!readiness || readiness.deviceId !== deviceId) {
+      setError("Physical-pilot readiness is refreshing for the selected device. Try again after it loads.");
+      return;
+    }
+    const current = readiness.commissioning;
     const candidateId = (current?.candidateId ?? commissioningDraft.candidateId).trim();
     const manifestId = (current?.manifestId ?? commissioningDraft.manifestId).trim();
     if (!candidateId || !manifestId) { setError("Current AP-approved candidate and manifest IDs are required."); return; }
@@ -6224,7 +6229,14 @@ function DeviceRegistryView({ config, session }: { config: SupabaseConfig; sessi
         <div className="panel-heading"><h3>Devices</h3><span>{filtered.length} shown</span></div>
         <div className="device-list">{filtered.map((device) => {
           const link = links.find((entry) => entry.gps_device_id === device.id && !entry.effective_until);
-          return <button type="button" key={device.id} className={selectedId === device.id ? "is-selected" : ""} onClick={() => setSelectedId(device.id)}>
+          return <button type="button" key={device.id} className={selectedId === device.id ? "is-selected" : ""} onClick={() => {
+  if (selectedIdRef.current !== device.id) {
+    ++readinessRequestSequence.current;
+    setPhysicalReadiness(null);
+    selectedIdRef.current = device.id;
+  }
+  setSelectedId(device.id);
+}}>
             <span><strong>{device.device_code}</strong><small>{[device.vendor, device.model].filter(Boolean).join(" · ") || "Vendor/model not recorded"}</small></span>
             <span><small>{maskDeviceIdentifier(device.imei || device.serial_number || device.vendor_device_identifier)} · {vehicleLabel(link?.vehicle_id)}</small><small>Installation: {device.installation_state?.replaceAll("_", " ") ?? "unknown"} · GPS: {device.gps_readiness ?? "unknown"}</small><small>Heartbeat: {formatTime(device.last_heartbeat_at)}</small><small>Last Update: {formatTime(device.last_telemetry_at)} · Updated: {formatTime(device.updated_at)}</small></span>
             <span className="status-pill">{getGpsDeviceStatusLabel(device.status)}</span>
