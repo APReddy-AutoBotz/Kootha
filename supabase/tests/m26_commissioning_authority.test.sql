@@ -70,32 +70,33 @@ select ok(not exists(
  where has_table_privilege('service_role','public.telemetry_receipts',privilege_name)
 ),'service role cannot forge authoritative M21 telemetry');
 
--- Canonical DB/shared safe-metadata parity table.
+-- Canonical DB/shared safe-metadata parity table. These expectations are bound
+-- to the final M24F catalog/privacy closure, not the superseded foundation body.
 select ok(not exists(
  select 1
  from (values
    ('ordinary_reason',true),
    (repeat('a',23),true),
-   (repeat('a',24),false),
-   (repeat('f',32),false),
-   (repeat('F',32),false),
-   ('prefix-'||repeat('a',24),false),
+   (repeat('a',24),true),
+   (repeat('f',32),true),
+   (repeat('F',32),true),
+   ('prefix-'||repeat('a',24),true),
    (repeat('a',12)||' '||repeat('b',12),true),
    ('credential=fixture-secret',false),
    ('https://evidence.example/path',false),
    ('evidence.example/path',false),
    ('12.34567, 77.45678',false),
-   ('12.34567 77.45678',true),
+   ('12.34567 77.45678',false),
    ('raw_payload fragment',false),
    ('{"payload":true}',false),
    ('Abcdefghijklmnopqrstuvwx12345678',false),
-   ('0123456789abcdef0123456789abcdef',false),
-   ('aa:bb:cc:dd:ee:ff',true),
-   ('490154203237518',true),
+   ('0123456789abcdef0123456789abcdef',true),
+   ('aa:bb:cc:dd:ee:ff',false),
+   ('490154203237518',false),
    ('adapter_generation_7',true)
  ) as cases(value,expected)
  where public.m24f_is_safe_metadata(value) is distinct from expected
-),'database safe-metadata truth matches the shared parity fixture');
+),'database safe-metadata truth matches the final shared parity fixture');
 
 -- Executable state-machine journey.
 reset role;
