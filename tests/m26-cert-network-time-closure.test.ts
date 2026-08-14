@@ -61,6 +61,19 @@ describe("M26 strict timestamp parity", () => {
     );
     expect(validatePhysicalEvidenceManifestV1(manifest, capabilities).ok).toBe(true);
   });
+
+  it("matches PostgreSQL numeric timezone offset bounds", () => {
+    const accepted = physicalManifest(
+      "2026-08-14T00:00:00+15:59",
+      "2026-08-14T00:01:00+15:59",
+    );
+    const rejected = physicalManifest(
+      "2026-08-14T00:00:00+16:00",
+      "2026-08-14T00:01:00+16:00",
+    );
+    expect(validatePhysicalEvidenceManifestV1(accepted, capabilities).ok).toBe(true);
+    expect(validatePhysicalEvidenceManifestV1(rejected, capabilities).ok).toBe(false);
+  });
 });
 
 describe("M26 certification and network lock convergence", () => {

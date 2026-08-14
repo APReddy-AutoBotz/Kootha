@@ -80,7 +80,7 @@ const timestamp = (value: unknown): value is string => {
   if (match[8] !== "Z") {
     const offsetHour = Number(match[8].slice(1, 3));
     const offsetMinute = Number(match[8].slice(4, 6));
-    if (offsetHour > 23 || offsetMinute > 59) return false;
+    if (offsetHour > 15 || offsetMinute > 59) return false;
   }
   return Number.isFinite(Date.parse(value));
 };
