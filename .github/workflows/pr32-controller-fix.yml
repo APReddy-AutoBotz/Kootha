@@ -26,13 +26,15 @@ jobs:
       - name: Verify controller base
         shell: bash
         run: |
-          test "$(git rev-parse HEAD^)" = "7a7c6181122d7c3f7d0bf32a562311d3e0956c0e"
+          test "$(git rev-parse HEAD^)" = "6108b5c154c22e06fe0041be4ea1b61535eae4b1"
+          test "$(git rev-parse HEAD^^)" = "7a7c6181122d7c3f7d0bf32a562311d3e0956c0e"
 
       - name: Apply bounded P1/P2 closure
         shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          from textwrap import dedent
 
           admin_path = Path('apps/web/src/admin.tsx')
           admin = admin_path.read_text(encoding='utf-8')
@@ -42,38 +44,49 @@ jobs:
           assert admin.count(old) == 1, f'ReadinessRow prefix count: {admin.count(old)}'
           admin = admin.replace(old, new, 1)
 
-          old = '''  async function transitionCommissioning(newState: "draft" | "commissioning" | "suspended" | "decommissioned") {
-            const deviceId = selectedIdRef.current;
-            if (!deviceId) return;
-            const current = physicalReadiness?.commissioning;
-          '''
-          new = '''  async function transitionCommissioning(newState: "draft" | "commissioning" | "suspended" | "decommissioned") {
-            const deviceId = selectedIdRef.current;
-            if (!deviceId) return;
-            const readiness = physicalReadiness;
-            if (!readiness || readiness.deviceId !== deviceId) {
-              setError("Physical-pilot readiness is refreshing for the selected device. Try again after it loads.");
-              return;
-            }
-            const current = readiness.commissioning;
-          '''
+          old = (
+            '  async function transitionCommissioning(newState: "draft" | "commissioning" | "suspended" | "decommissioned") {\n'
+            '    const deviceId = selectedIdRef.current;\n'
+            '    if (!deviceId) return;\n'
+            '    const current = physicalReadiness?.commissioning;\n'
+          )
+          new = (
+            '  async function transitionCommissioning(newState: "draft" | "commissioning" | "suspended" | "decommissioned") {\n'
+            '    const deviceId = selectedIdRef.current;\n'
+            '    if (!deviceId) return;\n'
+            '    const readiness = physicalReadiness;\n'
+            '    if (!readiness || readiness.deviceId !== deviceId) {\n'
+            '      setError("Physical-pilot readiness is refreshing for the selected device. Try again after it loads.");\n'
+            '      return;\n'
+            '    }\n'
+            '    const current = readiness.commissioning;\n'
+          )
           assert admin.count(old) == 1, f'transition prefix count: {admin.count(old)}'
           admin = admin.replace(old, new, 1)
 
           old = 'onClick={() => setSelectedId(device.id)}'
-          new = '''onClick={() => {
+          new = dedent('''\
+          onClick={() => {
             if (selectedIdRef.current !== device.id) {
               ++readinessRequestSequence.current;
               setPhysicalReadiness(null);
               selectedIdRef.current = device.id;
             }
             setSelectedId(device.id);
-          }}'''
+          }}''')
           assert admin.count(old) == 1, f'device selection handler count: {admin.count(old)}'
           admin = admin.replace(old, new, 1)
           admin_path.write_text(admin, encoding='utf-8')
 
-          migration = r'''-- M26 accepted/rejected telemetry snapshot serialization closure.
+          acceptance_path = Path('supabase/tests/m26_commissioning_authority.test.sql')
+          acceptance = acceptance_path.read_text(encoding='utf-8')
+          old = "select has_trigger('public','telemetry_receipts','telemetry_receipts_m26_rejected_serialize','rejected M21 receipts serialize with M26 evidence authority');"
+          new = "select has_trigger('public','telemetry_receipts','telemetry_receipts_m26_serialize','all M21 telemetry receipts serialize with M26 evidence authority');"
+          assert acceptance.count(old) == 1, f'legacy telemetry trigger assertion count: {acceptance.count(old)}'
+          acceptance_path.write_text(acceptance.replace(old, new, 1), encoding='utf-8')
+
+          migration = dedent(r'''\
+          -- M26 accepted/rejected telemetry snapshot serialization closure.
           -- Every authoritative M21 telemetry receipt write participates in the same
           -- device-scoped transaction lock used by M26 evidence ingestion/readiness.
           -- This prevents an accepted receipt from becoming visible immediately after
@@ -100,25 +113,22 @@ jobs:
           before insert or update on public.telemetry_receipts
           for each row
           execute function public.m26_serialize_telemetry_receipt_authority_v1();
-          '''
+          ''')
           Path('supabase/migrations/20260814040000_m26_telemetry_snapshot_serialization.sql').write_text(migration, encoding='utf-8')
 
-          pgtap = r'''-- M26 telemetry snapshot serialization guardrails.
+          pgtap = dedent(r'''\
+          -- M26 telemetry snapshot serialization guardrails.
           \connect postgres supabase_admin
           begin;
           create extension if not exists pgtap with schema extensions;
           select plan(7);
 
           select has_function(
-            'public',
-            'm26_serialize_telemetry_receipt_authority_v1',
-            array[]::text[],
+            'public','m26_serialize_telemetry_receipt_authority_v1',array[]::text[],
             'all telemetry receipts share one M26 serialization trigger function'
           );
           select has_trigger(
-            'public',
-            'telemetry_receipts',
-            'telemetry_receipts_m26_serialize',
+            'public','telemetry_receipts','telemetry_receipts_m26_serialize',
             'all telemetry receipt writes are serialized with M26 device authority'
           );
           select ok(
@@ -140,23 +150,23 @@ jobs:
             'legacy rejected-only telemetry trigger function is removed'
           );
           select has_trigger(
-            'public',
-            'telemetry_identity_conflicts',
-            'telemetry_identity_conflicts_m26_serialize',
+            'public','telemetry_identity_conflicts','telemetry_identity_conflicts_m26_serialize',
             'identity-conflict authority remains serialized'
           );
 
           select * from finish();
           rollback;
-          '''
+          ''')
           Path('supabase/tests/m26_telemetry_snapshot_serialization.test.sql').write_text(pgtap, encoding='utf-8')
 
-          vitest = r'''import { readFileSync } from "node:fs";
+          vitest = dedent(r'''\
+          import { readFileSync } from "node:fs";
           import { describe, expect, it } from "vitest";
 
           const admin = readFileSync("apps/web/src/admin.tsx", "utf8");
           const migration = readFileSync("supabase/migrations/20260814040000_m26_telemetry_snapshot_serialization.sql", "utf8");
           const truthMigration = readFileSync("supabase/migrations/20260812020000_m26_physical_telemetry_truth_convergence.sql", "utf8");
+          const acceptance = readFileSync("supabase/tests/m26_commissioning_authority.test.sql", "utf8");
 
           describe("M26 accepted telemetry snapshot serialization", () => {
             it("serializes every telemetry receipt write under the shared device authority lock", () => {
@@ -167,6 +177,8 @@ jobs:
               expect(migration).toContain("m26_lock_device_authority_v1(new.gps_device_id)");
               expect(migration.toLowerCase()).not.toContain("when (new.disposition='rejected')");
               expect(truthMigration).toContain("telemetry_identity_conflicts_m26_serialize");
+              expect(acceptance).toContain("telemetry_receipts_m26_serialize");
+              expect(acceptance).not.toContain("telemetry_receipts_m26_rejected_serialize");
             });
           });
 
@@ -198,7 +210,7 @@ jobs:
               expect(select).toBeGreaterThan(clear);
             });
           });
-          '''
+          ''')
           Path('tests/m26-controller-concurrency-ui.test.ts').write_text(vitest, encoding='utf-8')
           PY
 
@@ -247,6 +259,7 @@ jobs:
           git rm .github/workflows/pr32-controller-fix.yml
           git add apps/web/src/admin.tsx \
             supabase/migrations/20260814040000_m26_telemetry_snapshot_serialization.sql \
+            supabase/tests/m26_commissioning_authority.test.sql \
             supabase/tests/m26_telemetry_snapshot_serialization.test.sql \
             tests/m26-controller-concurrency-ui.test.ts
           git commit -m "Close M26 telemetry snapshot and device selection races"
