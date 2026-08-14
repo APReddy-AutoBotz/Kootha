@@ -161,6 +161,7 @@ export function validatePhysicalEvidenceManifestV1(
   const telemetryCount = v.observation?.telemetryCount;
   if (!v.observation || !timestamp(v.observation.startedAt) || !timestamp(v.observation.endedAt)
     || Date.parse(v.observation.endedAt) <= Date.parse(v.observation.startedAt)
+    || Date.parse(v.observation.endedAt) > Date.now()
     || Date.parse(v.observation.endedAt) - Date.parse(v.observation.startedAt) > 86_400_000
     || !Number.isSafeInteger(telemetryCount) || (telemetryCount ?? -1) < 0
     || (telemetryCount ?? Number.MAX_SAFE_INTEGER) > 10_000_000
