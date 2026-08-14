@@ -63,24 +63,58 @@ const bounded = (value: unknown, max = 160): value is string =>
 const timestamp = (value: unknown): value is string =>
   typeof value === "string" && Number.isFinite(Date.parse(value));
 
-// Keep this predicate in semantic parity with public.m24f_is_safe_metadata.
-// Length limits remain caller-specific, exactly as they are in PostgreSQL.
-const jsonBrackets = /[{}[\]]/;
-const secretAssignment = /(^|[\s!"#$%&'()*+,./:;<=>?@[\\\]^_`{|}~-])(?:bearer\s+[a-z0-9._~+/=-]{8,}|(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|authorization|credential|password|secret)\s*[:=]\s*\S{4,})/iu;
-const protocolOrHostname = /(https?|mqtts?|wss?):\/\/|([a-z0-9-]+\.)+[a-z]{2,}(?:[/:]\S*)?/iu;
-const longToken = /(^|[^A-Za-z0-9_+/=-])[A-Za-z0-9_+/=-]{24,}([^A-Za-z0-9_+/=-]|$)/;
-const coordinates = /(^|[^0-9])[-+]?[0-9]{1,3}\.[0-9]{4,}\s*[,/]\s*[-+]?[0-9]{1,3}\.[0-9]{4,}([^0-9]|$)/iu;
-const rawPayload = /(^|\s)(?:raw[_ -]?payload|payload[_ -]?(?:fragment|body|contents?|data))(?:\s|:|=|$)/iu;
+// Keep this predicate in semantic parity with the final database definition of
+// public.m24f_is_safe_metadata (the catalog/privacy closure intentionally
+// supersedes the earlier foundation definition).
+const controlCharacters = /[\u0001-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u;
+const opaqueToken = /^[A-Za-z0-9_+/=-]{32,160}$/;
+const pureHex = /^[0-9a-f]{32,160}$/iu;
+const canonicalUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+const sensitiveLabel = /(^|[^a-z0-9])(?:password|passwd|pwd|credential|secret|bearer|token|api[_ -]?key|auth(?:entication|orization)?[_ -]?header|private[_ -]?key|client[_ -]?secret)([^a-z0-9]|$)/iu;
+const protocolOrIp = /(?:https?|wss?|mqtt|tcp|udp):\/\/|(^|\s)(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?::[0-9]{1,5})?(?:\/\S*)?/iu;
+const hostname = /(^|[^a-z0-9@_-])(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}(?::[0-9]{1,5})?(?:\/\S*)?(?:[^a-z0-9._~:/?#\[\]@!$&'()*+,;=%-]|$)/iu;
+const coordinates = /(^|[^0-9])[+-]?[0-9]{1,2}\.[0-9]{4,}[,\s]+[+-]?[0-9]{1,3}\.[0-9]{4,}([^0-9]|$)/iu;
+const markupOrRawPayload = /<[!?\/]?[a-z][^>]*>|[{}\[\]]|(^|[^a-z])(?:raw[_ -]?(?:payload|body)|payload[_ -]?(?:body|fragment|xml|json))([^a-z]|$)/iu;
+const deviceIdentifier = /(^|[^a-z0-9])(?:imei|imsi|iccid|serial[_ -]?number|physical[_ -]?device[_ -]?(?:evidence|photo|identifier))([^a-z0-9]|$)/iu;
+const macAddress = /(^|[^0-9a-f])(?:[0-9a-f]{2}:){5}[0-9a-f]{2}([^0-9a-f]|$)/iu;
 
-/** Mirrors the canonical m24f_is_safe_metadata privacy boundary for shared clients. */
+function isCredentialShapedV1(value: string): boolean {
+  const trimmed = value.trim();
+  if (!opaqueToken.test(trimmed) || pureHex.test(trimmed) || canonicalUuid.test(trimmed)) return false;
+  const mixedAlphaNumeric = /[A-Z]/.test(trimmed) && /[a-z]/.test(trimmed) && /[0-9]/.test(trimmed);
+  const keyedAlphaNumeric = /[A-Za-z]/.test(trimmed) && /[0-9]/.test(trimmed) && /[_+/=]/.test(trimmed);
+  return mixedAlphaNumeric || keyedAlphaNumeric;
+}
+
+function isLuhn15IdentifierV1(value: string): boolean {
+  const trimmed = value.trim();
+  if (!/^[0-9]{15}$/.test(trimmed)) return false;
+  let sum = 0;
+  for (let index = 0; index < 15; index += 1) {
+    let digit = Number(trimmed[index]);
+    if ((index + 1) % 2 === 0) {
+      digit *= 2;
+      if (digit > 9) digit -= 9;
+    }
+    sum += digit;
+  }
+  return sum % 10 === 0;
+}
+
+/** Mirrors the final canonical m24f_is_safe_metadata privacy boundary. */
 export function isSafeMetadataV1(value: unknown): value is string {
   return typeof value === "string"
-    && !jsonBrackets.test(value)
-    && !secretAssignment.test(value)
-    && !protocolOrHostname.test(value)
-    && !longToken.test(value)
+    && value.length <= 500
+    && !controlCharacters.test(value)
+    && !isCredentialShapedV1(value)
+    && !sensitiveLabel.test(value)
+    && !protocolOrIp.test(value)
+    && !hostname.test(value)
     && !coordinates.test(value)
-    && !rawPayload.test(value);
+    && !markupOrRawPayload.test(value)
+    && !deviceIdentifier.test(value)
+    && !macAddress.test(value)
+    && !isLuhn15IdentifierV1(value);
 }
 
 /** Fail-closed validation. Synthetic fixtures can never assert physical evidence. */
