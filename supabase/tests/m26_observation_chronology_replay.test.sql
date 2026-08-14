@@ -69,15 +69,15 @@ $$,'chronology fixture device registration executes');
 select lives_ok($$
  select public.admin_link_gps_device_vehicle(
    (select id from public.gps_devices where device_code='M26-CHRONOLOGY'),
-   '26100000-0000-0000-0000-000000000002',clock_timestamp()-interval '2 hours','fixture','fixture'
+   '26100000-0000-0000-0000-000000000002',clock_timestamp(),'fixture','fixture'
  )
-$$,'chronology fixture vehicle link executes');
+$$,'chronology fixture vehicle link executes without predating device history');
 select lives_ok($$
  select public.admin_record_gps_device_event(
    (select id from public.gps_devices where device_code='M26-CHRONOLOGY'),
-   'installed',clock_timestamp()-interval '110 minutes','26100000-0000-0000-0000-000000000002',null,'fixture','fixture'
+   'installed',clock_timestamp(),'26100000-0000-0000-0000-000000000002',null,'fixture','fixture'
  )
-$$,'chronology fixture installation executes');
+$$,'chronology fixture installation executes without predating device history');
 select lives_ok($$
  select public.admin_change_gps_device_status(
    (select id from public.gps_devices where device_code='M26-CHRONOLOGY'),'active',null
@@ -92,8 +92,8 @@ insert into public.gps_device_credential_metadata(
  id,gps_device_id,credential_key_id,status,issued_at,expires_at,last_verified_at,created_by_admin
 )
 select '26100000-0000-0000-0000-000000000006',id,'fixture-key','active',
-       clock_timestamp()-interval '100 minutes',clock_timestamp()+interval '1 day',
-       clock_timestamp()-interval '90 minutes','26100000-0000-0000-0000-000000000001'
+       clock_timestamp(),clock_timestamp()+interval '1 day',clock_timestamp(),
+       '26100000-0000-0000-0000-000000000001'
 from public.gps_devices where device_code='M26-CHRONOLOGY';
 
 set local role authenticated;
@@ -177,16 +177,26 @@ select lives_ok($$
  select public.service_rotate_physical_pilot_repository_authority_v1(repeat('b',40),'chronology_workflow')
 $$,'chronology repository authority rotation executes');
 select lives_ok(format(
- 'select public.service_record_physical_pilot_network_validation_v1(%L,%L,2,%L,%L,%L,%L,%L,%L,%L,%L,%L)',
+ 'select public.service_record_physical_pilot_network_validation_v1(%L,%L,2,%L,%L,%L,%L,%L,%L,clock_timestamp(),%L,%L)',
  '26100000-0000-0000-0000-000000000009',:'fixture_commissioning_id',:'fixture_device_id',
  :'fixture_link_id',:'fixture_installation_id','26100000-0000-0000-0000-000000000006',
- 'fixture_network',repeat('c',64),clock_timestamp()-interval '60 minutes',repeat('b',40),'chronology_workflow'
-),'chronology network validation executes');
+ 'fixture_network',repeat('c',64),repeat('b',40),'chronology_workflow'
+),'chronology network validation executes against current lifecycle authority');
 
 reset role;
 select validated_at as fixture_network_validated_at
 from public.physical_pilot_network_validation_receipts
 where id='26100000-0000-0000-0000-000000000009' \gset
+
+-- Build two valid observation windows after network validation. Tiny database
+-- sleeps make their ordering deterministic without backdating any authoritative
+-- device/link/install/credential/network history.
+select pg_sleep(0.05);
+select clock_timestamp() as fixture_old_end \gset
+select pg_sleep(0.05);
+select clock_timestamp() as fixture_new_start \gset
+select pg_sleep(0.05);
+select clock_timestamp() as fixture_new_end \gset
 
 -- Record the physically newer failed run first.
 set local role service_role;
@@ -197,21 +207,20 @@ select lives_ok(format(
  :'fixture_manifest_id',repeat('b',40),'chronology_workflow',:'fixture_device_id',:'fixture_device_digest',
  :'fixture_installation_id',:'fixture_link_id','26100000-0000-0000-0000-000000000006',
  '26100000-0000-0000-0000-000000000009','physical',
- (:'fixture_network_validated_at'::timestamptz + interval '20 minutes'),
- (:'fixture_network_validated_at'::timestamptz + interval '30 minutes'),
+ :'fixture_new_start',:'fixture_new_end',
  'failed','failed','blocked','{newer_physical_blocked}',repeat('d',64)
 ),'newer physical blocked run persists');
 
 -- Deliver an older run afterwards. Its recorded_at is newer, but its physical
 -- observation chronology is older and must never become readiness-authoritative.
+select pg_sleep(0.02);
 select lives_ok(format(
  'select public.service_record_physical_pilot_evidence_v1(%L,%L,2,%L,%L,%L,%L,%L,%L,%L,%L,%L,%L,%L,%L,%L,0,false,true,%L,%L,false,false,%L,%L,%L)',
  '26100000-0000-0000-0000-000000000011',:'fixture_commissioning_id',:'fixture_candidate_id',
  :'fixture_manifest_id',repeat('b',40),'chronology_workflow',:'fixture_device_id',:'fixture_device_digest',
  :'fixture_installation_id',:'fixture_link_id','26100000-0000-0000-0000-000000000006',
  '26100000-0000-0000-0000-000000000009','physical',
- (:'fixture_network_validated_at'::timestamptz + interval '5 minutes'),
- (:'fixture_network_validated_at'::timestamptz + interval '10 minutes'),
+ :'fixture_network_validated_at',:'fixture_old_end',
  'failed','failed','partial','{delayed_older_partial}',repeat('d',64)
 ),'delayed older physical partial run persists after the newer blocked run');
 
