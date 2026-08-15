@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import "./admin-workflow.css";
 import type { FormEvent, ReactNode } from "react";
 import { BrainCircuit, CheckCircle2, ClipboardCheck, Cpu, FileClock, Globe2, Inbox, LayoutDashboard, LogOut, Megaphone, RefreshCw, Truck, UserRoundCheck, Users } from "lucide-react";
@@ -5874,12 +5874,17 @@ function AdminExecutionPanel({
 function DeviceRegistryView({ config, session }: { config: SupabaseConfig; session: AuthSession }) {
   type DeviceRow = GpsDeviceRegistryRecord & { current_vehicle_id?: string | null };
   type VehicleRow = { id: string; vehicle_number: string; city: string | null };
+  type ReadinessRow = { contractVersion: string; deviceId: string | null; stage: string; blockingReasons: string[]; commissioning: { id: string; state: string; version: number; candidateId: string; manifestId: string; certificationRunId: string; networkConfigurationClass: string | null; expectedHeartbeatSeconds: number | null } | null; selectedAdapter: { candidateId: string; manifestId: string; certificationRunId: string; adapterId: string; adapterVersion: string } | null; credentialReady: boolean; installationReady: boolean; networkReady: boolean; physicalEvidence: boolean };
   const [devices, setDevices] = useState<DeviceRow[]>([]);
   const [links, setLinks] = useState<GpsDeviceVehicleLinkRecord[]>([]);
   const [events, setEvents] = useState<GpsDeviceLifecycleEventRecord[]>([]);
   const [credentials, setCredentials] = useState<GpsDeviceCredentialMetadataRecord[]>([]);
   const [vehicles, setVehicles] = useState<VehicleRow[]>([]);
+  const [physicalReadiness, setPhysicalReadiness] = useState<ReadinessRow | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selectedIdRef = useRef<string | null>(null);
+  const readinessRequestSequence = useRef(0);
+  selectedIdRef.current = selectedId;
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [vendorFilter, setVendorFilter] = useState("all");
@@ -5906,6 +5911,7 @@ function DeviceRegistryView({ config, session }: { config: SupabaseConfig; sessi
     keyId: "", status: "pending" as GpsDeviceCredentialStatus,
     issuedAt: new Date().toISOString().slice(0, 16), expiresAt: "", note: ""
   });
+  const [commissioningDraft, setCommissioningDraft] = useState({ candidateId: "", manifestId: "", networkClass: "", heartbeatSeconds: "60", transitionKey: crypto.randomUUID() });
 
   const selected = devices.find((device) => device.id === selectedId) ?? null;
   const currentLink = links.find((link) => link.gps_device_id === selectedId && !link.effective_until) ?? null;
@@ -5985,7 +5991,26 @@ function DeviceRegistryView({ config, session }: { config: SupabaseConfig; sessi
     }
   }
 
+  async function loadPhysicalReadiness(deviceId: string | null = selectedId) {
+    const requestSequence = ++readinessRequestSequence.current;
+    if (!deviceId) { setPhysicalReadiness(null); return; }
+    const response = await adminFetch(config, session, config.url + "/rest/v1/rpc/admin_get_physical_pilot_readiness_v1", {
+      method: "POST", headers: createHeaders(config, session.accessToken, true), body: JSON.stringify({ p_device_id: deviceId })
+    });
+    if (!response.ok) throw new Error("Could not load physical-pilot readiness.");
+    const readiness = await response.json() as ReadinessRow;
+    if (requestSequence === readinessRequestSequence.current && selectedIdRef.current === deviceId) setPhysicalReadiness(readiness);
+  }
+
   useEffect(() => { void loadRegistry(); }, [config, session.accessToken]);
+
+  useEffect(() => {
+    setPhysicalReadiness(null);
+    if (!selectedId) return;
+    let cancelled = false;
+    void loadPhysicalReadiness(selectedId).catch((readinessError) => { if (!cancelled) { setPhysicalReadiness(null); setError(readinessError instanceof Error ? readinessError.message : "Could not load readiness."); } });
+    return () => { cancelled = true; };
+  }, [config, session.accessToken, selectedId]);
 
   useEffect(() => {
     if (!selected || !editing) return;
@@ -6029,11 +6054,43 @@ function DeviceRegistryView({ config, session }: { config: SupabaseConfig; sessi
       setMessage(success);
       setOperation((current) => ({ ...current, reason: "", note: "" }));
       await loadRegistry();
+      await loadPhysicalReadiness(selectedIdRef.current);
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "Device change could not be saved.");
     } finally {
       setBusy(false);
     }
+  }
+
+  async function transitionCommissioning(newState: "draft" | "commissioning" | "suspended" | "decommissioned") {
+    const deviceId = selectedIdRef.current;
+    if (!deviceId) return;
+    const readiness = physicalReadiness;
+    if (!readiness || readiness.deviceId !== deviceId) {
+      setError("Physical-pilot readiness is refreshing for the selected device. Try again after it loads.");
+      return;
+    }
+    const current = readiness.commissioning;
+    const candidateId = (current?.candidateId ?? commissioningDraft.candidateId).trim();
+    const manifestId = (current?.manifestId ?? commissioningDraft.manifestId).trim();
+    if (!candidateId || !manifestId) { setError("Current AP-approved candidate and manifest IDs are required."); return; }
+    const transitionKey = commissioningDraft.transitionKey;
+    setBusy(true); setError(""); setMessage("");
+    try {
+      const response = await adminFetch(config, session, config.url + "/rest/v1/rpc/admin_transition_physical_pilot_commissioning_v1", {
+        method: "POST", headers: createHeaders(config, session.accessToken, true), body: JSON.stringify({
+          p_device_id: deviceId, p_candidate_id: candidateId, p_manifest_id: manifestId,
+          p_expected_version: current?.version ?? 0, p_transition_key: transitionKey, p_new_state: newState,
+          p_reason_code: `field_ops_${newState}`, p_network_configuration_class: commissioningDraft.networkClass.trim() || current?.networkConfigurationClass || null,
+          p_expected_heartbeat_seconds: Number(commissioningDraft.heartbeatSeconds) || current?.expectedHeartbeatSeconds || null
+        })
+      });
+      if (!response.ok) throw new Error("Commissioning transition was rejected by server authority.");
+      setMessage(`Commissioning ${newState} transition recorded.`);
+      setCommissioningDraft((draft) => ({ ...draft, transitionKey: crypto.randomUUID() }));
+      await loadPhysicalReadiness(selectedIdRef.current);
+    } catch (actionError) { setError(actionError instanceof Error ? actionError.message : "Commissioning transition failed."); }
+    finally { setBusy(false); }
   }
 
   function identityBody(): AdminRegisterGpsDeviceRequest {
@@ -6172,7 +6229,14 @@ function DeviceRegistryView({ config, session }: { config: SupabaseConfig; sessi
         <div className="panel-heading"><h3>Devices</h3><span>{filtered.length} shown</span></div>
         <div className="device-list">{filtered.map((device) => {
           const link = links.find((entry) => entry.gps_device_id === device.id && !entry.effective_until);
-          return <button type="button" key={device.id} className={selectedId === device.id ? "is-selected" : ""} onClick={() => setSelectedId(device.id)}>
+          return <button type="button" key={device.id} className={selectedId === device.id ? "is-selected" : ""} onClick={() => {
+  if (selectedIdRef.current !== device.id) {
+    ++readinessRequestSequence.current;
+    setPhysicalReadiness(null);
+    selectedIdRef.current = device.id;
+  }
+  setSelectedId(device.id);
+}}>
             <span><strong>{device.device_code}</strong><small>{[device.vendor, device.model].filter(Boolean).join(" · ") || "Vendor/model not recorded"}</small></span>
             <span><small>{maskDeviceIdentifier(device.imei || device.serial_number || device.vendor_device_identifier)} · {vehicleLabel(link?.vehicle_id)}</small><small>Installation: {device.installation_state?.replaceAll("_", " ") ?? "unknown"} · GPS: {device.gps_readiness ?? "unknown"}</small><small>Heartbeat: {formatTime(device.last_heartbeat_at)}</small><small>Last Update: {formatTime(device.last_telemetry_at)} · Updated: {formatTime(device.updated_at)}</small></span>
             <span className="status-pill">{getGpsDeviceStatusLabel(device.status)}</span>
@@ -6197,6 +6261,37 @@ function DeviceRegistryView({ config, session }: { config: SupabaseConfig; sessi
             <div><dt>Last Update</dt><dd>{formatTime(selected.last_telemetry_at)}</dd></div>
             <div><dt>Updated</dt><dd>{formatTime(selected.updated_at)}</dd></div>
           </dl>
+          <section className="form-section" aria-labelledby="physical-readiness-title">
+            <h3 id="physical-readiness-title">Physical-pilot readiness</h3>
+            {!physicalReadiness ? <p>Server readiness is loading.</p> : <>
+              <p><strong>Stage:</strong> {physicalReadiness.stage.replaceAll("_", " ")}</p>
+              <p><strong>Missing prerequisites:</strong> {physicalReadiness.blockingReasons.length ? physicalReadiness.blockingReasons.map((reason) => reason.replaceAll("_", " ")).join(", ") : "None"}</p>
+              <p><strong>Selected adapter:</strong> {physicalReadiness.selectedAdapter ? `${physicalReadiness.selectedAdapter.adapterId} ${physicalReadiness.selectedAdapter.adapterVersion}` : "Not selected"}</p>
+              <p><strong>Certification:</strong> {physicalReadiness.commissioning ? `${physicalReadiness.commissioning.certificationRunId} · version ${physicalReadiness.commissioning.version} · ${physicalReadiness.commissioning.state}` : "No commissioning record"}</p>
+              <p>Credential: {physicalReadiness.credentialReady ? "ready" : "needed"} · Installation/link: {physicalReadiness.installationReady ? "ready" : "needed"} · Network: {physicalReadiness.networkReady ? "validated" : "not validated"}</p>
+              <p><strong>Real-device evidence:</strong> {physicalReadiness.physicalEvidence ? "validated physical receipt" : "not recorded"}. Simulation and certification evidence never count as physical evidence.</p>
+            </>}
+            <fieldset disabled={busy} className="form-section"><legend>Commissioning controls</legend>
+              <p className="form-help">Requests are checked against current server certification and version. These controls cannot create network validation or physical evidence.</p>
+              {!physicalReadiness?.commissioning && <div className="admin-filter-grid">
+                <label>Approved candidate ID<input value={commissioningDraft.candidateId} onChange={(event) => setCommissioningDraft({ ...commissioningDraft, candidateId: event.target.value })} /></label>
+                <label>Certified manifest ID<input value={commissioningDraft.manifestId} onChange={(event) => setCommissioningDraft({ ...commissioningDraft, manifestId: event.target.value })} /></label>
+              </div>}
+              <div className="admin-filter-grid">
+                <label>Network class<input maxLength={80} value={commissioningDraft.networkClass} placeholder={physicalReadiness?.commissioning?.networkConfigurationClass ?? "non-secret class"} onChange={(event) => setCommissioningDraft({ ...commissioningDraft, networkClass: event.target.value })} /></label>
+                <label>Heartbeat seconds<input type="number" min="10" max="86400" value={commissioningDraft.heartbeatSeconds} onChange={(event) => setCommissioningDraft({ ...commissioningDraft, heartbeatSeconds: event.target.value })} /></label>
+                <label>Expected version<input readOnly value={physicalReadiness?.commissioning?.version ?? 0} /></label>
+                <label>Transition key<input readOnly value={commissioningDraft.transitionKey} /></label>
+              </div>
+              <div className="device-action-buttons">
+                {!physicalReadiness?.commissioning && <button type="button" onClick={() => void transitionCommissioning("draft")}>Create draft</button>}
+                {physicalReadiness?.commissioning?.state === "draft" && <button type="button" onClick={() => void transitionCommissioning("commissioning")}>Start commissioning</button>}
+                {physicalReadiness?.commissioning?.state === "commissioning" && <button type="button" onClick={() => void transitionCommissioning("suspended")}>Suspend</button>}
+                {physicalReadiness?.commissioning?.state === "suspended" && <button type="button" onClick={() => void transitionCommissioning("draft")}>Reopen as draft</button>}
+                {physicalReadiness?.commissioning && physicalReadiness.commissioning.state !== "decommissioned" && <button type="button" onClick={() => void transitionCommissioning("decommissioned")}>Decommission</button>}
+              </div>
+            </fieldset>
+          </section>
           <DeviceM22HealthPanel connection={{ url: config.url, anonKey: config.anonKey, accessToken: session.accessToken }} deviceId={selected.id} />
           {selected.admin_note && <p className="quiet-note"><strong>Admin note:</strong> {selected.admin_note}</p>}
           <fieldset className="form-section device-actions" disabled={busy || selected.status === "retired"}><legend>Admin actions</legend>
