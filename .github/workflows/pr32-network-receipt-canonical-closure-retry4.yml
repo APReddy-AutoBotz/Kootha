@@ -1,0 +1,102 @@
+name: PR32 network receipt canonical closure retry4
+
+on:
+  push:
+    branches:
+      - codex/github-mention-m24/m26-pre-device-integration-readiness-c
+    paths:
+      - .github/workflows/pr32-network-receipt-canonical-closure-retry4.yml
+
+permissions:
+  contents: write
+
+jobs:
+  close-review-finding:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/github-mention-m24/m26-pre-device-integration-readiness-c
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Verify exact base
+        shell: bash
+        run: test "$(git rev-parse HEAD^)" = "5850c025665c4136ebd325c9607593ddde1ce5b0"
+
+      - name: Reapply canonical closure and fix pgTAP syntax
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          workflow = Path('.github/workflows/pr32-network-receipt-canonical-closure-retry3.yml').read_text(encoding='utf-8')
+          marker = '      - name: Reapply canonical closure with robust source proof\n'
+          start = workflow.index(marker)
+          run_marker = '        run: |\n'
+          run_start = workflow.index(run_marker, start) + len(run_marker)
+          end = workflow.index('\n      - name: Enable Corepack', run_start)
+          block = workflow[run_start:end]
+          lines = block.splitlines()
+          script = '\n'.join(line[10:] if line.startswith('          ') else line for line in lines) + '\n'
+          Path('/tmp/apply-canonical-network-proof.sh').write_text(script, encoding='utf-8')
+          PY
+          bash /tmp/apply-canonical-network-proof.sh
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('supabase/tests/m26_commissioning_authority.test.sql')
+          text = path.read_text(encoding='utf-8')
+          message = "  'readiness and evidence share deterministic current network receipt authority'"
+          bad = message + ',\n);'
+          good = message + '\n);'
+          assert text.count(bad) == 1, 'expected exactly one extra-comma pgTAP assertion'
+          path.write_text(text.replace(bad, good, 1), encoding='utf-8')
+          PY
+
+      - name: Enable Corepack
+        run: corepack enable
+      - name: Install dependencies
+        run: corepack pnpm install --frozen-lockfile
+      - name: Focused tests
+        run: corepack pnpm test -- --run tests/m26-network-receipt-canonical-selection.test.ts tests/m26-commissioning-certification-lock-closure.test.ts tests/m26-evidence-repository-lock-closure.test.ts tests/m26-network-lock-order-closure.test.ts tests/m26-cert-network-time-closure.test.ts tests/m26-controller-concurrency-ui.test.ts tests/m26-pre-device-readiness.test.ts
+      - name: Typecheck
+        run: corepack pnpm typecheck
+      - name: Lint
+        run: corepack pnpm lint
+      - name: Full Vitest
+        run: corepack pnpm test
+      - name: Migration guardrails
+        run: corepack pnpm migrations:check
+      - name: Security guardrails
+        run: corepack pnpm security:scan
+      - name: Production build
+        run: corepack pnpm build
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable Supabase
+        run: supabase start -x studio,imgproxy,inbucket,edge-runtime,logflare,vector,supavisor
+      - name: Full pgTAP/RLS
+        run: supabase test db
+      - name: Diff check
+        run: git diff --check
+
+      - name: Publish closure and remove temporary workflows
+        shell: bash
+        run: |
+          git config user.name "Kootha Controller"
+          git config user.email "actions@users.noreply.github.com"
+          git rm .github/workflows/pr32-network-receipt-canonical-closure.yml \
+            .github/workflows/pr32-network-receipt-canonical-closure-retry.yml \
+            .github/workflows/pr32-network-receipt-canonical-closure-retry2.yml \
+            .github/workflows/pr32-network-receipt-canonical-closure-retry3.yml \
+            .github/workflows/pr32-network-receipt-canonical-closure-retry4.yml
+          git add supabase/migrations/20260814100000_m26_network_receipt_canonical_selection.sql \
+            supabase/tests/m26_commissioning_authority.test.sql \
+            tests/m26-network-receipt-canonical-selection.test.ts
+          git diff --cached --check
+          git commit -m "Canonicalize M26 network receipt selection"
+          git push origin HEAD:codex/github-mention-m24/m26-pre-device-integration-readiness-c
