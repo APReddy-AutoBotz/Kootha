@@ -160,7 +160,7 @@ Status values:
 
 ## Milestone M27 - Governed Operations Export & Audit Workbench
 
-- [~] In progress.
+- [x] Completed.
   - Admin-only static allowlisted exports for enquiries, ad works, drivers, vehicles, masked devices, and safe activity history.
   - Immutable export receipt metadata; exported row payloads are never persisted.
   - UTF-8 CSV/JSON download with spreadsheet-formula neutralization.

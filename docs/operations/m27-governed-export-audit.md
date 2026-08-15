@@ -1,6 +1,6 @@
 # M27 — Governed Operations Export & Audit Workbench
 
-Status: In Progress until the Draft PR is merged and post-merge verification is complete.
+Status: Software implementation complete and exact-head verified. Merge/public-hosted activation remain separate controller gates.
 
 ## Purpose
 
@@ -52,9 +52,9 @@ The workbench supports bounded filters for actor type, exact action, exact entit
 
 The existing `kootha-preview` Netlify site remains safely gated. The connected Kootha Supabase project is inactive and cannot currently be restored because the organization is already at the two-active-free-project limit. M27 does not pause unrelated projects to bypass that quota and does not enable enquiry or retention kill switches.
 
-## Completion gates
+## Completion evidence
 
-Before merge:
+Software implementation has satisfied these gates before final controller merge:
 
 1. focused M27 TypeScript tests pass;
 2. full Vitest passes;
