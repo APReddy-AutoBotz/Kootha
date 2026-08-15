@@ -166,3 +166,12 @@ Status values:
   - UTF-8 CSV/JSON download with spreadsheet-formula neutralization.
   - Cursor-paginated, filterable safe Activity workbench through sanctioned RPCs.
   - Hosted Kootha activation remains separately blocked by the active-free-project quota; do not pause unrelated projects.
+
+## Milestone M28 - Commercial & Schedule Operations Control
+
+- [~] In progress.
+  - Governed admin-only payment status/amount tracking with immutable commercial history and optimistic version checks.
+  - Evidence-preserving whole-work and individual-day reschedule authority with stale release/readiness invalidation.
+  - Governed cancellation with required reason, executable-access revocation, active-tracking stop and immutable lifecycle history.
+  - Customer-safe cancellation/reschedule messages remain manual copy/share only; no payment gateway or provider auto-send.
+  - M18, selected-device M24 and real physical M26 remain separately gated.

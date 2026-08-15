@@ -84,6 +84,7 @@ import {
 import { AlertsView, DeviceM22HealthPanel, TrackingHealthView } from "./admin-m22";
 import { IntelligenceAdapterReadinessView } from "./admin-intelligence";
 import { OperationsAuditWorkbench, OperationsExportView } from "./admin-operations";
+import { CommercialScheduleWorkbench } from "./admin-commercial";
 import type {
   AdWorkAssignmentStatus,
   AdWorkExecutionDayStatus,
@@ -290,7 +291,7 @@ type AreaRecord = {
   active: boolean;
 };
 
-type AdminView = "enquiries" | "adWorks" | "driverApplications" | "drivers" | "vehicles" | "devices" | "trackingHealth" | "alerts" | "intelligence" | "operations" | "audit" | "dashboard";
+type AdminView = "enquiries" | "adWorks" | "driverApplications" | "drivers" | "vehicles" | "devices" | "trackingHealth" | "alerts" | "intelligence" | "commercial" | "operations" | "audit" | "dashboard";
 type AdWorkWorkflowStep = "plan" | "assign" | "release" | "proof" | "close";
 
 type AdminFilters = {
@@ -6365,6 +6366,7 @@ function AdminShell({
     { id: "trackingHealth", label: "Tracking Health", icon: Cpu },
     { id: "alerts", label: "Alerts", icon: FileClock },
     { id: "intelligence", label: "Intelligence & Adapters", icon: BrainCircuit },
+    { id: "commercial", label: "Commercial & Schedule", icon: ClipboardCheck },
     { id: "operations", label: "Operations & Exports", icon: ClipboardCheck },
     { id: "audit", label: "Activity", icon: FileClock }
   ];
@@ -6927,6 +6929,10 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
         {activeView === "trackingHealth" && <TrackingHealthView connection={{ url: config.url, anonKey: config.anonKey, accessToken: session.accessToken }} />}
         {activeView === "alerts" && <AlertsView connection={{ url: config.url, anonKey: config.anonKey, accessToken: session.accessToken }} />}
         {activeView === "intelligence" && <IntelligenceAdapterReadinessView connection={{ url: config.url, anonKey: config.anonKey, accessToken: session.accessToken }} />}
+        {activeView === "commercial" && <CommercialScheduleWorkbench
+          connection={{ url: config.url, anonKey: config.anonKey, accessToken: session.accessToken }}
+          adWorks={adWorks.map((work) => ({ id: work.id, title: work.title, businessName: work.business_name }))}
+        />}
         {activeView === "operations" && <OperationsExportView connection={{ url: config.url, anonKey: config.anonKey, accessToken: session.accessToken }} />}
         {activeView === "audit" && <AuditView config={config} session={session} />}
 
