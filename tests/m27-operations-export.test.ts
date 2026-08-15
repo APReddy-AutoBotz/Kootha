@@ -29,25 +29,34 @@ describe("M27 governed operations export contract", () => {
     expect(csv).toContain('[""a"",""b""]');
   });
 
-  it("accepts only the exact server allowlist for each scope", () => {
+  it("accepts only exact scope columns, row keys and PII truth", () => {
     const envelope = {
       contractVersion: "m27.operations-export.v1" as const,
       receiptId: "11111111-1111-4111-8111-111111111111",
-      scope: "devices" as const,
-      format: "csv" as const,
+      scope: "audit" as const,
+      format: "json" as const,
       rowCount: 1,
       truncated: false,
       containsPii: false,
       generatedAt: new Date().toISOString(),
-      columns: [...operationsExportScopeColumns.devices],
+      columns: [...operationsExportScopeColumns.audit],
       filters: { searchApplied: false },
       rows: [{
         id: "22222222-2222-4222-8222-222222222222",
-        device_code: "D-1",
-        status: "active",
+        actor_type: "admin",
+        action: "example",
+        entity_type: "example",
+        entity_id: null,
+        created_at: new Date().toISOString(),
+        safe_details: {},
       }],
     };
     expect(validateOperationsExportEnvelope(envelope)).toBe(true);
+    expect(validateOperationsExportEnvelope({ ...envelope, containsPii: true })).toBe(false);
+    expect(validateOperationsExportEnvelope({
+      ...envelope,
+      rows: [{ ...envelope.rows[0], ingest_token_hash: "forbidden" }],
+    })).toBe(false);
     expect(validateOperationsExportEnvelope({ ...envelope, columns: [...envelope.columns, "ingest_token_hash"] })).toBe(false);
   });
 

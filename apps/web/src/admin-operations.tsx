@@ -134,6 +134,7 @@ export function OperationsExportView({ connection }: { connection: AdminOperatio
   const [dateTo, setDateTo] = useState("");
   const [limit, setLimit] = useState(200);
   const [result, setResult] = useState<OperationsExportEnvelope | null>(null);
+  const [resultKey, setResultKey] = useState<string | null>(null);
   const [receipts, setReceipts] = useState<OperationsExportReceipt[]>([]);
   const [busy, setBusy] = useState(false);
   const [receiptBusy, setReceiptBusy] = useState(false);
@@ -144,14 +145,25 @@ export function OperationsExportView({ connection }: { connection: AdminOperatio
   const statuses = statusOptions[scope];
   const supportsCity = scope !== "devices" && scope !== "audit";
   const containsPii = operationsExportScopeContainsPii[scope];
+  const exportFilterKey = useMemo(() => JSON.stringify({
+    scope,
+    format,
+    search: search.trim(),
+    status,
+    city: supportsCity ? city.trim() : "",
+    dateFrom,
+    dateTo,
+    limit: normalizeOperationsExportLimit(limit),
+  }), [scope, format, search, status, city, supportsCity, dateFrom, dateTo, limit]);
+  const exportFilterKeyRef = useRef(exportFilterKey);
 
   useEffect(() => {
+    exportFilterKeyRef.current = exportFilterKey;
     requestSequence.current += 1;
     setResult(null);
+    setResultKey(null);
     setError("");
-    setStatus("");
-    if (!supportsCity) setCity("");
-  }, [scope, format, supportsCity]);
+  }, [exportFilterKey]);
 
   async function loadReceipts() {
     const requestId = ++receiptSequence.current;
@@ -180,6 +192,7 @@ export function OperationsExportView({ connection }: { connection: AdminOperatio
   }, [connection.accessToken, connection.anonKey, connection.url]);
 
   async function generatePreview() {
+    const requestFilterKey = exportFilterKey;
     const requestId = ++requestSequence.current;
     setBusy(true);
     setError("");
@@ -195,11 +208,12 @@ export function OperationsExportView({ connection }: { connection: AdminOperatio
         p_date_to: dateBoundary(dateTo, true),
         p_limit: normalizeOperationsExportLimit(limit),
       });
-      if (requestId !== requestSequence.current) return;
+      if (requestId !== requestSequence.current || requestFilterKey !== exportFilterKeyRef.current) return;
       if (!validateOperationsExportEnvelope(envelope)) {
         throw new Error("The server returned an invalid governed-export contract.");
       }
       setResult(envelope);
+      setResultKey(requestFilterKey);
       void loadReceipts();
     } catch (exportError) {
       if (requestId === requestSequence.current) {
@@ -209,6 +223,8 @@ export function OperationsExportView({ connection }: { connection: AdminOperatio
       if (requestId === requestSequence.current) setBusy(false);
     }
   }
+
+  const resultIsCurrent = result !== null && resultKey === exportFilterKey;
 
   return (
     <section className="admin-operations-view" aria-labelledby="operations-export-title">
@@ -223,7 +239,12 @@ export function OperationsExportView({ connection }: { connection: AdminOperatio
       <div className="admin-filter-grid" aria-label="Governed export filters">
         <label>
           Scope
-          <select value={scope} onChange={(event) => setScope(event.target.value as OperationsExportScope)}>
+          <select value={scope} onChange={(event) => {
+            const nextScope = event.target.value as OperationsExportScope;
+            setScope(nextScope);
+            setStatus("");
+            if (nextScope === "devices" || nextScope === "audit") setCity("");
+          }}>
             {operationsExportScopes.map((option) => (
               <option value={option} key={option}>{operationsExportScopeLabels[option]}</option>
             ))}
@@ -278,14 +299,14 @@ export function OperationsExportView({ connection }: { connection: AdminOperatio
         <button className="primary-button" type="button" onClick={() => void generatePreview()} disabled={busy}>
           {busy ? "Generating..." : "Generate preview"}
         </button>
-        <button className="secondary-button" type="button" disabled={!result || busy} onClick={() => result && downloadEnvelope(result)}>
+        <button className="secondary-button" type="button" disabled={!resultIsCurrent || busy} onClick={() => resultIsCurrent && result && downloadEnvelope(result)}>
           <Download size={18} aria-hidden="true" /> Download current result
         </button>
       </div>
 
       {error && <p className="form-alert admin-message" role="alert">{error}</p>}
 
-      {result && (
+      {resultIsCurrent && result && (
         <section className="form-section">
           <div className="panel-heading">
             <div>
@@ -345,6 +366,7 @@ export function OperationsAuditWorkbench({ connection }: { connection: AdminOper
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [records, setRecords] = useState<AuditRecord[]>([]);
+  const [recordsKey, setRecordsKey] = useState<string | null>(null);
   const [nextCursor, setNextCursor] = useState<AuditEnvelope["nextCursor"]>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -354,8 +376,28 @@ export function OperationsAuditWorkbench({ connection }: { connection: AdminOper
     () => [actorType, action.trim(), entityType.trim(), search.trim(), dateFrom, dateTo].filter(Boolean).length,
     [actorType, action, entityType, search, dateFrom, dateTo],
   );
+  const auditFilterKey = useMemo(() => JSON.stringify({
+    actorType,
+    action: action.trim(),
+    entityType: entityType.trim(),
+    search: search.trim(),
+    dateFrom,
+    dateTo,
+  }), [actorType, action, entityType, search, dateFrom, dateTo]);
+  const auditFilterKeyRef = useRef(auditFilterKey);
+
+  useEffect(() => {
+    auditFilterKeyRef.current = auditFilterKey;
+    requestSequence.current += 1;
+    setRecords([]);
+    setRecordsKey(null);
+    setNextCursor(null);
+    setError("");
+  }, [auditFilterKey]);
 
   async function loadAudit(append = false) {
+    const requestFilterKey = auditFilterKey;
+    if (append && recordsKey !== requestFilterKey) return;
     const requestId = ++requestSequence.current;
     setLoading(true);
     setError("");
@@ -371,9 +413,10 @@ export function OperationsAuditWorkbench({ connection }: { connection: AdminOper
         p_cursor_created_at: append ? nextCursor?.createdAt ?? null : null,
         p_cursor_id: append ? nextCursor?.id ?? null : null,
       });
-      if (requestId !== requestSequence.current) return;
+      if (requestId !== requestSequence.current || requestFilterKey !== auditFilterKeyRef.current) return;
       const page = Array.isArray(envelope.records) ? envelope.records : [];
       setRecords((current) => append ? [...current, ...page] : page);
+      setRecordsKey(requestFilterKey);
       setNextCursor(envelope.nextCursor ?? null);
     } catch (loadError) {
       if (requestId === requestSequence.current) {

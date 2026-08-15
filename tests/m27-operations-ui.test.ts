@@ -18,6 +18,15 @@ describe("M27 governed operations UI guardrails", () => {
     expect(operations).toContain("requestId !== requestSequence.current");
   });
 
+  it("binds preview/download and audit records to the currently displayed filter identity", () => {
+    expect(operations).toContain("exportFilterKey");
+    expect(operations).toContain("resultKey === exportFilterKey");
+    expect(operations).toContain("requestFilterKey !== exportFilterKeyRef.current");
+    expect(operations).toContain("auditFilterKey");
+    expect(operations).toContain("recordsKey !== requestFilterKey");
+    expect(operations).toContain("requestFilterKey !== auditFilterKeyRef.current");
+  });
+
   it("downloads only a validated authoritative envelope", () => {
     expect(operations).toContain("validateOperationsExportEnvelope");
     expect(operations).toContain("downloadEnvelope(result)");

@@ -226,6 +226,7 @@ export function validateOperationsExportEnvelope(value: unknown): value is Opera
   ) return false;
   if (!Number.isInteger(candidate.rowCount) || (candidate.rowCount ?? -1) < 0 || (candidate.rowCount ?? 501) > 500) return false;
   if (typeof candidate.truncated !== "boolean" || typeof candidate.containsPii !== "boolean") return false;
+  if (candidate.containsPii !== operationsExportScopeContainsPii[candidate.scope]) return false;
   if (typeof candidate.generatedAt !== "string" || Number.isNaN(Date.parse(candidate.generatedAt))) return false;
   if (!Array.isArray(candidate.columns) || !Array.isArray(candidate.rows)) return false;
   if (!candidate.filters || typeof candidate.filters !== "object" || Array.isArray(candidate.filters)) return false;
@@ -235,5 +236,12 @@ export function validateOperationsExportEnvelope(value: unknown): value is Opera
     || candidate.columns.some((column, index) => column !== allowedColumns[index])
   ) return false;
   if (candidate.rows.length !== candidate.rowCount) return false;
-  return candidate.rows.every((row) => row && typeof row === "object" && !Array.isArray(row));
+  const allowedColumnSet = new Set(allowedColumns);
+  return candidate.rows.every((row) => {
+    if (!row || typeof row !== "object" || Array.isArray(row)) return false;
+    const keys = Object.keys(row);
+    return keys.length === allowedColumns.length
+      && keys.every((key) => allowedColumnSet.has(key))
+      && allowedColumns.every((column) => Object.prototype.hasOwnProperty.call(row, column));
+  });
 }
