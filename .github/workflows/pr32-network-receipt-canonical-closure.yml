@@ -1,0 +1,249 @@
+name: PR32 network receipt canonical closure
+
+on:
+  push:
+    branches:
+      - codex/github-mention-m24/m26-pre-device-integration-readiness-c
+    paths:
+      - .github/workflows/pr32-network-receipt-canonical-closure.yml
+
+permissions:
+  contents: write
+
+jobs:
+  close-review-finding:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/github-mention-m24/m26-pre-device-integration-readiness-c
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Verify exact base
+        shell: bash
+        run: test "$(git rev-parse HEAD^)" = "37d40080dd41033f804aad9c9581a97462fc8794"
+
+      - name: Apply canonical network receipt closure
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          readiness_source = Path('supabase/migrations/20260814020000_m26_observation_chronology_replay_closure.sql').read_text(encoding='utf-8')
+          readiness_marker = 'create or replace function public.admin_get_physical_pilot_readiness_v1(p_device_id uuid)'
+          readiness_start = readiness_source.index(readiness_marker)
+          readiness_end = readiness_source.index('\nend $$;', readiness_start) + len('\nend $$;')
+          readiness_sql = readiness_source[readiness_start:readiness_end]
+          old_order = '  order by x.validated_at desc limit 1;'
+          new_order = '  order by x.validated_at desc,x.id desc limit 1;'
+          assert readiness_sql.count(old_order) == 1, 'expected one network-receipt readiness ordering'
+          readiness_sql = readiness_sql.replace(old_order, new_order, 1)
+
+          evidence_source = Path('supabase/migrations/20260814080000_m26_evidence_repository_lock_closure.sql').read_text(encoding='utf-8')
+          evidence_marker = 'create or replace function public.service_record_physical_pilot_evidence_v1('
+          evidence_start = evidence_source.index(evidence_marker)
+          evidence_end = evidence_source.index('\nend $$;', evidence_start) + len('\nend $$;')
+          evidence_sql = evidence_source[evidence_start:evidence_end]
+          old_boundary = '  or n.validated_at>p_observation_started_at\n'
+          canonical_boundary = """  or n.id is distinct from public.m26_current_network_validation_receipt_v1(
+    c.id,c.version,p_device_id,l.id,i.id,k.id,c.network_configuration_class,
+    c.selected_certification_run_id,r.generation,r.repository_head_sha,r.workflow_run_id
+  )
+  or n.validated_at>p_observation_started_at
+"""
+          assert evidence_sql.count(old_boundary) == 1, 'expected one evidence network chronology boundary'
+          evidence_sql = evidence_sql.replace(old_boundary, canonical_boundary, 1)
+
+          helper_lines = [
+            '-- M26 canonical network-validation receipt selector.',
+            '-- Network validation chronology is ordered by validated_at; UUID is the stable tie-breaker.',
+            '-- Callers hold the existing device -> repository authority locks while using this selector.',
+            'create or replace function public.m26_current_network_validation_receipt_v1(',
+            '  p_commissioning_id uuid,',
+            '  p_commissioning_version bigint,',
+            '  p_device_id uuid,',
+            '  p_vehicle_link_id uuid,',
+            '  p_installation_event_id uuid,',
+            '  p_credential_id uuid,',
+            '  p_network_configuration_class text,',
+            '  p_certification_run_id uuid,',
+            '  p_repository_authority_generation bigint,',
+            '  p_repository_head_sha text,',
+            '  p_workflow_run_id text',
+            ') returns uuid',
+            'language sql',
+            'stable',
+            'security invoker',
+            'set search_path=pg_catalog,public',
+            'as $$',
+            '  select x.id',
+            '  from public.physical_pilot_network_validation_receipts x',
+            '  where x.commissioning_id=p_commissioning_id',
+            '    and x.commissioning_version=p_commissioning_version',
+            '    and x.gps_device_id=p_device_id',
+            '    and x.vehicle_link_id=p_vehicle_link_id',
+            '    and x.installation_event_id=p_installation_event_id',
+            '    and x.credential_id=p_credential_id',
+            '    and x.network_configuration_class=p_network_configuration_class',
+            '    and x.certification_run_id=p_certification_run_id',
+            '    and x.repository_authority_generation=p_repository_authority_generation',
+            '    and x.repository_head_sha=p_repository_head_sha',
+            '    and x.workflow_run_id=p_workflow_run_id',
+            '  order by x.validated_at desc,x.id desc',
+            '  limit 1',
+            '$$;',
+            '',
+          ]
+          migration = '\n'.join(helper_lines) + readiness_sql + '\n\n' + evidence_sql + '\n'
+          Path('supabase/migrations/20260814100000_m26_network_receipt_canonical_selection.sql').write_text(migration, encoding='utf-8')
+
+          test_path = Path('supabase/tests/m26_commissioning_authority.test.sql')
+          test_text = test_path.read_text(encoding='utf-8')
+          anchor = """reset role;
+select validated_at as fixture_network_validated_at
+from public.physical_pilot_network_validation_receipts
+where id='26000000-0000-0000-0000-000000000009' \\gset
+
+set local role authenticated;
+"""
+          assert test_text.count(anchor) == 1, 'expected canonical fixture network timestamp anchor once'
+          tie_block_lines = [
+            'reset role;',
+            'select validated_at as fixture_network_validated_at',
+            'from public.physical_pilot_network_validation_receipts',
+            "where id='26000000-0000-0000-0000-000000000009' \\gset",
+            '',
+            'set local role service_role;',
+            "select set_config('request.jwt.claim.role','service_role',true);",
+            'select lives_ok(format(',
+            " 'select public.service_record_physical_pilot_network_validation_v1(%L,%L,2,%L,%L,%L,%L,%L,%L,%L::timestamptz,%L,%L)',",
+            " '26000000-0000-0000-0000-000000000000',:'fixture_commissioning_id',:'fixture_device_id',",
+            " :'fixture_link_id',:'fixture_installation_id','26000000-0000-0000-0000-000000000006',",
+            " 'fixture_network',repeat('e',64),:'fixture_network_validated_at',repeat('b',40),'fixture_workflow'",
+            "),'a second current network receipt with the same validated_at is retained immutably');",
+            '',
+            'reset role;',
+            'select is(',
+            ' public.m26_current_network_validation_receipt_v1(',
+            "   :'fixture_commissioning_id',2,:'fixture_device_id',:'fixture_link_id',:'fixture_installation_id',",
+            "   '26000000-0000-0000-0000-000000000006','fixture_network',",
+            "   (select selected_certification_run_id from public.physical_pilot_commissioning where id=:'fixture_commissioning_id'),",
+            "   (select generation from public.physical_pilot_repository_authority order by generation desc limit 1),",
+            "   repeat('b',40),'fixture_workflow'",
+            ' ),',
+            " '26000000-0000-0000-0000-000000000009'::uuid,",
+            " 'validated_at ties resolve deterministically by descending receipt UUID'",
+            ');',
+            '',
+            'set local role service_role;',
+            "select set_config('request.jwt.claim.role','service_role',true);",
+            'select throws_ok(format(',
+            " 'select public.service_record_physical_pilot_evidence_v1(%L,%L,2,%L,%L,%L,%L,%L,%L,%L,%L,%L,%L,%L,%L::timestamptz,clock_timestamp(),0,false,true,%L,%L,false,false,%L,%L,%L)',",
+            " '26000000-0000-0000-0000-000000000019',:'fixture_commissioning_id',:'fixture_candidate_id',",
+            " :'fixture_manifest_id',repeat('b',40),'fixture_workflow',:'fixture_device_id',:'fixture_device_digest',",
+            " :'fixture_installation_id',:'fixture_link_id','26000000-0000-0000-0000-000000000006',",
+            " '26000000-0000-0000-0000-000000000000','physical',:'fixture_network_validated_at',",
+            " 'failed','failed','blocked','{noncanonical_network_receipt}',repeat('d',64)",
+            "),'42501','Physical evidence is not bound to current authority',",
+            " 'new evidence cannot bind to the non-canonical member of a tied network receipt set');",
+            '',
+            'reset role;',
+            'set local role authenticated;',
+          ]
+          tie_block = '\n'.join(tie_block_lines) + '\n'
+          test_text = test_text.replace(anchor, tie_block, 1)
+
+          structural_anchor = """select ok(
+  pg_get_functiondef('public.admin_get_physical_pilot_readiness_v1(uuid)'::regprocedure)
+    ilike '%and e.classification=''physical''%'
+"""
+          assert test_text.count(structural_anchor) == 1, 'expected readiness structural assertion anchor once'
+          structural_lines = [
+            'select ok(',
+            "  pg_get_functiondef('public.m26_current_network_validation_receipt_v1(uuid,bigint,uuid,uuid,uuid,uuid,text,uuid,bigint,text,text)'::regprocedure)",
+            "    ilike '%order by x.validated_at desc, x.id desc%'",
+            "  and pg_get_functiondef('public.admin_get_physical_pilot_readiness_v1(uuid)'::regprocedure)",
+            "    ilike '%order by x.validated_at desc, x.id desc limit 1%'",
+            "  and pg_get_functiondef('public.service_record_physical_pilot_evidence_v1(uuid,uuid,bigint,uuid,uuid,text,text,uuid,text,uuid,uuid,uuid,uuid,text,timestamptz,timestamptz,bigint,boolean,boolean,text,text,boolean,boolean,text,text[],text)'::regprocedure)",
+            "    ilike '%n.id is distinct from public.m26_current_network_validation_receipt_v1%'",
+            "  'readiness and evidence share deterministic current network receipt authority'",
+            ');',
+            '',
+          ]
+          test_text = test_text.replace(structural_anchor, '\n'.join(structural_lines) + structural_anchor, 1)
+          test_path.write_text(test_text, encoding='utf-8')
+
+          vitest_lines = [
+            'import { describe, expect, it } from "vitest";',
+            'import { readFileSync } from "node:fs";',
+            '',
+            'const migration = readFileSync(',
+            '  "supabase/migrations/20260814100000_m26_network_receipt_canonical_selection.sql",',
+            '  "utf8",',
+            ');',
+            'const acceptance = readFileSync(',
+            '  "supabase/tests/m26_commissioning_authority.test.sql",',
+            '  "utf8",',
+            ');',
+            '',
+            'describe("M26 canonical network receipt selection", () => {',
+            '  it("uses validated chronology plus a stable UUID tie-breaker", () => {',
+            '    expect(migration).toContain("m26_current_network_validation_receipt_v1");',
+            '    expect(migration).toContain("order by x.validated_at desc,x.id desc");',
+            '  });',
+            '',
+            '  it("requires evidence to bind to the same canonical current receipt", () => {',
+            '    expect(migration).toContain("n.id is distinct from public.m26_current_network_validation_receipt_v1(");',
+            '    expect(acceptance).toContain("a second current network receipt with the same validated_at is retained immutably");',
+            '    expect(acceptance).toContain("new evidence cannot bind to the non-canonical member of a tied network receipt set");',
+            '  });',
+            '});',
+          ]
+          Path('tests/m26-network-receipt-canonical-selection.test.ts').write_text('\n'.join(vitest_lines) + '\n', encoding='utf-8')
+          PY
+
+      - name: Enable Corepack
+        run: corepack enable
+      - name: Install dependencies
+        run: corepack pnpm install --frozen-lockfile
+      - name: Focused tests
+        run: corepack pnpm test -- --run tests/m26-network-receipt-canonical-selection.test.ts tests/m26-commissioning-certification-lock-closure.test.ts tests/m26-evidence-repository-lock-closure.test.ts tests/m26-network-lock-order-closure.test.ts tests/m26-cert-network-time-closure.test.ts tests/m26-controller-concurrency-ui.test.ts tests/m26-pre-device-readiness.test.ts
+      - name: Typecheck
+        run: corepack pnpm typecheck
+      - name: Lint
+        run: corepack pnpm lint
+      - name: Full Vitest
+        run: corepack pnpm test
+      - name: Migration guardrails
+        run: corepack pnpm migrations:check
+      - name: Security guardrails
+        run: corepack pnpm security:scan
+      - name: Production build
+        run: corepack pnpm build
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable Supabase
+        run: supabase start -x studio,imgproxy,inbucket,edge-runtime,logflare,vector,supavisor
+      - name: Full pgTAP/RLS
+        run: supabase test db
+      - name: Diff check
+        run: git diff --check
+
+      - name: Publish closure and remove temporary workflow
+        shell: bash
+        run: |
+          git config user.name "Kootha Controller"
+          git config user.email "actions@users.noreply.github.com"
+          git rm .github/workflows/pr32-network-receipt-canonical-closure.yml
+          git add supabase/migrations/20260814100000_m26_network_receipt_canonical_selection.sql \
+            supabase/tests/m26_commissioning_authority.test.sql \
+            tests/m26-network-receipt-canonical-selection.test.ts
+          git diff --cached --check
+          git commit -m "Canonicalize M26 network receipt selection"
+          git push origin HEAD:codex/github-mention-m24/m26-pre-device-integration-readiness-c
