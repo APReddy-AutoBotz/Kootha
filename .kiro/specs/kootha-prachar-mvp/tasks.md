@@ -124,7 +124,45 @@ Status values:
 
 ## Milestone M20B - Canonical Contracts and Deterministic Simulator
 
-- [~] In progress in a draft pull request; not completed until merge and post-merge verification.
-  - Host-neutral contracts, pure helpers, and deterministic synthetic scenarios only.
-  - No production telemetry endpoint, persistence, device connection, vendor integration, maps, live tracking, alert, comparison, or AI runtime.
-  - M18 remains incomplete and in progress. M21 through M26 remain Not Started.
+- [x] Completed and merged. Deterministic synthetic contracts remain non-physical evidence.
+
+## Milestone M21 - Secure Physical Telemetry Ingestion
+
+- [x] Completed and merged.
+
+## Milestone M22 - Tracking Health and Deterministic Alerts
+
+- [x] Completed and merged.
+
+## Milestone M23 - Phone-versus-Physical Comparison
+
+- [x] Completed and merged.
+
+## Milestone M24 - Selected Physical Device Integration
+
+- [?] AP/hardware decision gated.
+  - Real vendor/device, protocol, SIM/network, installation, compliance and cost selection remain deliberately unchosen.
+  - M24F vendor-neutral certification software is completed.
+
+## Milestone M24F - Vendor-Neutral Adapter Certification
+
+- [x] Completed and merged.
+
+## Milestone M25 - Statistical Intelligence
+
+- [x] Completed and merged.
+
+## Milestone M26 - Physical Pilot Commissioning and Evidence
+
+- [x] Software commissioning/control/evidence/readiness/field-handoff layer completed and merged in PR #32.
+- [~] Real physical execution remains incomplete pending selected hardware/network and real field evidence.
+- Synthetic/CI evidence can never satisfy physical readiness.
+
+## Milestone M27 - Governed Operations Export & Audit Workbench
+
+- [x] Completed.
+  - Admin-only static allowlisted exports for enquiries, ad works, drivers, vehicles, masked devices, and safe activity history.
+  - Immutable export receipt metadata; exported row payloads are never persisted.
+  - UTF-8 CSV/JSON download with spreadsheet-formula neutralization.
+  - Cursor-paginated, filterable safe Activity workbench through sanctioned RPCs.
+  - Hosted Kootha activation remains separately blocked by the active-free-project quota; do not pause unrelated projects.

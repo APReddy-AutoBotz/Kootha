@@ -83,6 +83,7 @@ import {
 } from "@kootha/shared";
 import { AlertsView, DeviceM22HealthPanel, TrackingHealthView } from "./admin-m22";
 import { IntelligenceAdapterReadinessView } from "./admin-intelligence";
+import { OperationsAuditWorkbench, OperationsExportView } from "./admin-operations";
 import type {
   AdWorkAssignmentStatus,
   AdWorkExecutionDayStatus,
@@ -289,7 +290,7 @@ type AreaRecord = {
   active: boolean;
 };
 
-type AdminView = "enquiries" | "adWorks" | "driverApplications" | "drivers" | "vehicles" | "devices" | "trackingHealth" | "alerts" | "intelligence" | "audit" | "dashboard";
+type AdminView = "enquiries" | "adWorks" | "driverApplications" | "drivers" | "vehicles" | "devices" | "trackingHealth" | "alerts" | "intelligence" | "operations" | "audit" | "dashboard";
 type AdWorkWorkflowStep = "plan" | "assign" | "release" | "proof" | "close";
 
 type AdminFilters = {
@@ -6336,39 +6337,8 @@ function DeviceRegistryView({ config, session }: { config: SupabaseConfig; sessi
 
 
 function AuditView({ config, session }: { config: SupabaseConfig; session: AuthSession }) {
-  const [records, setRecords] = useState<AuditLogRecord[]>([]);
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(true);
-
-  async function loadAudit() {
-    setLoading(true);
-    setError("");
-    try {
-      const response = await adminFetch(
-        config,
-        session,
-        config.url + "/rest/v1/audit_logs?select=id,actor_type,action,entity_type,entity_id,created_at,safe_details&order=created_at.desc&limit=200",
-        { headers: createHeaders(config, session.accessToken) }
-      );
-      if (!response.ok) throw new Error("Could not load activity history.");
-      setRecords(await response.json() as AuditLogRecord[]);
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Could not load activity history.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => { void loadAudit(); }, [config, session.accessToken]);
-
-  return <section className="admin-audit-view" aria-labelledby="audit-title">
-    <div className="panel-heading"><div><h2 id="audit-title">Activity history</h2><p>Safe operational changes only. Private values are not displayed.</p></div><button className="secondary-button" type="button" onClick={() => void loadAudit()} disabled={loading}><RefreshCw size={18} /> Refresh</button></div>
-    {error && <p className="form-alert" role="alert">{error}</p>}
-    {!loading && records.length === 0 && <p className="empty-state">No recorded activity yet.</p>}
-    <div className="audit-list">{records.map((record) => <article key={record.id}><div><strong>{record.action.replaceAll("_", " ")}</strong><span>{record.entity_type}</span></div><time dateTime={record.created_at}>{new Date(record.created_at).toLocaleString()}</time></article>)}</div>
-  </section>;
+  return <OperationsAuditWorkbench connection={{ url: config.url, anonKey: config.anonKey, accessToken: session.accessToken }} />;
 }
-
 function AdminShell({
   productName,
   children,
@@ -6395,6 +6365,7 @@ function AdminShell({
     { id: "trackingHealth", label: "Tracking Health", icon: Cpu },
     { id: "alerts", label: "Alerts", icon: FileClock },
     { id: "intelligence", label: "Intelligence & Adapters", icon: BrainCircuit },
+    { id: "operations", label: "Operations & Exports", icon: ClipboardCheck },
     { id: "audit", label: "Activity", icon: FileClock }
   ];
 
@@ -6909,6 +6880,7 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
               {activeView === "trackingHealth" && "Tracking Health"}
               {activeView === "alerts" && "Alerts"}
               {activeView === "intelligence" && "Intelligence and Adapter Readiness"}
+              {activeView === "operations" && "Operations and governed exports"}
               {activeView === "audit" && "Activity history"}
             </h1>
             <p>
@@ -6922,6 +6894,7 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
               {activeView === "trackingHealth" && "Review phone and physical-device health separately without maps or M23 comparison."}
               {activeView === "alerts" && "Review deterministic operational alerts and lifecycle history."}
               {activeView === "intelligence" && "Review vendor-neutral adapter readiness, data quality, explainable statistical signals, and model-governance gates."}
+              {activeView === "operations" && "Preview and download allowlisted operational data with immutable export receipts and privacy-safe boundaries."}
               {activeView === "audit" && "Review safe operational changes without exposing private values."}
             </p>
           </div>
@@ -6954,6 +6927,7 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
         {activeView === "trackingHealth" && <TrackingHealthView connection={{ url: config.url, anonKey: config.anonKey, accessToken: session.accessToken }} />}
         {activeView === "alerts" && <AlertsView connection={{ url: config.url, anonKey: config.anonKey, accessToken: session.accessToken }} />}
         {activeView === "intelligence" && <IntelligenceAdapterReadinessView connection={{ url: config.url, anonKey: config.anonKey, accessToken: session.accessToken }} />}
+        {activeView === "operations" && <OperationsExportView connection={{ url: config.url, anonKey: config.anonKey, accessToken: session.accessToken }} />}
         {activeView === "audit" && <AuditView config={config} session={session} />}
 
         {activeView === "enquiries" && (
