@@ -1,0 +1,159 @@
+name: PR32 commissioning certification lock closure
+
+on:
+  push:
+    branches:
+      - codex/github-mention-m24/m26-pre-device-integration-readiness-c
+    paths:
+      - .github/workflows/pr32-commissioning-certification-lock-closure.yml
+
+permissions:
+  contents: write
+
+jobs:
+  close-review-finding:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/github-mention-m24/m26-pre-device-integration-readiness-c
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Verify exact base
+        shell: bash
+        run: test "$(git rev-parse HEAD^)" = "ee50fa9038e332197c95050d512b80c25560d9df"
+
+      - name: Apply commissioning certification serialization closure
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source_path = Path('supabase/migrations/20260814020000_m26_observation_chronology_replay_closure.sql')
+          source = source_path.read_text(encoding='utf-8')
+          marker = 'create or replace function public.admin_transition_physical_pilot_commissioning_v1('
+          start = source.index(marker)
+          end_marker = '\nend $$;'
+          end = source.index(end_marker, start) + len(end_marker)
+          function_sql = source[start:end]
+
+          old = "  perform public.m26_lock_device_authority_v1(p_device_id);\n\n  select * into v_candidate"
+          new = "  perform public.m26_lock_device_authority_v1(p_device_id);\n  perform pg_advisory_xact_lock(hashtext('m26_repository_authority'));\n\n  select * into v_candidate"
+          assert function_sql.count(old) == 1, 'expected exact device-lock/candidate-read boundary once'
+          function_sql = function_sql.replace(old, new, 1)
+
+          migration = """-- M26 commissioning/certification serialization closure.\n-- Exact transition replay remains receipt-first and independent of mutable authority.\n-- Genuinely new commissioning mutations acquire the established device -> repository\n-- lock order before reading candidate/manifest/current certification authority.\n\n""" + function_sql + "\n"
+          Path('supabase/migrations/20260814090000_m26_commissioning_certification_lock_closure.sql').write_text(migration, encoding='utf-8')
+
+          pgtap = r"""begin;
+select plan(4);
+
+select ok(
+  position('where transition_key=p_transition_key' in pg_get_functiondef('public.admin_transition_physical_pilot_commissioning_v1(uuid,uuid,uuid,bigint,uuid,text,text,text,integer)'::regprocedure))
+    < position('m26_lock_device_authority_v1(p_device_id)' in pg_get_functiondef('public.admin_transition_physical_pilot_commissioning_v1(uuid,uuid,uuid,bigint,uuid,text,text,text,integer)'::regprocedure)),
+  'exact transition replay is evaluated before mutable device authority locking'
+);
+
+select ok(
+  position('m26_lock_device_authority_v1(p_device_id)' in pg_get_functiondef('public.admin_transition_physical_pilot_commissioning_v1(uuid,uuid,uuid,bigint,uuid,text,text,text,integer)'::regprocedure))
+    < position('pg_advisory_xact_lock(hashtext(''m26_repository_authority''))' in pg_get_functiondef('public.admin_transition_physical_pilot_commissioning_v1(uuid,uuid,uuid,bigint,uuid,text,text,text,integer)'::regprocedure)),
+  'commissioning mutations take device authority before repository/certification authority'
+);
+
+select ok(
+  position('pg_advisory_xact_lock(hashtext(''m26_repository_authority''))' in pg_get_functiondef('public.admin_transition_physical_pilot_commissioning_v1(uuid,uuid,uuid,bigint,uuid,text,text,text,integer)'::regprocedure))
+    < position('from public.m24f_adapter_candidates where id=p_candidate_id' in pg_get_functiondef('public.admin_transition_physical_pilot_commissioning_v1(uuid,uuid,uuid,bigint,uuid,text,text,text,integer)'::regprocedure))
+  and position('pg_advisory_xact_lock(hashtext(''m26_repository_authority''))' in pg_get_functiondef('public.admin_transition_physical_pilot_commissioning_v1(uuid,uuid,uuid,bigint,uuid,text,text,text,integer)'::regprocedure))
+    < position('m26_current_certification_run_v1(p_candidate_id,p_manifest_id)' in pg_get_functiondef('public.admin_transition_physical_pilot_commissioning_v1(uuid,uuid,uuid,bigint,uuid,text,text,text,integer)'::regprocedure)),
+  'repository lock precedes candidate and current certification authority reads'
+);
+
+select ok(
+  position('m26_current_certification_run_v1(p_candidate_id,p_manifest_id)' in pg_get_functiondef('public.admin_transition_physical_pilot_commissioning_v1(uuid,uuid,uuid,bigint,uuid,text,text,text,integer)'::regprocedure))
+    < position('where gps_device_id=p_device_id' in pg_get_functiondef('public.admin_transition_physical_pilot_commissioning_v1(uuid,uuid,uuid,bigint,uuid,text,text,text,integer)'::regprocedure)),
+  'certification authority is frozen before the commissioning row is locked and mutated'
+);
+
+select * from finish();
+rollback;
+"""
+          Path('supabase/tests/m26_commissioning_certification_lock_closure.test.sql').write_text(pgtap, encoding='utf-8')
+
+          vitest = r'''import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+
+const migration = readFileSync(
+  "supabase/migrations/20260814090000_m26_commissioning_certification_lock_closure.sql",
+  "utf8",
+);
+
+describe("M26 commissioning certification lock closure", () => {
+  it("preserves receipt-first replay before mutable authority locks", () => {
+    const replay = migration.indexOf("where transition_key=p_transition_key");
+    const device = migration.indexOf("m26_lock_device_authority_v1(p_device_id)");
+    expect(replay).toBeGreaterThan(-1);
+    expect(device).toBeGreaterThan(replay);
+  });
+
+  it("uses device then repository authority before certification and commissioning reads", () => {
+    const device = migration.indexOf("m26_lock_device_authority_v1(p_device_id)");
+    const repository = migration.indexOf("pg_advisory_xact_lock(hashtext('m26_repository_authority'))", device);
+    const candidate = migration.indexOf("select * into v_candidate", repository);
+    const certification = migration.indexOf("m26_current_certification_run_v1(p_candidate_id,p_manifest_id)", repository);
+    const commissioning = migration.indexOf("where gps_device_id=p_device_id", certification);
+    expect(device).toBeGreaterThan(-1);
+    expect(repository).toBeGreaterThan(device);
+    expect(candidate).toBeGreaterThan(repository);
+    expect(certification).toBeGreaterThan(repository);
+    expect(commissioning).toBeGreaterThan(certification);
+  });
+});
+'''
+          Path('tests/m26-commissioning-certification-lock-closure.test.ts').write_text(vitest, encoding='utf-8')
+          PY
+
+      - name: Enable Corepack
+        run: corepack enable
+      - name: Install dependencies
+        run: corepack pnpm install --frozen-lockfile
+      - name: Focused tests
+        run: corepack pnpm test -- --run tests/m26-commissioning-certification-lock-closure.test.ts tests/m26-evidence-repository-lock-closure.test.ts tests/m26-network-lock-order-closure.test.ts tests/m26-cert-network-time-closure.test.ts tests/m26-controller-concurrency-ui.test.ts tests/m26-pre-device-readiness.test.ts
+      - name: Typecheck
+        run: corepack pnpm typecheck
+      - name: Lint
+        run: corepack pnpm lint
+      - name: Full Vitest
+        run: corepack pnpm test
+      - name: Migration guardrails
+        run: corepack pnpm migrations:check
+      - name: Security guardrails
+        run: corepack pnpm security:scan
+      - name: Production build
+        run: corepack pnpm build
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable Supabase
+        run: supabase start -x studio,imgproxy,inbucket,edge-runtime,logflare,vector,supavisor
+      - name: Full pgTAP/RLS
+        run: supabase test db
+      - name: Diff check
+        run: git diff --check
+
+      - name: Publish closure and remove temporary workflow
+        shell: bash
+        run: |
+          git config user.name "Kootha Controller"
+          git config user.email "actions@users.noreply.github.com"
+          git rm .github/workflows/pr32-commissioning-certification-lock-closure.yml
+          git add supabase/migrations/20260814090000_m26_commissioning_certification_lock_closure.sql \
+            supabase/tests/m26_commissioning_certification_lock_closure.test.sql \
+            tests/m26-commissioning-certification-lock-closure.test.ts
+          git diff --cached --check
+          git commit -m "Serialize M26 commissioning with certification authority"
+          git push origin HEAD:codex/github-mention-m24/m26-pre-device-integration-readiness-c
