@@ -169,7 +169,7 @@ Status values:
 
 ## Milestone M28 - Commercial & Schedule Operations Control
 
-- [~] In progress.
+- [x] Completed.
   - Governed admin-only payment status/amount tracking with immutable commercial history and optimistic version checks.
   - Evidence-preserving whole-work and individual-day reschedule authority with stale release/readiness invalidation.
   - Governed cancellation with required reason, executable-access revocation, active-tracking stop and immutable lifecycle history.
