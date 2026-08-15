@@ -34,6 +34,29 @@ select ok(
   'physical pass is fail-closed on rejected/conflicting truth and empty M21 evidence'
 );
 select ok(
+  position(
+    'orderbyx.validated_atdesc,x.iddesc' in
+    lower(regexp_replace(
+      pg_get_functiondef('public.m26_current_network_validation_receipt_v1(uuid,bigint,uuid,uuid,uuid,uuid,text,uuid,bigint,text,text)'::regprocedure),
+      E'\\s+','','g'
+    ))
+  ) > 0
+  and position(
+    'orderbyx.validated_atdesc,x.iddesclimit1' in
+    lower(regexp_replace(
+      pg_get_functiondef('public.admin_get_physical_pilot_readiness_v1(uuid)'::regprocedure),
+      E'\\s+','','g'
+    ))
+  ) > 0
+  and position(
+    'n.idisdistinctfrompublic.m26_current_network_validation_receipt_v1' in
+    lower(regexp_replace(
+      pg_get_functiondef('public.service_record_physical_pilot_evidence_v1(uuid,uuid,bigint,uuid,uuid,text,text,uuid,text,uuid,uuid,uuid,uuid,text,timestamptz,timestamptz,bigint,boolean,boolean,text,text,boolean,boolean,text,text[],text)'::regprocedure),
+      E'\\s+','','g'
+    ))
+  ) > 0,
+  'readiness and evidence share deterministic current network receipt authority'
+);select ok(
   pg_get_functiondef('public.admin_get_physical_pilot_readiness_v1(uuid)'::regprocedure)
     ilike '%and e.classification=''physical''%'
   and pg_get_functiondef('public.admin_get_physical_pilot_readiness_v1(uuid)'::regprocedure)
@@ -290,6 +313,41 @@ select validated_at as fixture_network_validated_at
 from public.physical_pilot_network_validation_receipts
 where id='26000000-0000-0000-0000-000000000009' \gset
 
+set local role service_role;
+select set_config('request.jwt.claim.role','service_role',true);
+select lives_ok(format(
+ 'select public.service_record_physical_pilot_network_validation_v1(%L,%L,2,%L,%L,%L,%L,%L,%L,%L::timestamptz,%L,%L)',
+ '26000000-0000-0000-0000-000000000000',:'fixture_commissioning_id',:'fixture_device_id',
+ :'fixture_link_id',:'fixture_installation_id','26000000-0000-0000-0000-000000000006',
+ 'fixture_network',repeat('e',64),:'fixture_network_validated_at',repeat('b',40),'fixture_workflow'
+),'a second current network receipt with the same validated_at is retained immutably');
+
+reset role;
+select is(
+ public.m26_current_network_validation_receipt_v1(
+   :'fixture_commissioning_id',2,:'fixture_device_id',:'fixture_link_id',:'fixture_installation_id',
+   '26000000-0000-0000-0000-000000000006','fixture_network',
+   (select selected_certification_run_id from public.physical_pilot_commissioning where id=:'fixture_commissioning_id'),
+   (select generation from public.physical_pilot_repository_authority order by generation desc limit 1),
+   repeat('b',40),'fixture_workflow'
+ ),
+ '26000000-0000-0000-0000-000000000009'::uuid,
+ 'validated_at ties resolve deterministically by descending receipt UUID'
+);
+
+set local role service_role;
+select set_config('request.jwt.claim.role','service_role',true);
+select throws_ok(format(
+ 'select public.service_record_physical_pilot_evidence_v1(%L,%L,2,%L,%L,%L,%L,%L,%L,%L,%L,%L,%L,%L,%L::timestamptz,clock_timestamp(),0,false,true,%L,%L,false,false,%L,%L,%L)',
+ '26000000-0000-0000-0000-000000000019',:'fixture_commissioning_id',:'fixture_candidate_id',
+ :'fixture_manifest_id',repeat('b',40),'fixture_workflow',:'fixture_device_id',:'fixture_device_digest',
+ :'fixture_installation_id',:'fixture_link_id','26000000-0000-0000-0000-000000000006',
+ '26000000-0000-0000-0000-000000000000','physical',:'fixture_network_validated_at',
+ 'failed','failed','blocked','{noncanonical_network_receipt}',repeat('d',64)
+),'42501','Physical evidence is not bound to current authority',
+ 'new evidence cannot bind to the non-canonical member of a tied network receipt set');
+
+reset role;
 set local role authenticated;
 select set_config('request.jwt.claim.sub','26000000-0000-0000-0000-000000000001',true);
 select set_config('request.jwt.claim.role','authenticated',true);
