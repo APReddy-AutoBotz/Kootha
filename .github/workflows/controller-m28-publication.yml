@@ -1,0 +1,71 @@
+name: Controller M28 Publication
+
+on:
+  push:
+    branches:
+      - milestone/m28-commercial-schedule-operations
+    paths:
+      - .github/workflows/controller-m28-publication.yml
+
+permissions:
+  contents: write
+  issues: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Verify exact publication base
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "1cdceec057827cc755e9bdc5841f965c9cea0d91"
+          test "$(git diff --name-only HEAD^..HEAD)" = ".github/workflows/controller-m28-publication.yml"
+      - name: Recover approved three-file correction
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api repos/${GITHUB_REPOSITORY}/issues/comments/5307379588 --jq .body > /tmp/comment.md
+          python - <<'PY'
+          import pathlib,re
+          body=pathlib.Path('/tmp/comment.md').read_text()
+          blocks=re.findall(r'```diff\n(.*?)\n```', body, flags=re.S)
+          if len(blocks)!=1:
+              raise SystemExit(f'expected exactly one diff block, got {len(blocks)}')
+          patch=blocks[0]+'\n'
+          pathlib.Path('/tmp/m28.patch').write_text(patch)
+          paths=[]
+          for m in re.finditer(r'^diff --git a/(.+?) b/(.+?)$', patch, flags=re.M):
+              if m.group(1)!=m.group(2): raise SystemExit('rename not allowed')
+              paths.append(m.group(1))
+          expected=[
+            'supabase/migrations/20260815150729_m28_commercial_schedule_operations.sql',
+            'supabase/tests/m28_commercial_schedule.test.sql',
+            'tests/m28-commercial-schedule.test.ts',
+          ]
+          if paths!=expected:
+              raise SystemExit(f'unexpected patch paths: {paths}')
+          PY
+          git apply --check /tmp/m28.patch
+          git apply /tmp/m28.patch
+          test "$(git hash-object supabase/migrations/20260815150729_m28_commercial_schedule_operations.sql)" = "84717b68f947ad4716179b6122b1b9ac14f99754"
+          test "$(git hash-object supabase/tests/m28_commercial_schedule.test.sql)" = "826b57cc8517c686dc9694cde2e96f68ee69ab8d"
+          test "$(git hash-object tests/m28-commercial-schedule.test.ts)" = "cf31c8cc2255a3e7d554c8d4952ea761cae51745"
+      - name: Publish exact correction and remove transport scaffold
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/controller-m28-publication.yml
+          git add supabase/migrations/20260815150729_m28_commercial_schedule_operations.sql supabase/tests/m28_commercial_schedule.test.sql tests/m28-commercial-schedule.test.ts
+          mapfile -t paths < <(git diff --cached --name-only | sort)
+          mapfile -t expected < <(printf '%s\n' .github/workflows/controller-m28-publication.yml supabase/migrations/20260815150729_m28_commercial_schedule_operations.sql supabase/tests/m28_commercial_schedule.test.sql tests/m28-commercial-schedule.test.ts | sort)
+          test "${paths[*]}" = "${expected[*]}"
+          git config user.name 'portfolio-controller[bot]'
+          git config user.email 'portfolio-controller[bot]@users.noreply.github.com'
+          git commit -m 'fix: preserve retained schedule day history'
+          git push origin HEAD:milestone/m28-commercial-schedule-operations
