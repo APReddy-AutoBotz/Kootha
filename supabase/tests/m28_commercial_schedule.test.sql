@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(34);
+select plan(41);
 
 insert into public.user_profiles (auth_user_id, display_name, role)
 values
@@ -17,7 +17,11 @@ insert into public.ad_works (
   ('28000000-0000-4000-8000-000000000102', 'M28 Whole Reschedule', current_date + 10, current_date + 11, 'scheduled', 'not_paid', 2000, 0,
    'planned', 2, 'not_assigned', 'not_released', 'not_started', 'not_ready'),
   ('28000000-0000-4000-8000-000000000103', 'M28 Closed', current_date - 2, current_date - 1, 'completed', 'fully_paid', 500, 500,
-   'planned', 1, 'not_assigned', 'not_released', 'completed', 'closed');
+   'planned', 1, 'not_assigned', 'not_released', 'completed', 'closed'),
+  ('28000000-0000-4000-8000-000000000104', 'M28 Initial Planning', current_date + 30, current_date + 31, 'scheduled', 'not_paid', 800, 0,
+   'planned', 2, 'not_assigned', 'not_released', 'not_started', 'not_ready'),
+  ('28000000-0000-4000-8000-000000000105', 'M28 Active Day', current_date + 40, current_date + 41, 'running', 'not_paid', 900, 0,
+   'planned', 2, 'ready_for_execution', 'released_to_driver', 'running', 'not_ready');
 
 insert into public.ad_work_days (id, ad_work_id, work_date, status, planning_status, execution_status)
 values
@@ -25,7 +29,11 @@ values
   ('28000000-0000-4000-8000-000000000202', '28000000-0000-4000-8000-000000000101', current_date + 2, 'scheduled', 'planned', 'ready'),
   ('28000000-0000-4000-8000-000000000203', '28000000-0000-4000-8000-000000000102', current_date + 10, 'scheduled', 'planned', 'planned'),
   ('28000000-0000-4000-8000-000000000204', '28000000-0000-4000-8000-000000000102', current_date + 11, 'scheduled', 'planned', 'planned'),
-  ('28000000-0000-4000-8000-000000000205', '28000000-0000-4000-8000-000000000103', current_date - 1, 'completed', 'planned', 'completed');
+  ('28000000-0000-4000-8000-000000000205', '28000000-0000-4000-8000-000000000103', current_date - 1, 'completed', 'planned', 'completed'),
+  ('28000000-0000-4000-8000-000000000206', '28000000-0000-4000-8000-000000000104', current_date + 30, 'scheduled', 'planned', 'planned'),
+  ('28000000-0000-4000-8000-000000000207', '28000000-0000-4000-8000-000000000104', current_date + 31, 'scheduled', 'planned', 'planned'),
+  ('28000000-0000-4000-8000-000000000208', '28000000-0000-4000-8000-000000000105', current_date + 40, 'running', 'planned', 'running'),
+  ('28000000-0000-4000-8000-000000000209', '28000000-0000-4000-8000-000000000105', current_date + 41, 'scheduled', 'planned', 'ready');
 
 select has_table('public', 'ad_work_commercial_events', 'M28 commercial history table exists');
 select has_table('public', 'ad_work_schedule_events', 'M28 schedule history table exists');
@@ -35,6 +43,7 @@ select ok(
   'M28 histories have RLS enabled'
 );
 select has_function('public', 'admin_get_commercial_schedule_v1', array['uuid'], 'M28 snapshot RPC exists');
+select has_function('public', 'admin_sync_ad_work_days_v2', array['uuid','date','integer','time without time zone','time without time zone','text','bigint'], 'M28 versioned initial planning RPC exists');
 select has_function('public', 'admin_update_ad_work_payment_v1', array['uuid','text','numeric','numeric','text','bigint'], 'M28 payment RPC exists');
 select has_function('public', 'admin_reschedule_ad_work_v1', array['uuid','date','text','bigint'], 'M28 whole-work reschedule RPC exists');
 select has_function('public', 'admin_reschedule_ad_work_day_v1', array['uuid','uuid','date','text','bigint'], 'M28 day reschedule RPC exists');
@@ -73,6 +82,28 @@ select throws_ok(
   $$update public.ad_works set paid_amount = 10 where id='28000000-0000-4000-8000-000000000101'$$,
   '42501', 'Commercial fields must be changed through the governed M28 RPC', 'direct admin REST-style commercial DML fails closed'
 );
+select throws_ok(
+  $$update public.ad_works set start_date = current_date + 32 where id='28000000-0000-4000-8000-000000000104'$$,
+  '42501', 'Schedule fields must be changed through governed M28 authority', 'direct admin schedule DML fails closed'
+);
+select throws_ok(
+  $$update public.ad_work_days set work_date = current_date + 35 where id='28000000-0000-4000-8000-000000000206'$$,
+  '42501', 'Work-day schedule fields must be changed through governed M28 authority', 'direct admin day-date DML fails closed'
+);
+select is(
+  (public.admin_sync_ad_work_days_v2('28000000-0000-4000-8000-000000000104', current_date + 32, 2, null, null, null, 0)->'snapshot'->'adWork'->>'scheduleVersion')::bigint,
+  1::bigint,
+  'legacy planning chronology now advances the authoritative schedule version'
+);
+select throws_ok(
+  $$select public.admin_sync_ad_work_days_v2('28000000-0000-4000-8000-000000000104', current_date + 33, 2, null, null, null, 0)$$,
+  '40001', 'Schedule changed; refresh and retry', 'stale legacy planning save is rejected'
+);
+select throws_ok(
+  $$select public.admin_reschedule_ad_work_day_v1('28000000-0000-4000-8000-000000000105','28000000-0000-4000-8000-000000000209',current_date + 43,'Move future day',0)$$,
+  '55000', 'Another work day is actively executing; finish or stop it before rescheduling', 'future-day reschedule cannot interrupt an active day'
+);
+
 select throws_ok(
   $$select public.admin_update_ad_work_payment_v1('28000000-0000-4000-8000-000000000101','partially_paid',1000,1200,null,0)$$,
   '22023', 'Paid amount cannot exceed total amount', 'contradictory payment values are rejected'
@@ -168,6 +199,11 @@ select is(
    from public.ad_works where id='28000000-0000-4000-8000-000000000102'),
   'cancelled:access_revoked:cancelled:cancelled',
   'cancellation closes executable authority consistently'
+);
+select is(
+  (select count(*) from public.ad_work_days where ad_work_id='28000000-0000-4000-8000-000000000102' and status::text='cancelled'),
+  2::bigint,
+  'cancelled days expose canonical cancelled status to snapshots and operational consumers'
 );
 select ok(
   not exists (

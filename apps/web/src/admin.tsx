@@ -217,6 +217,7 @@ type AdWorkRecord = {
   mobile_location_tracking_mode: string;
   planning_status: AdWorkStatus;
   number_of_days: number;
+  schedule_version: number;
   daily_start_time: string | null;
   daily_end_time: string | null;
   special_instructions: string | null;
@@ -807,6 +808,7 @@ const adWorkSelectColumns = [
   "mobile_location_tracking_mode",
   "planning_status",
   "number_of_days",
+  "schedule_version",
   "daily_start_time",
   "daily_end_time",
   "special_instructions",
@@ -1900,12 +1902,6 @@ async function updateAdminAdWork(
       live_tracking_requested: draft.liveTrackingRequested,
       live_tracking_enabled: false,
       customer_live_enabled: false,
-      planning_status: draft.startDate && (!draft.areasRequired || draft.areasToCover.trim()) ? "ready_for_driver_assignment" : "draft",
-      start_date: draft.startDate || null,
-      end_date: draft.endDate || null,
-      number_of_days: Math.max(1, draft.numberOfDays),
-      daily_start_time: draft.dailyStartTime || null,
-      daily_end_time: draft.dailyEndTime || null,
       areas_to_cover: draft.areasToCover.trim() || null,
       special_instructions: draft.specialInstructions.trim() || null,
       internal_planning_note: draft.internalPlanningNote.trim() || null,
@@ -1932,9 +1928,10 @@ async function syncAdWorkDays(
   config: SupabaseConfig,
   session: AuthSession,
   adWorkId: string,
-  draft: AdWorkDraft
+  draft: AdWorkDraft,
+  expectedVersion: number
 ) {
-  const response = await adminFetch(config, session, config.url + "/rest/v1/rpc/sync_ad_work_days", {
+  const response = await adminFetch(config, session, config.url + "/rest/v1/rpc/admin_sync_ad_work_days_v2", {
     method: "POST",
     headers: createHeaders(config, session.accessToken, true),
     body: JSON.stringify({
@@ -1943,7 +1940,8 @@ async function syncAdWorkDays(
       p_number_of_days: Math.max(1, draft.numberOfDays),
       p_daily_start_time: draft.dailyStartTime || null,
       p_daily_end_time: draft.dailyEndTime || null,
-      p_areas_to_cover: draft.areasToCover.trim() || null
+      p_areas_to_cover: draft.areasToCover.trim() || null,
+      p_expected_version: expectedVersion
     })
   });
 
@@ -1998,12 +1996,10 @@ async function updateAdminAdWorkDay(
       Prefer: "return=minimal"
     },
     body: JSON.stringify({
-      work_date: day.workDate,
       planned_start_time: day.plannedStartTime || null,
       planned_end_time: day.plannedEndTime || null,
       areas_to_cover: day.areasToCover.trim() || null,
       day_note: day.dayNote.trim() || null,
-      planning_status: "planned",
       updated_at: new Date().toISOString()
     })
   });
@@ -6750,7 +6746,7 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
       await updateAdminAdWork(config, session, selectedAdWork.id, adWorkDraft);
 
       if (scheduleChanged && adWorkDraft.startDate) {
-        await syncAdWorkDays(config, session, selectedAdWork.id, adWorkDraft);
+        await syncAdWorkDays(config, session, selectedAdWork.id, adWorkDraft, selectedAdWork.schedule_version);
       } else {
         await Promise.all(dayDrafts.map((day) => updateAdminAdWorkDay(config, session, day)));
       }
@@ -6882,6 +6878,7 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
               {activeView === "trackingHealth" && "Tracking Health"}
               {activeView === "alerts" && "Alerts"}
               {activeView === "intelligence" && "Intelligence and Adapter Readiness"}
+              {activeView === "commercial" && "Commercial and schedule operations"}
               {activeView === "operations" && "Operations and governed exports"}
               {activeView === "audit" && "Activity history"}
             </h1>
@@ -6896,6 +6893,7 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
               {activeView === "trackingHealth" && "Review phone and physical-device health separately without maps or M23 comparison."}
               {activeView === "alerts" && "Review deterministic operational alerts and lifecycle history."}
               {activeView === "intelligence" && "Review vendor-neutral adapter readiness, data quality, explainable statistical signals, and model-governance gates."}
+              {activeView === "commercial" && "Track payment status and perform governed cancellation or rescheduling without rewriting field evidence."}
               {activeView === "operations" && "Preview and download allowlisted operational data with immutable export receipts and privacy-safe boundaries."}
               {activeView === "audit" && "Review safe operational changes without exposing private values."}
             </p>

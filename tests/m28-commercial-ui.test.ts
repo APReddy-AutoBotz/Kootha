@@ -41,5 +41,22 @@ describe("M28 Commercial & Schedule admin request fencing", () => {
     expect(adminSource).toContain('id: "commercial"');
     expect(adminSource).toContain('activeView === "commercial"');
     expect(adminSource).toContain("CommercialScheduleWorkbench");
+    expect(adminSource).toContain("Commercial and schedule operations");
+    expect(adminSource).toContain("Track payment status and perform governed cancellation or rescheduling");
   });
+
+  it("routes legacy planning chronology through the versioned M28 authority", () => {
+    expect(adminSource).toContain('"schedule_version"');
+    expect(adminSource).toContain("admin_sync_ad_work_days_v2");
+    expect(adminSource).toContain("selectedAdWork.schedule_version");
+    const workUpdate = adminSource.match(/async function updateAdminAdWork[\s\S]*?async function syncAdWorkDays/)?.[0] ?? "";
+    expect(workUpdate).not.toContain("start_date:");
+    expect(workUpdate).not.toContain("end_date:");
+    expect(workUpdate).not.toContain("number_of_days:");
+    expect(workUpdate).not.toContain("planning_status:");
+    const dayUpdate = adminSource.match(/async function updateAdminAdWorkDay[\s\S]*?async function fetchDriverApplications/)?.[0] ?? "";
+    expect(dayUpdate).not.toContain("work_date:");
+    expect(dayUpdate).not.toContain('planning_status: "planned"');
+  });
+
 });
