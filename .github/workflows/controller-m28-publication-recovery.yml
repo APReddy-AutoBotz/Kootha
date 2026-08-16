@@ -1,0 +1,80 @@
+name: Controller M28 Publication Recovery
+
+on:
+  push:
+    branches:
+      - milestone/m28-commercial-schedule-operations
+
+permissions:
+  contents: write
+
+jobs:
+  publish-recovered-tree:
+    if: github.event.head_commit.message == 'controller: recover M28 publication transport'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Recover approved M28 patch from controller evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import base64, gzip, hashlib, json, os, re, subprocess, urllib.request
+
+          comment_url = 'https://api.github.com/repos/APReddy-AutoBotz/Kootha/issues/comments/5304470946'
+          req = urllib.request.Request(
+              comment_url,
+              headers={
+                  'Authorization': f"Bearer {os.environ['GH_TOKEN']}",
+                  'Accept': 'application/vnd.github+json',
+                  'X-GitHub-Api-Version': '2022-11-28',
+              },
+          )
+          with urllib.request.urlopen(req) as resp:
+              body = json.load(resp)['body']
+
+          chunks = []
+          for n in (1, 2, 3):
+              match = re.search(
+                  rf"#### Chunk {n}/3\s*\n\s*```text\s*\n([A-Za-z0-9+/=\r\n]+?)\n```",
+                  body,
+              )
+              if not match:
+                  raise SystemExit(f'missing recovery chunk {n}/3')
+              chunks.append(re.sub(r'\s+', '', match.group(1)))
+
+          compressed = base64.b64decode(''.join(chunks), validate=True)
+          if len(compressed) != 9898:
+              raise SystemExit(f'unexpected gzip length {len(compressed)}')
+          if hashlib.sha256(compressed).hexdigest() != '2b6082882396865e75be3923b1bf0a9acf7e2660ade3052e67b8200221eae6a3':
+              raise SystemExit('gzip sha256 mismatch')
+          patch = gzip.decompress(compressed)
+          if len(patch) != 59175:
+              raise SystemExit(f'unexpected patch length {len(patch)}')
+          if hashlib.sha256(patch).hexdigest() != '6b94c1f8342ef74dbae964a0b613146b17880e4a2281745f0d12e8d3b219855b':
+              raise SystemExit('patch sha256 mismatch')
+          open('/tmp/m28-recovery.diff', 'wb').write(patch)
+
+          excluded = '.github/workflows/pr36-m28-review-closure.yml'
+          subprocess.run(['git', 'apply', '--check', f'--exclude={excluded}', '/tmp/m28-recovery.diff'], check=True)
+          subprocess.run(['git', 'apply', '--index', f'--exclude={excluded}', '/tmp/m28-recovery.diff'], check=True)
+
+          changed = subprocess.check_output(['git', 'diff', '--cached', '--name-only'], text=True).splitlines()
+          expected = sorted([
+              'apps/web/src/admin.tsx',
+              'supabase/migrations/20260815150729_m28_commercial_schedule_operations.sql',
+              'supabase/tests/m28_commercial_schedule.test.sql',
+              'tests/m28-commercial-schedule.test.ts',
+              'tests/m28-commercial-ui.test.ts',
+          ])
+          if sorted(changed) != expected:
+              raise SystemExit(f'unexpected staged files: {changed!r}')
+          PY
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix: close M28 schedule authority review findings'
+          git push origin HEAD:milestone/m28-commercial-schedule-operations
