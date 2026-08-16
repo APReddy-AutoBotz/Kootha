@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(44);
+select plan(51);
 
 insert into public.user_profiles (auth_user_id, display_name, role)
 values
@@ -90,6 +90,22 @@ select throws_ok(
   $$update public.ad_work_days set work_date = current_date + 35 where id='28000000-0000-4000-8000-000000000206'$$,
   '42501', 'Work-day schedule fields must be changed through governed M28 authority', 'direct admin day-date DML fails closed'
 );
+select throws_ok(
+  $$update public.ad_works set daily_start_time = '08:00' where id='28000000-0000-4000-8000-000000000104'$$,
+  '42501', 'Schedule fields must be changed through governed M28 authority', 'direct work-time DML fails closed'
+);
+select throws_ok(
+  $$update public.ad_works set areas_to_cover = 'Bypass' where id='28000000-0000-4000-8000-000000000104'$$,
+  '42501', 'Schedule fields must be changed through governed M28 authority', 'direct work-area DML fails closed'
+);
+select throws_ok(
+  $$update public.ad_work_days set planned_start_time = '09:00' where id='28000000-0000-4000-8000-000000000206'$$,
+  '42501', 'Work-day schedule fields must be changed through governed M28 authority', 'direct day-time DML fails closed'
+);
+select throws_ok(
+  $$update public.ad_work_days set areas_to_cover = 'Bypass' where id='28000000-0000-4000-8000-000000000206'$$,
+  '42501', 'Work-day schedule fields must be changed through governed M28 authority', 'direct day-area DML fails closed'
+);
 select is(
   (public.admin_sync_ad_work_days_v2('28000000-0000-4000-8000-000000000104', current_date + 32, 2, null, null, null, 0)->'snapshot'->'adWork'->>'scheduleVersion')::bigint,
   1::bigint,
@@ -114,6 +130,32 @@ select is(
 select throws_ok(
   $$select public.admin_sync_ad_work_days_v2('28000000-0000-4000-8000-000000000104', current_date + 33, 2, null, null, null, 0)$$,
   '40001', 'Schedule changed; refresh and retry', 'stale legacy planning save is rejected'
+);
+select is(
+  (public.admin_update_ad_work_days_v2(
+    '28000000-0000-4000-8000-000000000104',
+    jsonb_build_array(
+      jsonb_build_object('id','28000000-0000-4000-8000-000000000206','workDate',(current_date + 33)::text,'plannedStartTime','08:00','areasToCover','North'),
+      jsonb_build_object('id','28000000-0000-4000-8000-000000000207','workDate',(current_date + 32)::text,'plannedStartTime','09:00','areasToCover','South')
+    ), 1
+  )->'snapshot'->'adWork'->>'scheduleVersion')::bigint,
+  2::bigint,
+  'atomic day batch swaps dates and advances the canonical version once'
+);
+select throws_ok(
+  $$select public.admin_update_ad_work_days_v2(
+    '28000000-0000-4000-8000-000000000104',
+    jsonb_build_array(
+      jsonb_build_object('id','28000000-0000-4000-8000-000000000206','workDate',(current_date + 32)::text),
+      jsonb_build_object('id','28000000-0000-4000-8000-000000000207','workDate',(current_date + 33)::text)
+    ), 1)$$,
+  '40001', 'Schedule changed; refresh and retry', 'stale day batch rejects before mutation'
+);
+insert into public.ad_work_schedule_events(ad_work_id, actor_id, event_type, reason, customer_message, schedule_version)
+values ('28000000-0000-4000-8000-000000000104','28000000-0000-4000-8000-0000000000a1','ad_work_rescheduled','Lifecycle fence','Schedule updated',3);
+select throws_ok(
+  $$select public.admin_sync_ad_work_days_v2('28000000-0000-4000-8000-000000000104', current_date + 36, 2, null, null, null, 2)$$,
+  '55000', 'Schedule lifecycle history exists; use Commercial and Schedule operations', 'legacy initial sync is closed after lifecycle history'
 );
 select throws_ok(
   $$select public.admin_reschedule_ad_work_day_v1('28000000-0000-4000-8000-000000000105','28000000-0000-4000-8000-000000000209',current_date + 43,'Move future day',0)$$,

@@ -89,6 +89,7 @@ describe("M28 commercial and schedule contract", () => {
   it("keeps database authority static, versioned and evidence-preserving", () => {
     expect(migrationSource).toContain("admin_update_ad_work_payment_v1");
     expect(migrationSource).toContain("admin_sync_ad_work_days_v2");
+    expect(migrationSource).toContain("admin_update_ad_work_days_v2");
     expect(migrationSource).toContain("m28_guard_schedule_write_v1");
     expect(migrationSource).toContain("m28_guard_day_schedule_write_v1");
     expect(migrationSource).toContain("admin_reschedule_ad_work_v1");
@@ -96,6 +97,11 @@ describe("M28 commercial and schedule contract", () => {
     expect(migrationSource).toContain("admin_cancel_ad_work_v1");
     expect(migrationSource).toContain("Commercial record changed; refresh and retry");
     expect(migrationSource).toContain("Schedule changed; refresh and retry");
+    expect(migrationSource).toContain("Schedule lifecycle history exists; use Commercial and Schedule operations");
+    expect(migrationSource).toContain("new.daily_start_time");
+    expect(migrationSource).toContain("new.planned_start_time");
+    expect(migrationSource).toContain("new.areas_to_cover");
+    expect(migrationSource).toContain("new.day_note");
     expect(migrationSource).toContain("Another work day is actively executing; finish or stop it before rescheduling");
     expect(migrationSource).toContain("Retained work-day history prevents schedule shrink");
     expect(migrationSource).toContain("m21_execution_history");

@@ -1902,7 +1902,6 @@ async function updateAdminAdWork(
       live_tracking_requested: draft.liveTrackingRequested,
       live_tracking_enabled: false,
       customer_live_enabled: false,
-      areas_to_cover: draft.areasToCover.trim() || null,
       special_instructions: draft.specialInstructions.trim() || null,
       internal_planning_note: draft.internalPlanningNote.trim() || null,
       photo_proof_needed: draft.photoProofNeeded,
@@ -1984,28 +1983,32 @@ async function saveAdWorkAssignment(
   }[];
 }
 
-async function updateAdminAdWorkDay(
+async function updateAdminAdWorkDays(
   config: SupabaseConfig,
   session: AuthSession,
-  day: DayDraft
+  adWorkId: string,
+  days: DayDraft[],
+  expectedVersion: number
 ) {
-  const response = await adminFetch(config, session, config.url + "/rest/v1/ad_work_days?id=eq." + encodeURIComponent(day.id), {
-    method: "PATCH",
-    headers: {
-      ...createHeaders(config, session.accessToken, true),
-      Prefer: "return=minimal"
-    },
+  const response = await adminFetch(config, session, config.url + "/rest/v1/rpc/admin_update_ad_work_days_v2", {
+    method: "POST",
+    headers: createHeaders(config, session.accessToken, true),
     body: JSON.stringify({
-      planned_start_time: day.plannedStartTime || null,
-      planned_end_time: day.plannedEndTime || null,
-      areas_to_cover: day.areasToCover.trim() || null,
-      day_note: day.dayNote.trim() || null,
-      updated_at: new Date().toISOString()
+      p_ad_work_id: adWorkId,
+      p_days: days.map((day) => ({
+        id: day.id,
+        workDate: day.workDate,
+        plannedStartTime: day.plannedStartTime || null,
+        plannedEndTime: day.plannedEndTime || null,
+        areasToCover: day.areasToCover.trim() || null,
+        dayNote: day.dayNote.trim() || null
+      })),
+      p_expected_version: expectedVersion
     })
   });
 
   if (!response.ok) {
-    throw new Error("Could not save a day-wise schedule row.");
+    throw new Error("Could not save the day-wise schedule.");
   }
 }
 
@@ -6738,6 +6741,15 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
       adWorkDraft.dailyStartTime !== toTimeInput(selectedAdWork.daily_start_time) ||
       adWorkDraft.dailyEndTime !== toTimeInput(selectedAdWork.daily_end_time) ||
       adWorkDraft.areasToCover.trim() !== (selectedAdWork.areas_to_cover ?? "");
+    const selectedDaysById = new Map(selectedAdWorkDays.map((day) => [day.id, day]));
+    const dayScheduleChanged = dayDrafts.some((day) => {
+      const saved = selectedDaysById.get(day.id);
+      return !saved || day.workDate !== saved.work_date ||
+        day.plannedStartTime !== toTimeInput(saved.planned_start_time) ||
+        day.plannedEndTime !== toTimeInput(saved.planned_end_time) ||
+        day.areasToCover.trim() !== (saved.areas_to_cover ?? "") ||
+        day.dayNote.trim() !== (saved.day_note ?? "");
+    });
 
     setIsSaving(true);
     setSaveMessage("");
@@ -6747,8 +6759,8 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
 
       if (scheduleChanged && adWorkDraft.startDate) {
         await syncAdWorkDays(config, session, selectedAdWork.id, adWorkDraft, selectedAdWork.schedule_version);
-      } else {
-        await Promise.all(dayDrafts.map((day) => updateAdminAdWorkDay(config, session, day)));
+      } else if (dayScheduleChanged) {
+        await updateAdminAdWorkDays(config, session, selectedAdWork.id, dayDrafts, selectedAdWork.schedule_version);
       }
 
       await loadData();

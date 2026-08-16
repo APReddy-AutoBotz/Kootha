@@ -597,6 +597,9 @@ begin
      or v_work.execution_overall_status <> 'not_started' then
     raise exception 'Schedule is no longer in initial planning; use Commercial and Schedule reschedule' using errcode = '55000';
   end if;
+  if exists (select 1 from public.ad_work_schedule_events where ad_work_id = p_ad_work_id) then
+    raise exception 'Schedule lifecycle history exists; use Commercial and Schedule operations' using errcode = '55000';
+  end if;
 
   perform public.m28_assert_day_unobserved_v1(p_ad_work_id, null);
   v_version := v_work.schedule_version + 1;
@@ -632,6 +635,95 @@ begin
   values ('admin', v_actor, 'm28_initial_schedule_updated', 'ad_work', p_ad_work_id,
           jsonb_build_object('scheduleVersion', v_version));
 
+  return jsonb_build_object('snapshot', public.m28_build_snapshot_v1(p_ad_work_id));
+end;
+$$;
+
+create or replace function public.admin_update_ad_work_days_v2(
+  p_ad_work_id uuid,
+  p_days jsonb,
+  p_expected_version bigint
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_actor uuid;
+  v_work public.ad_works%rowtype;
+  v_day jsonb;
+  v_day_id uuid;
+  v_count integer;
+  v_version bigint;
+begin
+  v_actor := public.m20a_require_admin();
+  if jsonb_typeof(p_days) <> 'array' or jsonb_array_length(p_days) < 1 or jsonb_array_length(p_days) > 366 then
+    raise exception 'Day schedule batch must contain between 1 and 366 days' using errcode = '22023';
+  end if;
+
+  select * into v_work from public.ad_works where id = p_ad_work_id for update;
+  if not found then raise exception 'Ad Work not found' using errcode = 'P0002'; end if;
+  if p_expected_version is null or p_expected_version <> v_work.schedule_version then
+    raise exception 'Schedule changed; refresh and retry' using errcode = '40001';
+  end if;
+  if exists (select 1 from public.ad_work_schedule_events where ad_work_id = p_ad_work_id) then
+    raise exception 'Schedule lifecycle history exists; use Commercial and Schedule operations' using errcode = '55000';
+  end if;
+  if v_work.planning_status = 'cancelled' or v_work.status = 'cancelled'
+     or v_work.closure_status in ('closed','closed_with_issues','cancelled') then
+    raise exception 'Cancelled or closed Ad Work cannot be edited in planning' using errcode = '55000';
+  end if;
+
+  select count(*) into v_count
+  from jsonb_array_elements(p_days) item;
+  if (select count(distinct (item->>'id')) from jsonb_array_elements(p_days) item) <> v_count
+     or (select count(distinct (item->>'workDate')) from jsonb_array_elements(p_days) item) <> v_count then
+    raise exception 'Day schedule batch contains duplicate identities or dates' using errcode = '22023';
+  end if;
+  if exists (
+    select 1 from jsonb_array_elements(p_days) item
+    where coalesce(item->>'id','') !~ '^[0-9a-fA-F-]{36}$'
+       or nullif(item->>'workDate','') is null
+       or length(coalesce(item->>'areasToCover','')) > 2000
+       or length(coalesce(item->>'dayNote','')) > 1000
+       or not exists (
+         select 1 from public.ad_work_days d
+         where d.id = (item->>'id')::uuid and d.ad_work_id = p_ad_work_id
+       )
+  ) or (select count(*) from public.ad_work_days where ad_work_id = p_ad_work_id) <> v_count then
+    raise exception 'Day schedule batch does not match the authoritative work days' using errcode = '22023';
+  end if;
+
+  perform public.m28_assert_day_unobserved_v1(p_ad_work_id, null);
+  perform set_config('app.m28_schedule_write', 'yes', true);
+  for v_day in select value from jsonb_array_elements(p_days) loop
+    v_day_id := (v_day->>'id')::uuid;
+    update public.ad_work_days set work_date = date '0001-01-01' + v_count where id = v_day_id;
+    v_count := v_count + 1;
+  end loop;
+  for v_day in select value from jsonb_array_elements(p_days) loop
+    update public.ad_work_days
+    set work_date = (v_day->>'workDate')::date,
+        planned_start_time = nullif(v_day->>'plannedStartTime','')::time,
+        planned_end_time = nullif(v_day->>'plannedEndTime','')::time,
+        areas_to_cover = nullif(trim(coalesce(v_day->>'areasToCover','')), ''),
+        day_note = nullif(trim(coalesce(v_day->>'dayNote','')), ''),
+        planning_status = 'planned', updated_at = clock_timestamp()
+    where id = (v_day->>'id')::uuid;
+  end loop;
+  v_version := v_work.schedule_version + 1;
+  update public.ad_works
+  set start_date = (select min(work_date) from public.ad_work_days where ad_work_id = p_ad_work_id),
+      end_date = (select max(work_date) from public.ad_work_days where ad_work_id = p_ad_work_id),
+      number_of_days = (select count(*) from public.ad_work_days where ad_work_id = p_ad_work_id),
+      schedule_version = v_version, schedule_updated_at = clock_timestamp(),
+      schedule_updated_by = v_actor, updated_at = clock_timestamp()
+  where id = p_ad_work_id;
+  perform set_config('app.m28_schedule_write', '', true);
+  insert into public.audit_logs(actor_type, actor_id, action, entity_type, entity_id, safe_details)
+  values ('admin', v_actor, 'm28_day_schedule_updated', 'ad_work', p_ad_work_id,
+          jsonb_build_object('scheduleVersion', v_version, 'dayCount', jsonb_array_length(p_days)));
   return jsonb_build_object('snapshot', public.m28_build_snapshot_v1(p_ad_work_id));
 end;
 $$;
@@ -949,10 +1041,12 @@ set search_path = pg_catalog, public
 as $$
 begin
   if coalesce(current_setting('app.m28_schedule_write', true), '') <> 'yes'
-     and row(new.start_date, new.end_date, new.number_of_days, new.planning_status,
+     and row(new.start_date, new.end_date, new.number_of_days, new.daily_start_time,
+             new.daily_end_time, new.areas_to_cover, new.planning_status,
              new.schedule_version, new.schedule_updated_at, new.schedule_updated_by)
          is distinct from
-         row(old.start_date, old.end_date, old.number_of_days, old.planning_status,
+         row(old.start_date, old.end_date, old.number_of_days, old.daily_start_time,
+             old.daily_end_time, old.areas_to_cover, old.planning_status,
              old.schedule_version, old.schedule_updated_at, old.schedule_updated_by) then
     raise exception 'Schedule fields must be changed through governed M28 authority' using errcode = '42501';
   end if;
@@ -967,8 +1061,10 @@ set search_path = pg_catalog, public
 as $$
 begin
   if coalesce(current_setting('app.m28_schedule_write', true), '') <> 'yes'
-     and row(new.work_date, new.planning_status)
-         is distinct from row(old.work_date, old.planning_status) then
+     and row(new.work_date, new.planned_start_time, new.planned_end_time,
+             new.areas_to_cover, new.day_note, new.planning_status)
+         is distinct from row(old.work_date, old.planned_start_time, old.planned_end_time,
+                              old.areas_to_cover, old.day_note, old.planning_status) then
     raise exception 'Work-day schedule fields must be changed through governed M28 authority' using errcode = '42501';
   end if;
   return new;
@@ -998,6 +1094,7 @@ revoke all on function public.m28_invalidate_execution_authority_v1(uuid) from p
 revoke all on function public.m28_build_snapshot_v1(uuid) from public, anon, authenticated, service_role;
 revoke all on function public.admin_get_commercial_schedule_v1(uuid) from public, anon, authenticated, service_role;
 revoke all on function public.admin_sync_ad_work_days_v2(uuid,date,integer,time,time,text,bigint) from public, anon, authenticated, service_role;
+revoke all on function public.admin_update_ad_work_days_v2(uuid,jsonb,bigint) from public, anon, authenticated, service_role;
 revoke all on function public.admin_update_ad_work_payment_v1(uuid,text,numeric,numeric,text,bigint) from public, anon, authenticated, service_role;
 revoke all on function public.admin_reschedule_ad_work_v1(uuid,date,text,bigint) from public, anon, authenticated, service_role;
 revoke all on function public.admin_reschedule_ad_work_day_v1(uuid,uuid,date,text,bigint) from public, anon, authenticated, service_role;
@@ -1005,6 +1102,7 @@ revoke all on function public.admin_cancel_ad_work_v1(uuid,text,text,bigint) fro
 
 grant execute on function public.admin_get_commercial_schedule_v1(uuid) to authenticated;
 grant execute on function public.admin_sync_ad_work_days_v2(uuid,date,integer,time,time,text,bigint) to authenticated;
+grant execute on function public.admin_update_ad_work_days_v2(uuid,jsonb,bigint) to authenticated;
 grant execute on function public.admin_update_ad_work_payment_v1(uuid,text,numeric,numeric,text,bigint) to authenticated;
 grant execute on function public.admin_reschedule_ad_work_v1(uuid,date,text,bigint) to authenticated;
 grant execute on function public.admin_reschedule_ad_work_day_v1(uuid,uuid,date,text,bigint) to authenticated;
