@@ -1,4 +1,4 @@
-name: PR36 M28 publication recovery
+name: PR36 M28 review closure
 
 on:
   push:
@@ -9,69 +9,528 @@ permissions:
   contents: write
 
 jobs:
-  publish-approved-tree:
+  close-review-findings:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 35
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout exact controller head
+        uses: actions/checkout@v4
         with:
-          fetch-depth: 0
-      - name: Recover and publish approved M28 correction
+          fetch-depth: 2
+
+      - name: Guard exact reviewed parent
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          message="$(git log -1 --pretty=%s)"
-          if [ "$message" != "controller: execute M28 recovery" ]; then
-            echo "No controller recovery requested for this commit."
-            exit 0
-          fi
+          expected="4e1f05ca619ceafe13585320243b36ebf51b37d0"
+          actual="$(git rev-parse HEAD^)"
+          test "$actual" = "$expected" || {
+            echo "Expected controller parent $expected but found $actual"
+            exit 1
+          }
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.114.0
+
+      - name: Apply bounded M28 review closure
+        shell: bash
+        run: |
+          set -euo pipefail
           python - <<'PY'
-          import base64, gzip, hashlib, json, os, re, subprocess, urllib.request
-          url = 'https://api.github.com/repos/APReddy-AutoBotz/Kootha/issues/comments/5304470946'
-          req = urllib.request.Request(url, headers={
-              'Authorization': f"Bearer {os.environ['GH_TOKEN']}",
-              'Accept': 'application/vnd.github+json',
-              'X-GitHub-Api-Version': '2022-11-28',
-          })
-          with urllib.request.urlopen(req) as response:
-              body = json.load(response)['body']
-          chunks = []
-          for n in (1, 2, 3):
-              marker = rf"#### Chunk {n}/3\s*\n\s*```text\s*\n([A-Za-z0-9+/=\r\n]+?)\n```"
-              found = re.search(marker, body)
-              if not found:
-                  raise SystemExit(f'missing chunk {n}/3')
-              chunks.append(re.sub(r'\s+', '', found.group(1)))
-          compressed = base64.b64decode(''.join(chunks), validate=True)
-          if len(compressed) != 9898:
-              raise SystemExit(f'unexpected gzip length {len(compressed)}')
-          print('transport gzip sha256', hashlib.sha256(compressed).hexdigest())
-          patch = gzip.decompress(compressed)
-          if len(patch) != 59175:
-              raise SystemExit(f'unexpected patch length {len(patch)}')
-          patch_sha = hashlib.sha256(patch).hexdigest()
-          print('uncompressed patch sha256', patch_sha)
-          if patch_sha != '6b94c1f8342ef74dbae964a0b613146b17880e4a2281745f0d12e8d3b219855b':
-              raise SystemExit('uncompressed patch sha256 mismatch')
-          open('/tmp/m28.diff', 'wb').write(patch)
-          excluded = '.github/workflows/pr36-m28-review-closure.yml'
-          subprocess.run(['git','apply','--check',f'--exclude={excluded}','/tmp/m28.diff'], check=True)
-          subprocess.run(['git','apply','--index',f'--exclude={excluded}','/tmp/m28.diff'], check=True)
-          changed = sorted(subprocess.check_output(['git','diff','--cached','--name-only'], text=True).splitlines())
-          expected = sorted([
-              'apps/web/src/admin.tsx',
-              'supabase/migrations/20260815150729_m28_commercial_schedule_operations.sql',
-              'supabase/tests/m28_commercial_schedule.test.sql',
-              'tests/m28-commercial-schedule.test.ts',
-              'tests/m28-commercial-ui.test.ts',
-          ])
-          if changed != expected:
-              raise SystemExit(f'unexpected staged paths: {changed!r}')
+          from pathlib import Path
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected one match, found {count}")
+              return text.replace(old, new, 1)
+
+          admin_path = Path("apps/web/src/admin.tsx")
+          admin = admin_path.read_text()
+
+          admin = replace_once(
+              admin,
+              '  number_of_days: number;\n  daily_start_time: string | null;',
+              '  number_of_days: number;\n  schedule_version: number;\n  daily_start_time: string | null;',
+              "AdWorkRecord schedule version",
+          )
+          admin = replace_once(
+              admin,
+              '  "number_of_days",\n  "daily_start_time",',
+              '  "number_of_days",\n  "schedule_version",\n  "daily_start_time",',
+              "adWork select schedule version",
+          )
+
+          start = admin.index("async function updateAdminAdWork(")
+          end = admin.index("async function syncAdWorkDays(", start)
+          segment = admin[start:end]
+          for forbidden_line in [
+              '      planning_status: draft.startDate && (!draft.areasRequired || draft.areasToCover.trim()) ? "ready_for_driver_assignment" : "draft",\n',
+              '      start_date: draft.startDate || null,\n',
+              '      end_date: draft.endDate || null,\n',
+              '      number_of_days: Math.max(1, draft.numberOfDays),\n',
+              '      daily_start_time: draft.dailyStartTime || null,\n',
+              '      daily_end_time: draft.dailyEndTime || null,\n',
+          ]:
+              if segment.count(forbidden_line) != 1:
+                  raise SystemExit(f"updateAdminAdWork topology line mismatch: {forbidden_line.strip()}")
+              segment = segment.replace(forbidden_line, "", 1)
+          admin = admin[:start] + segment + admin[end:]
+
+          start = admin.index("async function syncAdWorkDays(")
+          end = admin.index("async function saveAdWorkAssignment(", start)
+          segment = admin[start:end]
+          segment = replace_once(
+              segment,
+              '  adWorkId: string,\n  draft: AdWorkDraft\n)',
+              '  adWorkId: string,\n  draft: AdWorkDraft,\n  expectedVersion: number\n)',
+              "sync helper signature",
+          )
+          segment = replace_once(
+              segment,
+              'config.url + "/rest/v1/rpc/sync_ad_work_days"',
+              'config.url + "/rest/v1/rpc/admin_sync_ad_work_days_v2"',
+              "sync helper RPC",
+          )
+          segment = replace_once(
+              segment,
+              '      p_areas_to_cover: draft.areasToCover.trim() || null\n',
+              '      p_areas_to_cover: draft.areasToCover.trim() || null,\n      p_expected_version: expectedVersion\n',
+              "sync helper expected version",
+          )
+          admin = admin[:start] + segment + admin[end:]
+
+          start = admin.index("async function updateAdminAdWorkDay(")
+          end = admin.index("async function fetchDriverApplications(", start)
+          segment = admin[start:end]
+          for forbidden_line in [
+              '      work_date: day.workDate,\n',
+              '      planning_status: "planned",\n',
+          ]:
+              if segment.count(forbidden_line) != 1:
+                  raise SystemExit(f"updateAdminAdWorkDay topology line mismatch: {forbidden_line.strip()}")
+              segment = segment.replace(forbidden_line, "", 1)
+          admin = admin[:start] + segment + admin[end:]
+
+          admin = replace_once(
+              admin,
+              '        await syncAdWorkDays(config, session, selectedAdWork.id, adWorkDraft);',
+              '        await syncAdWorkDays(config, session, selectedAdWork.id, adWorkDraft, selectedAdWork.schedule_version);',
+              "versioned legacy planning call",
+          )
+
+          admin = replace_once(
+              admin,
+              '              {activeView === "intelligence" && "Intelligence and Adapter Readiness"}\n              {activeView === "operations" && "Operations and governed exports"}',
+              '              {activeView === "intelligence" && "Intelligence and Adapter Readiness"}\n              {activeView === "commercial" && "Commercial and schedule operations"}\n              {activeView === "operations" && "Operations and governed exports"}',
+              "commercial heading",
+          )
+          admin = replace_once(
+              admin,
+              '              {activeView === "intelligence" && "Review vendor-neutral adapter readiness, data quality, explainable statistical signals, and model-governance gates."}\n              {activeView === "operations" && "Preview and download allowlisted operational data with immutable export receipts and privacy-safe boundaries."}',
+              '              {activeView === "intelligence" && "Review vendor-neutral adapter readiness, data quality, explainable statistical signals, and model-governance gates."}\n              {activeView === "commercial" && "Track payment status and perform governed cancellation or rescheduling without rewriting field evidence."}\n              {activeView === "operations" && "Preview and download allowlisted operational data with immutable export receipts and privacy-safe boundaries."}',
+              "commercial description",
+          )
+          admin_path.write_text(admin)
+
+          migration_path = Path("supabase/migrations/20260815150729_m28_commercial_schedule_operations.sql")
+          sql = migration_path.read_text()
+          sql = replace_once(
+              sql,
+              "set search_path = public;\n\n",
+              "set search_path = public;\n\nalter type public.ad_work_day_status add value if not exists 'cancelled';\n\n",
+              "cancelled day status enum",
+          )
+
+          planning_rpc = r'''create or replace function public.admin_sync_ad_work_days_v2(
+            p_ad_work_id uuid,
+            p_start_date date,
+            p_number_of_days integer,
+            p_daily_start_time time default null,
+            p_daily_end_time time default null,
+            p_areas_to_cover text default null,
+            p_expected_version bigint default null
+          )
+          returns jsonb
+          language plpgsql
+          security definer
+          set search_path = pg_catalog, public
+          as $$
+          declare
+            v_actor uuid;
+            v_work public.ad_works%rowtype;
+            v_day_count integer;
+            v_end_date date;
+            v_version bigint;
+            v_areas text;
+          begin
+            v_actor := public.m20a_require_admin();
+            if p_start_date is null then raise exception 'Start date is required' using errcode = '22004'; end if;
+            if p_number_of_days is null or p_number_of_days < 1 or p_number_of_days > 366 then
+              raise exception 'Number of days must be between 1 and 366' using errcode = '22023';
+            end if;
+            v_day_count := p_number_of_days;
+            v_end_date := p_start_date + (v_day_count - 1);
+            v_areas := nullif(trim(coalesce(p_areas_to_cover, '')), '');
+
+            select * into v_work from public.ad_works where id = p_ad_work_id for update;
+            if not found then raise exception 'Ad Work not found' using errcode = 'P0002'; end if;
+            if p_expected_version is null or p_expected_version <> v_work.schedule_version then
+              raise exception 'Schedule changed; refresh and retry' using errcode = '40001';
+            end if;
+            if v_work.planning_status = 'cancelled' or v_work.status = 'cancelled'
+               or v_work.closure_status in ('closed','closed_with_issues','cancelled') then
+              raise exception 'Cancelled or closed Ad Work cannot be edited in planning' using errcode = '55000';
+            end if;
+            if v_work.assignment_status <> 'not_assigned'
+               or v_work.execution_release_status <> 'not_released'
+               or v_work.execution_overall_status <> 'not_started' then
+              raise exception 'Schedule is no longer in initial planning; use Commercial and Schedule reschedule' using errcode = '55000';
+            end if;
+
+            perform public.m28_assert_day_unobserved_v1(p_ad_work_id, null);
+            v_version := v_work.schedule_version + 1;
+            perform set_config('app.m28_schedule_write', 'yes', true);
+
+            perform public.sync_ad_work_days(
+              p_ad_work_id,
+              p_start_date,
+              v_day_count,
+              p_daily_start_time,
+              p_daily_end_time,
+              v_areas
+            );
+
+            update public.ad_works
+            set start_date = p_start_date,
+                end_date = v_end_date,
+                number_of_days = v_day_count,
+                daily_start_time = p_daily_start_time,
+                daily_end_time = p_daily_end_time,
+                areas_to_cover = v_areas,
+                planning_status = case
+                  when not areas_required or v_areas is not null then 'ready_for_driver_assignment'
+                  else 'draft'
+                end,
+                schedule_version = v_version,
+                schedule_updated_at = clock_timestamp(), schedule_updated_by = v_actor,
+                updated_at = clock_timestamp()
+            where id = p_ad_work_id;
+
+            perform set_config('app.m28_schedule_write', '', true);
+            insert into public.audit_logs(actor_type, actor_id, action, entity_type, entity_id, safe_details)
+            values ('admin', v_actor, 'm28_initial_schedule_updated', 'ad_work', p_ad_work_id,
+                    jsonb_build_object('scheduleVersion', v_version));
+
+            return jsonb_build_object('snapshot', public.m28_build_snapshot_v1(p_ad_work_id));
+          end;
+          $$;
+
+          '''
+          sql = replace_once(
+              sql,
+              "create or replace function public.admin_reschedule_ad_work_v1(\n",
+              planning_rpc + "create or replace function public.admin_reschedule_ad_work_v1(\n",
+              "versioned planning RPC insertion",
+          )
+
+          def patch_function(text: str, start_marker: str, end_marker: str, transform, label: str) -> str:
+              start = text.index(start_marker)
+              end = text.index(end_marker, start)
+              segment = text[start:end]
+              segment = transform(segment)
+              return text[:start] + segment + text[end:]
+
+          def patch_whole(segment: str) -> str:
+              segment = replace_once(
+                  segment,
+                  "  perform public.m28_assert_day_unobserved_v1(p_ad_work_id, null);\n  perform public.m28_invalidate_execution_authority_v1(p_ad_work_id);",
+                  "  perform public.m28_assert_day_unobserved_v1(p_ad_work_id, null);\n  perform set_config('app.m28_schedule_write', 'yes', true);\n  perform public.m28_invalidate_execution_authority_v1(p_ad_work_id);",
+                  "whole reschedule schedule guard",
+              )
+              segment = replace_once(
+                  segment,
+                  "      updated_at = clock_timestamp()\n  where id = p_ad_work_id;\n\n  insert into public.ad_work_schedule_events(",
+                  "      updated_at = clock_timestamp()\n  where id = p_ad_work_id;\n\n  perform set_config('app.m28_schedule_write', '', true);\n\n  insert into public.ad_work_schedule_events(",
+                  "whole reschedule guard clear",
+              )
+              return segment
+
+          sql = patch_function(
+              sql,
+              "create or replace function public.admin_reschedule_ad_work_v1(",
+              "create or replace function public.admin_reschedule_ad_work_day_v1(",
+              patch_whole,
+              "whole reschedule",
+          )
+
+          def patch_day(segment: str) -> str:
+              segment = replace_once(
+                  segment,
+                  "  if exists (select 1 from public.ad_work_days where ad_work_id = p_ad_work_id and work_date = p_new_date and id <> p_ad_work_day_id) then\n    raise exception 'Another work day already uses the requested date' using errcode = '23505';\n  end if;\n\n  perform public.m28_assert_day_unobserved_v1(p_ad_work_id, p_ad_work_day_id);\n  perform public.m28_invalidate_execution_authority_v1(p_ad_work_id);",
+                  "  if exists (select 1 from public.ad_work_days where ad_work_id = p_ad_work_id and work_date = p_new_date and id <> p_ad_work_day_id) then\n    raise exception 'Another work day already uses the requested date' using errcode = '23505';\n  end if;\n  if exists (\n    select 1 from public.ad_work_days active_day\n    where active_day.ad_work_id = p_ad_work_id\n      and active_day.id <> p_ad_work_day_id\n      and active_day.execution_status in ('running','on_break')\n  ) or exists (\n    select 1 from public.tracking_sessions active_session\n    where active_session.ad_work_id = p_ad_work_id\n      and active_session.ad_work_day_id is distinct from p_ad_work_day_id\n      and active_session.status in ('running','paused')\n  ) then\n    raise exception 'Another work day is actively executing; finish or stop it before rescheduling' using errcode = '55000';\n  end if;\n\n  perform public.m28_assert_day_unobserved_v1(p_ad_work_id, p_ad_work_day_id);\n  perform set_config('app.m28_schedule_write', 'yes', true);\n  perform public.m28_invalidate_execution_authority_v1(p_ad_work_id);",
+                  "active other day fencing",
+              )
+              segment = replace_once(
+                  segment,
+                  "      updated_at = clock_timestamp()\n  where id = p_ad_work_id;\n\n  insert into public.ad_work_schedule_events(",
+                  "      updated_at = clock_timestamp()\n  where id = p_ad_work_id;\n\n  perform set_config('app.m28_schedule_write', '', true);\n\n  insert into public.ad_work_schedule_events(",
+                  "day reschedule guard clear",
+              )
+              return segment
+
+          sql = patch_function(
+              sql,
+              "create or replace function public.admin_reschedule_ad_work_day_v1(",
+              "create or replace function public.admin_cancel_ad_work_v1(",
+              patch_day,
+              "day reschedule",
+          )
+
+          def patch_cancel(segment: str) -> str:
+              segment = replace_once(
+                  segment,
+                  "  update public.tracking_sessions\n",
+                  "  perform set_config('app.m28_schedule_write', 'yes', true);\n\n  update public.tracking_sessions\n",
+                  "cancel schedule guard",
+              )
+              segment = replace_once(
+                  segment,
+                  "  update public.ad_work_days\n  set planning_status = case when execution_status = 'completed' then planning_status else 'cancelled' end,\n      execution_status = case when execution_status = 'completed' then execution_status else 'cancelled' end,",
+                  "  update public.ad_work_days\n  set status = case when execution_status = 'completed' then status else 'cancelled'::public.ad_work_day_status end,\n      planning_status = case when execution_status = 'completed' then planning_status else 'cancelled' end,\n      execution_status = case when execution_status = 'completed' then execution_status else 'cancelled' end,",
+                  "canonical cancelled day status",
+              )
+              segment = replace_once(
+                  segment,
+                  "  where ad_work_id = p_ad_work_id\n    and closure_status not in ('closed','closed_with_issues');\n\n  insert into public.ad_work_schedule_events(",
+                  "  where ad_work_id = p_ad_work_id\n    and closure_status not in ('closed','closed_with_issues');\n\n  perform set_config('app.m28_schedule_write', '', true);\n\n  insert into public.ad_work_schedule_events(",
+                  "cancel guard clear",
+              )
+              return segment
+
+          sql = patch_function(
+              sql,
+              "create or replace function public.admin_cancel_ad_work_v1(",
+              "revoke all on function public.m28_protect_history_v1()",
+              patch_cancel,
+              "cancel",
+          )
+
+          guard_block = r'''create or replace function public.m28_guard_schedule_write_v1()
+          returns trigger
+          language plpgsql
+          set search_path = pg_catalog, public
+          as $$
+          begin
+            if coalesce(current_setting('app.m28_schedule_write', true), '') <> 'yes'
+               and row(new.start_date, new.end_date, new.number_of_days, new.planning_status,
+                       new.schedule_version, new.schedule_updated_at, new.schedule_updated_by)
+                   is distinct from
+                   row(old.start_date, old.end_date, old.number_of_days, old.planning_status,
+                       old.schedule_version, old.schedule_updated_at, old.schedule_updated_by) then
+              raise exception 'Schedule fields must be changed through governed M28 authority' using errcode = '42501';
+            end if;
+            return new;
+          end;
+          $$;
+
+          create or replace function public.m28_guard_day_schedule_write_v1()
+          returns trigger
+          language plpgsql
+          set search_path = pg_catalog, public
+          as $$
+          begin
+            if coalesce(current_setting('app.m28_schedule_write', true), '') <> 'yes'
+               and row(new.work_date, new.planning_status)
+                   is distinct from row(old.work_date, old.planning_status) then
+              raise exception 'Work-day schedule fields must be changed through governed M28 authority' using errcode = '42501';
+            end if;
+            return new;
+          end;
+          $$;
+
+          drop trigger if exists ad_works_m28_schedule_write_guard on public.ad_works;
+          create trigger ad_works_m28_schedule_write_guard
+          before update on public.ad_works
+          for each row execute function public.m28_guard_schedule_write_v1();
+
+          drop trigger if exists ad_work_days_m28_schedule_write_guard on public.ad_work_days;
+          create trigger ad_work_days_m28_schedule_write_guard
+          before update on public.ad_work_days
+          for each row execute function public.m28_guard_day_schedule_write_v1();
+
+          revoke insert on public.ad_work_days from authenticated;
+          revoke all on function public.sync_ad_work_days(uuid,date,integer,time,time,text) from public, anon, authenticated, service_role;
+
+          '''
+          sql = replace_once(
+              sql,
+              "revoke all on function public.m28_protect_history_v1()",
+              guard_block + "revoke all on function public.m28_protect_history_v1()",
+              "schedule guard block",
+          )
+          sql = replace_once(
+              sql,
+              "revoke all on function public.m28_guard_commercial_write_v1() from public, anon, authenticated, service_role;\n",
+              "revoke all on function public.m28_guard_commercial_write_v1() from public, anon, authenticated, service_role;\nrevoke all on function public.m28_guard_schedule_write_v1() from public, anon, authenticated, service_role;\nrevoke all on function public.m28_guard_day_schedule_write_v1() from public, anon, authenticated, service_role;\n",
+              "guard function revokes",
+          )
+          sql = replace_once(
+              sql,
+              "revoke all on function public.admin_get_commercial_schedule_v1(uuid) from public, anon, authenticated, service_role;\n",
+              "revoke all on function public.admin_get_commercial_schedule_v1(uuid) from public, anon, authenticated, service_role;\nrevoke all on function public.admin_sync_ad_work_days_v2(uuid,date,integer,time,time,text,bigint) from public, anon, authenticated, service_role;\n",
+              "planning RPC revoke",
+          )
+          sql = replace_once(
+              sql,
+              "grant execute on function public.admin_get_commercial_schedule_v1(uuid) to authenticated;\n",
+              "grant execute on function public.admin_get_commercial_schedule_v1(uuid) to authenticated;\ngrant execute on function public.admin_sync_ad_work_days_v2(uuid,date,integer,time,time,text,bigint) to authenticated;\n",
+              "planning RPC grant",
+          )
+          migration_path.write_text(sql)
+
+          ts_test = Path("tests/m28-commercial-schedule.test.ts")
+          t = ts_test.read_text()
+          t = replace_once(
+              t,
+              '    expect(migrationSource).toContain("admin_reschedule_ad_work_v1");',
+              '    expect(migrationSource).toContain("admin_sync_ad_work_days_v2");\n    expect(migrationSource).toContain("m28_guard_schedule_write_v1");\n    expect(migrationSource).toContain("m28_guard_day_schedule_write_v1");\n    expect(migrationSource).toContain("admin_reschedule_ad_work_v1");',
+              "static schedule authority assertions",
+          )
+          t = replace_once(
+              t,
+              '    expect(migrationSource).toContain("Schedule changed; refresh and retry");',
+              '    expect(migrationSource).toContain("Schedule changed; refresh and retry");\n    expect(migrationSource).toContain("Another work day is actively executing; finish or stop it before rescheduling");\n    expect(migrationSource).toContain("add value if not exists \'cancelled\'");\n    expect(migrationSource).toContain("else \'cancelled\'::public.ad_work_day_status");',
+              "static review closure assertions",
+          )
+          ts_test.write_text(t)
+
+          ui_test = Path("tests/m28-commercial-ui.test.ts")
+          u = ui_test.read_text()
+          u = replace_once(
+              u,
+              '    expect(adminSource).toContain("CommercialScheduleWorkbench");\n',
+              '    expect(adminSource).toContain("CommercialScheduleWorkbench");\n    expect(adminSource).toContain("Commercial and schedule operations");\n    expect(adminSource).toContain("Track payment status and perform governed cancellation or rescheduling");\n',
+              "commercial header assertions",
+          )
+          insert_test = r'''
+
+            it("routes legacy planning chronology through the versioned M28 authority", () => {
+              expect(adminSource).toContain('"schedule_version"');
+              expect(adminSource).toContain("admin_sync_ad_work_days_v2");
+              expect(adminSource).toContain("selectedAdWork.schedule_version");
+              const workUpdate = adminSource.match(/async function updateAdminAdWork[\s\S]*?async function syncAdWorkDays/)?.[0] ?? "";
+              expect(workUpdate).not.toContain("start_date:");
+              expect(workUpdate).not.toContain("end_date:");
+              expect(workUpdate).not.toContain("number_of_days:");
+              expect(workUpdate).not.toContain("planning_status:");
+              const dayUpdate = adminSource.match(/async function updateAdminAdWorkDay[\s\S]*?async function fetchDriverApplications/)?.[0] ?? "";
+              expect(dayUpdate).not.toContain("work_date:");
+              expect(dayUpdate).not.toContain('planning_status: "planned"');
+            });
+          '''
+          u = replace_once(u, "\n});\n", insert_test + "\n});\n", "legacy planning UI authority test")
+          ui_test.write_text(u)
+
+          db_test = Path("supabase/tests/m28_commercial_schedule.test.sql")
+          d = db_test.read_text()
+          d = replace_once(d, "select plan(34);", "select plan(41);", "pgTAP plan")
+          d = replace_once(
+              d,
+              "  ('28000000-0000-4000-8000-000000000103', 'M28 Closed', current_date - 2, current_date - 1, 'completed', 'fully_paid', 500, 500,\n   'planned', 1, 'not_assigned', 'not_released', 'completed', 'closed');",
+              "  ('28000000-0000-4000-8000-000000000103', 'M28 Closed', current_date - 2, current_date - 1, 'completed', 'fully_paid', 500, 500,\n   'planned', 1, 'not_assigned', 'not_released', 'completed', 'closed'),\n  ('28000000-0000-4000-8000-000000000104', 'M28 Initial Planning', current_date + 30, current_date + 31, 'scheduled', 'not_paid', 800, 0,\n   'planned', 2, 'not_assigned', 'not_released', 'not_started', 'not_ready'),\n  ('28000000-0000-4000-8000-000000000105', 'M28 Active Day', current_date + 40, current_date + 41, 'running', 'not_paid', 900, 0,\n   'planned', 2, 'ready_for_execution', 'released_to_driver', 'running', 'not_ready');",
+              "extra M28 work fixtures",
+          )
+          d = replace_once(
+              d,
+              "  ('28000000-0000-4000-8000-000000000205', '28000000-0000-4000-8000-000000000103', current_date - 1, 'completed', 'planned', 'completed');",
+              "  ('28000000-0000-4000-8000-000000000205', '28000000-0000-4000-8000-000000000103', current_date - 1, 'completed', 'planned', 'completed'),\n  ('28000000-0000-4000-8000-000000000206', '28000000-0000-4000-8000-000000000104', current_date + 30, 'scheduled', 'planned', 'planned'),\n  ('28000000-0000-4000-8000-000000000207', '28000000-0000-4000-8000-000000000104', current_date + 31, 'scheduled', 'planned', 'planned'),\n  ('28000000-0000-4000-8000-000000000208', '28000000-0000-4000-8000-000000000105', current_date + 40, 'running', 'planned', 'running'),\n  ('28000000-0000-4000-8000-000000000209', '28000000-0000-4000-8000-000000000105', current_date + 41, 'scheduled', 'planned', 'ready');",
+              "extra M28 day fixtures",
+          )
+          d = replace_once(
+              d,
+              "select has_function('public', 'admin_get_commercial_schedule_v1', array['uuid'], 'M28 snapshot RPC exists');\n",
+              "select has_function('public', 'admin_get_commercial_schedule_v1', array['uuid'], 'M28 snapshot RPC exists');\nselect has_function('public', 'admin_sync_ad_work_days_v2', array['uuid','date','integer','time without time zone','time without time zone','text','bigint'], 'M28 versioned initial planning RPC exists');\n",
+              "planning RPC pgTAP assertion",
+          )
+          d = replace_once(
+              d,
+              "select throws_ok(\n  $$select public.admin_update_ad_work_payment_v1('28000000-0000-4000-8000-000000000101','partially_paid',1000,1200,null,0)$$,",
+              "select throws_ok(\n  $$update public.ad_works set start_date = current_date + 32 where id='28000000-0000-4000-8000-000000000104'$$,\n  '42501', 'Schedule fields must be changed through governed M28 authority', 'direct admin schedule DML fails closed'\n);\nselect throws_ok(\n  $$update public.ad_work_days set work_date = current_date + 35 where id='28000000-0000-4000-8000-000000000206'$$,\n  '42501', 'Work-day schedule fields must be changed through governed M28 authority', 'direct admin day-date DML fails closed'\n);\nselect is(\n  (public.admin_sync_ad_work_days_v2('28000000-0000-4000-8000-000000000104', current_date + 32, 2, null, null, null, 0)->'snapshot'->'adWork'->>'scheduleVersion')::bigint,\n  1::bigint,\n  'legacy planning chronology now advances the authoritative schedule version'\n);\nselect throws_ok(\n  $$select public.admin_sync_ad_work_days_v2('28000000-0000-4000-8000-000000000104', current_date + 33, 2, null, null, null, 0)$$,\n  '40001', 'Schedule changed; refresh and retry', 'stale legacy planning save is rejected'\n);\nselect throws_ok(\n  $$select public.admin_reschedule_ad_work_day_v1('28000000-0000-4000-8000-000000000105','28000000-0000-4000-8000-000000000209',current_date + 43,'Move future day',0)$$,\n  '55000', 'Another work day is actively executing; finish or stop it before rescheduling', 'future-day reschedule cannot interrupt an active day'\n);\n\nselect throws_ok(\n  $$select public.admin_update_ad_work_payment_v1('28000000-0000-4000-8000-000000000101','partially_paid',1000,1200,null,0)$$,",
+              "authority behavior pgTAP assertions",
+          )
+          d = replace_once(
+              d,
+              "select ok(\n  not exists (\n    select 1 from public.customer_updates",
+              "select is(\n  (select count(*) from public.ad_work_days where ad_work_id='28000000-0000-4000-8000-000000000102' and status::text='cancelled'),\n  2::bigint,\n  'cancelled days expose canonical cancelled status to snapshots and operational consumers'\n);\nselect ok(\n  not exists (\n    select 1 from public.customer_updates",
+              "cancelled legacy status pgTAP assertion",
+          )
+          db_test.write_text(d)
           PY
+          git diff --check
+
+      - name: Run focused M28 tests
+        run: pnpm test -- --run tests/m28-commercial-schedule.test.ts tests/m28-commercial-ui.test.ts
+
+      - name: Run full Vitest
+        run: pnpm test
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Migration guardrails
+        run: pnpm migrations:check
+
+      - name: Security guardrails
+        run: pnpm security:scan
+
+      - name: Production build
+        run: pnpm build
+
+      - name: Start fresh Supabase
+        run: supabase start -x studio,imgproxy,mailpit,edge-runtime,logflare,vector,supavisor
+
+      - name: Run full pgTAP and RLS suite
+        run: supabase test db
+
+      - name: Final proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          grep -q "admin_sync_ad_work_days_v2" supabase/migrations/20260815150729_m28_commercial_schedule_operations.sql
+          grep -q "m28_guard_schedule_write_v1" supabase/migrations/20260815150729_m28_commercial_schedule_operations.sql
+          grep -q "Another work day is actively executing" supabase/migrations/20260815150729_m28_commercial_schedule_operations.sql
+          grep -q "Commercial and schedule operations" apps/web/src/admin.tsx
+          test ! -e scripts/m28-wire.py
+
+      - name: Publish verified review closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/pr36-m28-review-closure.yml
+          git config user.name "APReddy-AutoBotz"
+          git config user.email "avalaparameswarareddy@gmail.com"
+          git add -A
           git diff --cached --check
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'fix: close M28 schedule authority review findings'
+          git commit -m "fix: close M28 schedule authority review findings"
           git push origin HEAD:milestone/m28-commercial-schedule-operations
