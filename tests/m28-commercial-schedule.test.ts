@@ -97,6 +97,9 @@ describe("M28 commercial and schedule contract", () => {
     expect(migrationSource).toContain("Commercial record changed; refresh and retry");
     expect(migrationSource).toContain("Schedule changed; refresh and retry");
     expect(migrationSource).toContain("Another work day is actively executing; finish or stop it before rescheduling");
+    expect(migrationSource).toContain("Retained work-day history prevents schedule shrink");
+    expect(migrationSource).toContain("m21_execution_history");
+    expect(migrationSource).toContain("m23_comparison_snapshots");
     expect(migrationSource).toContain("add value if not exists 'cancelled'");
     expect(migrationSource).toContain("else 'cancelled'::public.ad_work_day_status");
     expect(migrationSource).toContain("telemetry_receipts");

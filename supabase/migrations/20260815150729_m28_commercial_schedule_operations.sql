@@ -446,6 +446,112 @@ begin
 end;
 $$;
 
+create or replace function public.sync_ad_work_days(
+  p_ad_work_id uuid,
+  p_start_date date,
+  p_number_of_days integer,
+  p_daily_start_time time default null,
+  p_daily_end_time time default null,
+  p_areas_to_cover text default null
+)
+returns void
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_day_count integer := greatest(coalesce(p_number_of_days, 1), 1);
+  v_day record;
+  v_day_offset integer;
+  v_day_ids uuid[];
+begin
+  if not public.is_admin() then
+    raise exception 'Admin access required' using errcode = '42501';
+  end if;
+  if p_start_date is null then
+    raise exception 'Start date is required' using errcode = '22004';
+  end if;
+  perform 1 from public.ad_works where id = p_ad_work_id for update;
+  if not found then raise exception 'Ad work not found' using errcode = 'P0002'; end if;
+
+  -- A surplus day may be removed only when no operational or analytical record
+  -- retains its identity. Checking before any write keeps a refused shrink atomic.
+  for v_day in
+    select ranked.id
+    from (
+      select d.id, row_number() over (order by d.work_date, d.id) as ordinal
+      from public.ad_work_days d
+      where d.ad_work_id = p_ad_work_id
+    ) ranked
+    where ranked.ordinal > v_day_count
+  loop
+    if exists (select 1 from public.ad_work_areas x where x.ad_work_day_id = v_day.id)
+       or exists (select 1 from public.tracking_sessions x where x.ad_work_day_id = v_day.id)
+       or exists (select 1 from public.location_points x where x.ad_work_day_id = v_day.id)
+       or exists (select 1 from public.proof_uploads x where x.ad_work_day_id = v_day.id)
+       or exists (select 1 from public.alerts x where x.ad_work_day_id = v_day.id)
+       or exists (select 1 from public.customer_updates x where x.ad_work_day_id = v_day.id)
+       or exists (select 1 from public.execution_proof_notes x where x.ad_work_day_id = v_day.id)
+       or exists (select 1 from public.m21_execution_history x where x.ad_work_day_id = v_day.id)
+       or exists (select 1 from public.telemetry_receipts x where x.ad_work_day_id = v_day.id)
+       or exists (select 1 from public.m22_rule_signals x where x.ad_work_day_id = v_day.id)
+       or exists (select 1 from public.m23_comparison_jobs x where x.ad_work_day_id = v_day.id)
+       or exists (select 1 from public.m23_comparison_snapshots x where x.ad_work_day_id = v_day.id)
+       or exists (select 1 from public.m25_feature_extraction_jobs x where x.ad_work_day_id = v_day.id)
+       or exists (select 1 from public.ad_work_schedule_events x where x.ad_work_day_id = v_day.id) then
+      raise exception 'Retained work-day history prevents schedule shrink' using errcode = '55000';
+    end if;
+  end loop;
+
+  delete from public.ad_work_days d
+  where d.id in (
+    select ranked.id
+    from (
+      select existing.id, row_number() over (order by existing.work_date, existing.id) as ordinal
+      from public.ad_work_days existing
+      where existing.ad_work_id = p_ad_work_id
+    ) ranked
+    where ranked.ordinal > v_day_count
+  );
+
+  select array_agg(d.id order by d.work_date, d.id)
+  into v_day_ids
+  from public.ad_work_days d
+  where d.ad_work_id = p_ad_work_id;
+
+  -- Move retained identities out of the target range first so swaps and shifts
+  -- cannot trip the unique (work, date) constraint midway through reconciliation.
+  if coalesce(array_length(v_day_ids, 1), 0) > 0 then
+    for v_day_offset in 1..array_length(v_day_ids, 1) loop
+      update public.ad_work_days
+      set work_date = date '0001-01-01' + (v_day_offset - 1)
+      where id = v_day_ids[v_day_offset];
+    end loop;
+  end if;
+
+  for v_day_offset in 0..(v_day_count - 1) loop
+    if v_day_offset < coalesce(array_length(v_day_ids, 1), 0) then
+      update public.ad_work_days
+      set work_date = p_start_date + v_day_offset,
+          planned_start_time = coalesce(planned_start_time, p_daily_start_time),
+          planned_end_time = coalesce(planned_end_time, p_daily_end_time),
+          areas_to_cover = coalesce(nullif(areas_to_cover, ''), p_areas_to_cover),
+          planning_status = 'planned',
+          updated_at = clock_timestamp()
+      where id = v_day_ids[v_day_offset + 1];
+    else
+      insert into public.ad_work_days(
+        ad_work_id, work_date, planned_start_time, planned_end_time,
+        status, planning_status, areas_to_cover
+      ) values (
+        p_ad_work_id, p_start_date + v_day_offset, p_daily_start_time,
+        p_daily_end_time, 'scheduled', 'planned', p_areas_to_cover
+      );
+    end if;
+  end loop;
+end;
+$$;
+
 create or replace function public.admin_sync_ad_work_days_v2(
   p_ad_work_id uuid,
   p_start_date date,

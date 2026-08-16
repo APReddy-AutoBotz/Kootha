@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(41);
+select plan(44);
 
 insert into public.user_profiles (auth_user_id, display_name, role)
 values
@@ -94,6 +94,22 @@ select is(
   (public.admin_sync_ad_work_days_v2('28000000-0000-4000-8000-000000000104', current_date + 32, 2, null, null, null, 0)->'snapshot'->'adWork'->>'scheduleVersion')::bigint,
   1::bigint,
   'legacy planning chronology now advances the authoritative schedule version'
+);
+select is(
+  (select string_agg(id::text, ',' order by work_date) from public.ad_work_days where ad_work_id='28000000-0000-4000-8000-000000000104'),
+  '28000000-0000-4000-8000-000000000206,28000000-0000-4000-8000-000000000207',
+  'valid future schedule reconciliation preserves work-day identities'
+);
+select throws_ok(
+  $$select public.admin_sync_ad_work_days_v2('28000000-0000-4000-8000-000000000104', current_date + 34, 1, null, null, null, 1)$$,
+  '55000', 'Retained work-day history prevents schedule shrink', 'historical-day conflict refuses destructive schedule shrink'
+);
+select is(
+  (select schedule_version::text || ':' || start_date::text || ':' || end_date::text || ':' || number_of_days::text || ':' ||
+          (select count(*)::text from public.ad_work_days d where d.ad_work_id=w.id)
+   from public.ad_works w where id='28000000-0000-4000-8000-000000000104'),
+  '1:' || (current_date + 32)::text || ':' || (current_date + 33)::text || ':2:2',
+  'historical-day conflict leaves version, dates and day count unchanged atomically'
 );
 select throws_ok(
   $$select public.admin_sync_ad_work_days_v2('28000000-0000-4000-8000-000000000104', current_date + 33, 2, null, null, null, 0)$$,
