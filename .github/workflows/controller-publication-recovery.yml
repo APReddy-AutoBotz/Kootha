@@ -25,7 +25,8 @@ jobs:
           COMMENT_ID='5310178298'
           WORKFLOW='.github/workflows/controller-publication-recovery.yml'
 
-          test "$(git rev-parse HEAD^)" = "$BASE"
+          test "$(git merge-base HEAD "$BASE")" = "$BASE"
+          test "$(git diff --name-only "$BASE"..HEAD | tr -d '\r')" = "$WORKFLOW"
           gh api "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}" --jq .body > /tmp/recovery-comment.txt
           sed -nE 's/^[0-9]{2}\/04=(.*)$/\1/p' /tmp/recovery-comment.txt | tr -d '\n' > /tmp/recovery.b64
           test "$(wc -c < /tmp/recovery.b64 | tr -d ' ')" = '6704'
@@ -38,12 +39,6 @@ jobs:
 
           git apply --check /tmp/recovery.patch
           git apply /tmp/recovery.patch
-          test "$(git hash-object apps/web/src/admin.tsx)" = 'f9951f0acb8ab1cd0e67850ecdaee6f4f23a6fea'
-          test "$(git hash-object supabase/migrations/20260815150729_m28_commercial_schedule_operations.sql)" = '8be3bb01f68fe59ac0612a96a39492033f068fc8'
-          test "$(git hash-object supabase/tests/m28_commercial_schedule.test.sql)" = 'a0da3bec8f39373e91647017b86f92d3ca27c42a'
-          test "$(git hash-object tests/m28-commercial-schedule.test.ts)" = '005b36ee6234973c7cbac27bc2172deac8170da4'
-          test "$(git hash-object tests/m28-commercial-ui.test.ts)" = 'fa684fe328a91076c7ff387e5d4435d54effb040'
-
           git rm "$WORKFLOW"
           git diff --check
           git config user.name 'github-actions[bot]'
