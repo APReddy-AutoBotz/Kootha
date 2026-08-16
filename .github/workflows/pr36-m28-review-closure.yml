@@ -45,11 +45,16 @@ jobs:
                   raise SystemExit(f'missing chunk {n}/3')
               chunks.append(re.sub(r'\s+', '', found.group(1)))
           compressed = base64.b64decode(''.join(chunks), validate=True)
-          assert len(compressed) == 9898
-          assert hashlib.sha256(compressed).hexdigest() == '2b6082882396865e75be3923b1bf0a9acf7e2660ade3052e67b8200221eae6a3'
+          if len(compressed) != 9898:
+              raise SystemExit(f'unexpected gzip length {len(compressed)}')
+          print('transport gzip sha256', hashlib.sha256(compressed).hexdigest())
           patch = gzip.decompress(compressed)
-          assert len(patch) == 59175
-          assert hashlib.sha256(patch).hexdigest() == '6b94c1f8342ef74dbae964a0b613146b17880e4a2281745f0d12e8d3b219855b'
+          if len(patch) != 59175:
+              raise SystemExit(f'unexpected patch length {len(patch)}')
+          patch_sha = hashlib.sha256(patch).hexdigest()
+          print('uncompressed patch sha256', patch_sha)
+          if patch_sha != '6b94c1f8342ef74dbae964a0b613146b17880e4a2281745f0d12e8d3b219855b':
+              raise SystemExit('uncompressed patch sha256 mismatch')
           open('/tmp/m28.diff', 'wb').write(patch)
           excluded = '.github/workflows/pr36-m28-review-closure.yml'
           subprocess.run(['git','apply','--check',f'--exclude={excluded}','/tmp/m28.diff'], check=True)
