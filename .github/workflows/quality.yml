@@ -38,4 +38,40 @@ jobs:
       - uses: supabase/setup-cli@v1
         with: { version: latest }
       - run: supabase start -x studio,imgproxy,inbucket,edge-runtime,logflare,vector,supavisor
-      - run: supabase test db
+      - name: Run full pgTAP and RLS suite with retained diagnostics
+        id: supabase-test-db
+        shell: bash
+        run: |
+          set +e
+          set -o pipefail
+          supabase test db 2>&1 | tee supabase-test-db.log
+          status=${PIPESTATUS[0]}
+          echo "exit_status=$status" >> "$GITHUB_OUTPUT"
+          exit "$status"
+
+      - name: Publish pgTAP diagnostic excerpt
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          {
+            echo '## `supabase test db` diagnostics'
+            echo
+            echo "Exit status: \`${{ steps.supabase-test-db.outputs.exit_status || 'not-recorded' }}\`"
+            echo
+            echo '```text'
+            if test -f supabase-test-db.log; then
+              tail -n 400 supabase-test-db.log | sed -E 's/\x1B\[[0-9;?]*[ -\/]*[@-~]//g'
+            else
+              echo 'The test command did not create a log file.'
+            fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload complete pgTAP diagnostic log
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: supabase-test-db-${{ github.sha }}
+          path: supabase-test-db.log
+          if-no-files-found: warn
+          retention-days: 7
