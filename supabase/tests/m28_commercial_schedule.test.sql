@@ -151,8 +151,13 @@ select throws_ok(
     ), 1)$$,
   '40001', 'Schedule changed; refresh and retry', 'stale day batch rejects before mutation'
 );
+-- Seed authoritative lifecycle history as the test owner. Browser-facing roles are
+-- intentionally read-only for immutable schedule history.
+reset role;
 insert into public.ad_work_schedule_events(ad_work_id, actor_id, event_type, reason, customer_message, schedule_version)
 values ('28000000-0000-4000-8000-000000000104','28000000-0000-4000-8000-0000000000a1','ad_work_rescheduled','Lifecycle fence','Schedule updated',3);
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '28000000-0000-4000-8000-0000000000a1', true);
 select throws_ok(
   $$select public.admin_sync_ad_work_days_v2('28000000-0000-4000-8000-000000000104', current_date + 36, 2, null, null, null, 2)$$,
   '55000', 'Schedule lifecycle history exists; use Commercial and Schedule operations', 'legacy initial sync is closed after lifecycle history'
