@@ -86,6 +86,12 @@ describe("M28 commercial and schedule contract", () => {
         nextBeforeVersion: null,
       },
       scheduleEvents: [],
+      scheduleEventsPage: {
+        limit: 20,
+        returned: 0,
+        hasMore: false,
+        nextBeforeVersion: null,
+      },
     };
     expect(validateCommercialScheduleSnapshot(snapshot)).toBe(true);
     expect(validateCommercialScheduleSnapshot({ ...snapshot, adWork: { ...snapshot.adWork, paymentStatus: "paid_somehow" } })).toBe(false);

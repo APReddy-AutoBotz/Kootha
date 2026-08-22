@@ -7,6 +7,7 @@ import {
   paymentStatuses,
   validateCommercialHistoryPage,
   validateCommercialScheduleSnapshot,
+  validateScheduleHistoryPage,
   validatePaymentDraft,
 } from "@kootha/shared";
 import type {
@@ -14,6 +15,7 @@ import type {
   CommercialEventPageMetadata,
   CommercialScheduleSnapshot,
   PaymentStatus,
+  ScheduleEvent,
 } from "@kootha/shared";
 
 export type CommercialScheduleConnection = {
@@ -100,6 +102,8 @@ export function CommercialScheduleWorkbench({
   const [snapshot, setSnapshot] = useState<CommercialScheduleSnapshot | null>(null);
   const [commercialHistoryEvents, setCommercialHistoryEvents] = useState<CommercialEvent[]>([]);
   const [commercialHistoryPage, setCommercialHistoryPage] = useState<CommercialEventPageMetadata | null>(null);
+  const [scheduleHistoryEvents, setScheduleHistoryEvents] = useState<ScheduleEvent[]>([]);
+  const [scheduleHistoryPage, setScheduleHistoryPage] = useState<CommercialEventPageMetadata | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [customerMessage, setCustomerMessage] = useState("");
@@ -123,6 +127,8 @@ export function CommercialScheduleWorkbench({
     setSnapshot(null);
     setCommercialHistoryEvents([]);
     setCommercialHistoryPage(null);
+    setScheduleHistoryEvents([]);
+    setScheduleHistoryPage(null);
     setError("");
     setCustomerMessage("");
     setSelectedDayId("");
@@ -141,6 +147,8 @@ export function CommercialScheduleWorkbench({
     setSnapshot(next);
     setCommercialHistoryEvents(next.commercialEvents);
     setCommercialHistoryPage(next.commercialEventsPage);
+    setScheduleHistoryEvents(next.scheduleEvents);
+    setScheduleHistoryPage(next.scheduleEventsPage);
     setPaymentStatus(next.adWork.paymentStatus);
     setTotalAmount(String(next.adWork.totalAmount));
     setPaidAmount(String(next.adWork.paidAmount));
@@ -205,6 +213,40 @@ export function CommercialScheduleWorkbench({
     } catch (historyError) {
       if (requestId === requestSequence.current && adWorkId === selectedAdWorkRef.current) {
         setError(historyError instanceof Error ? historyError.message : "Could not load older commercial history.");
+      }
+    } finally {
+      if (requestId === requestSequence.current && adWorkId === selectedAdWorkRef.current) setBusy(false);
+    }
+  }
+
+  async function loadOlderScheduleHistory() {
+    if (!snapshot || !scheduleHistoryPage?.hasMore || scheduleHistoryPage.nextBeforeVersion === null) return;
+    const adWorkId = snapshot.adWork.id;
+    const expectedFingerprint = snapshotFingerprint;
+    const beforeVersion = scheduleHistoryPage.nextBeforeVersion;
+    const requestId = ++requestSequence.current;
+    setBusy(true);
+    setError("");
+    try {
+      const next = await postRpc<unknown>(connection, "admin_list_ad_work_schedule_events_v1", {
+        p_ad_work_id: adWorkId,
+        p_before_version: beforeVersion,
+        p_limit: 20,
+      });
+      if (requestId !== requestSequence.current
+        || adWorkId !== selectedAdWorkRef.current
+        || expectedFingerprint !== snapshotFingerprint) return;
+      if (!validateScheduleHistoryPage(next)) {
+        throw new Error("The server returned an invalid schedule-history page.");
+      }
+      setScheduleHistoryEvents((current) => {
+        const seen = new Set(current.map((event) => event.id));
+        return [...current, ...next.events.filter((event) => !seen.has(event.id))];
+      });
+      setScheduleHistoryPage(next.page);
+    } catch (historyError) {
+      if (requestId === requestSequence.current && adWorkId === selectedAdWorkRef.current) {
+        setError(historyError instanceof Error ? historyError.message : "Could not load older schedule history.");
       }
     } finally {
       if (requestId === requestSequence.current && adWorkId === selectedAdWorkRef.current) setBusy(false);
@@ -443,10 +485,21 @@ export function CommercialScheduleWorkbench({
 
           <section className="form-section">
             <h3>Schedule lifecycle history</h3>
-            {snapshot.scheduleEvents.length === 0 ? <p className="quiet-note">No cancellation/reschedule changes recorded yet.</p> : (
-              <div className="table-scroll"><table className="data-table"><thead><tr><th>When</th><th>Change</th><th>Reason</th><th>Version</th></tr></thead><tbody>
-                {snapshot.scheduleEvents.map((event) => <tr key={event.id}><td>{displayTime(event.createdAt)}</td><td>{event.eventType.replaceAll("_", " ")}</td><td>{event.reason}</td><td>{event.version}</td></tr>)}
-              </tbody></table></div>
+            {scheduleHistoryEvents.length === 0 ? <p className="quiet-note">No cancellation/reschedule changes recorded yet.</p> : (
+              <>
+                <p className="quiet-note">
+                  Showing {scheduleHistoryEvents.length} schedule change{scheduleHistoryEvents.length === 1 ? "" : "s"}.
+                  {scheduleHistoryPage?.hasMore ? " Older entries are available." : " Complete available history is loaded."}
+                </p>
+                <div className="table-scroll"><table className="data-table"><thead><tr><th>When</th><th>Change</th><th>Reason</th><th>Version</th></tr></thead><tbody>
+                  {scheduleHistoryEvents.map((event) => <tr key={event.id}><td>{displayTime(event.createdAt)}</td><td>{event.eventType.replaceAll("_", " ")}</td><td>{event.reason}</td><td>{event.version}</td></tr>)}
+                </tbody></table></div>
+                {scheduleHistoryPage?.hasMore && (
+                  <button type="button" className="secondary-button" disabled={busy} onClick={() => void loadOlderScheduleHistory()}>
+                    Load older schedule history
+                  </button>
+                )}
+              </>
             )}
           </section>
         </>

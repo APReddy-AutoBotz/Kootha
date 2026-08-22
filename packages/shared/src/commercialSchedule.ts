@@ -81,6 +81,7 @@ export type CommercialScheduleSnapshot = {
   commercialEvents: CommercialEvent[];
   commercialEventsPage: CommercialEventPageMetadata;
   scheduleEvents: ScheduleEvent[];
+  scheduleEventsPage: CommercialEventPageMetadata;
 };
 
 export type PaymentDraft = {
@@ -165,6 +166,17 @@ function isCommercialEvent(value: unknown): value is CommercialEvent {
     && typeof value.createdAt === "string";
 }
 
+function isScheduleEvent(value: unknown): value is ScheduleEvent {
+  return isRecord(value)
+    && typeof value.id === "string"
+    && ["ad_work_rescheduled", "day_rescheduled", "ad_work_cancelled"].includes(String(value.eventType))
+    && (value.adWorkDayId === null || typeof value.adWorkDayId === "string")
+    && typeof value.reason === "string"
+    && typeof value.customerMessage === "string"
+    && Number.isInteger(value.version)
+    && typeof value.createdAt === "string";
+}
+
 function isCommercialEventPageMetadata(value: unknown): value is CommercialEventPageMetadata {
   if (!isRecord(value)
       || !Number.isInteger(value.limit)
@@ -187,6 +199,13 @@ export function validateCommercialHistoryPage(value: unknown): value is Commerci
     && value.events.every(isCommercialEvent);
 }
 
+export function validateScheduleHistoryPage(value: unknown): value is { events: ScheduleEvent[]; page: CommercialEventPageMetadata } {
+  if (!isRecord(value) || !Array.isArray(value.events) || !isCommercialEventPageMetadata(value.page)) return false;
+  return value.events.length === value.page.returned
+    && value.events.length <= value.page.limit
+    && value.events.every(isScheduleEvent);
+}
+
 export function validateCommercialScheduleSnapshot(value: unknown): value is CommercialScheduleSnapshot {
   if (!isRecord(value) || !isRecord(value.adWork)) return false;
   const work = value.adWork;
@@ -198,9 +217,12 @@ export function validateCommercialScheduleSnapshot(value: unknown): value is Com
   if (!Array.isArray(value.days)
       || !Array.isArray(value.commercialEvents)
       || !isCommercialEventPageMetadata(value.commercialEventsPage)
-      || !Array.isArray(value.scheduleEvents)) return false;
+      || !Array.isArray(value.scheduleEvents)
+      || !isCommercialEventPageMetadata(value.scheduleEventsPage)) return false;
   if (value.commercialEvents.length !== value.commercialEventsPage.returned
-      || value.commercialEvents.length > value.commercialEventsPage.limit) return false;
+      || value.commercialEvents.length > value.commercialEventsPage.limit
+      || value.scheduleEvents.length !== value.scheduleEventsPage.returned
+      || value.scheduleEvents.length > value.scheduleEventsPage.limit) return false;
   return value.days.every((day) => isRecord(day)
       && typeof day.id === "string"
       && typeof day.workDate === "string"
@@ -208,10 +230,5 @@ export function validateCommercialScheduleSnapshot(value: unknown): value is Com
       && typeof day.planningStatus === "string"
       && typeof day.executionStatus === "string")
     && value.commercialEvents.every(isCommercialEvent)
-    && value.scheduleEvents.every((event) => isRecord(event)
-      && typeof event.id === "string"
-      && ["ad_work_rescheduled", "day_rescheduled", "ad_work_cancelled"].includes(String(event.eventType))
-      && typeof event.reason === "string"
-      && typeof event.customerMessage === "string"
-      && Number.isInteger(event.version));
+    && value.scheduleEvents.every(isScheduleEvent);
 }
