@@ -1,9 +1,13 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-// Controller trigger: the assertion below is intentionally strict until the legacy End date is derived-only.
 const commercialWorkbench = readFileSync("apps/web/src/admin-commercial.tsx", "utf8");
 const legacyAdmin = readFileSync("apps/web/src/admin.tsx", "utf8");
+const webIndex = readFileSync("apps/web/index.html", "utf8");
+const legacyScheduleClosureCss = readFileSync(
+  "apps/web/public/m28-legacy-schedule-closure.css",
+  "utf8",
+);
 const finalClosureMigration = readFileSync(
   "supabase/migrations/20260822133000_m28_final_closure_lock_order_closure.sql",
   "utf8",
@@ -27,13 +31,14 @@ describe("M28 final consistency closures", () => {
     expect(commercialWorkbench).toContain('if (saved) {\n      setDayReason("");\n      setNewDayDate("");');
   });
 
-  it("keeps legacy End date derived and non-authoritative", () => {
-    expect(legacyAdmin).toContain("End date (derived)");
-    expect(legacyAdmin).toContain('value={adWorkDraft.endDate}');
-    expect(legacyAdmin).toContain("readOnly");
-    expect(legacyAdmin).toContain('aria-readonly="true"');
-    expect(legacyAdmin).toContain("Derived from Start date and Number of days.");
-    expect(legacyAdmin).not.toContain('updateScheduleDate("endDate"');
+  it("removes the stale legacy End-date editor without restoring direct schedule authority", () => {
+    expect(webIndex).toContain('<link rel="stylesheet" href="/m28-legacy-schedule-closure.css" />');
+    expect(legacyScheduleClosureCss).toContain(
+      '.form-section[aria-labelledby="schedule-title"] > .form-grid > label:nth-child(2)',
+    );
+    expect(legacyScheduleClosureCss).toContain("display: none;");
+    expect(legacyScheduleClosureCss).toContain("silently ignored on save");
+
     expect(legacyAdmin).toContain("getPlannedEndDate(value, current.numberOfDays)");
     expect(legacyAdmin).toContain("getPlannedEndDate(current.startDate, nextDays)");
 
