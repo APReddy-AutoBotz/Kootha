@@ -1,0 +1,88 @@
+name: PR36 M28 systemic authority closure retry
+
+on:
+  pull_request:
+    types: [synchronize]
+
+permissions:
+  contents: write
+
+jobs:
+  close-authority-family:
+    if: github.event.pull_request.number == 36 && github.event.pull_request.head.ref == 'milestone/m28-commercial-schedule-operations'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: milestone/m28-commercial-schedule-operations
+          fetch-depth: 4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Rebuild identical correction and fix pgTAP literal syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "94fe87c97c34915be652cb15482b8a7c3393037a"
+          echo "$(git rev-parse HEAD)" > /tmp/controller_head
+          python <<'PY'
+          from pathlib import Path
+
+          source = Path('.github/workflows/pr36-m28-systemic-authority-closure.yml').read_text()
+
+          def extract(path: str, tag: str) -> str:
+              marker = f"          cat > {path} <<'{tag}'\n"
+              start = source.index(marker) + len(marker)
+              end = source.index(f"\n          {tag}\n", start)
+              lines = source[start:end].splitlines()
+              return '\n'.join(line[10:] if line.startswith('          ') else line for line in lines) + '\n'
+
+          migration_path = 'supabase/migrations/20260822120000_m28_global_authority_assignment_cancellation_closure.sql'
+          sql_test_path = 'supabase/tests/m28_global_authority_assignment_cancellation_closure.test.sql'
+          static_test_path = 'tests/m28-global-authority-assignment-cancellation-closure.test.ts'
+
+          Path(migration_path).write_text(extract(migration_path, 'SQL'))
+          sql_test = extract(sql_test_path, 'SQL')
+          bad = 'position("p_mutation_type = \'cancel\'" in'
+          good = "position($$p_mutation_type = 'cancel'$$ in"
+          if sql_test.count(bad) != 1:
+              raise SystemExit(f'expected exactly one stale pgTAP literal, found {sql_test.count(bad)}')
+          Path(sql_test_path).write_text(sql_test.replace(bad, good, 1))
+          Path(static_test_path).write_text(extract(static_test_path, 'TS'))
+
+          Path('.github/workflows/pr36-m28-systemic-authority-closure.yml').unlink()
+          Path('.github/workflows/pr36-m28-systemic-authority-retry.yml').unlink()
+          PY
+          git diff --check
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Validate retained application gates
+        run: |
+          pnpm lint
+          pnpm typecheck
+          pnpm test
+          pnpm build
+          pnpm security:scan
+          pnpm migrations:check
+          git diff --check
+      - name: Validate fresh Supabase and full pgTAP/RLS
+        run: |
+          supabase start -x studio,imgproxy,mailpit,edge-runtime,logflare,vector,supavisor
+          supabase test db
+      - name: Publish corrected product head with branch-race guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_controller_head="$(cat /tmp/controller_head)"
+          git fetch origin milestone/m28-commercial-schedule-operations
+          test "$(git rev-parse origin/milestone/m28-commercial-schedule-operations)" = "$expected_controller_head"
+          git config user.name "Avala Parameswara Reddy"
+          git config user.email "avalaparameswarareddy@gmail.com"
+          git add -A
+          git commit -m "fix: close M28 global lock and assignment cancellation authority"
+          git push origin HEAD:milestone/m28-commercial-schedule-operations
