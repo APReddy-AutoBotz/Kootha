@@ -198,34 +198,52 @@ describe("M29 hosted release readiness", () => {
     }
   });
 
-  it("rejects untracked release inputs but permits ignored generated output", () => {
+  it("derives evidence only from tracked HEAD while rejecting visible untracked inputs", () => {
     const root = mkdtempSync(path.join(tmpdir(), "kootha-m29-untracked-"));
     try {
       git(root, ["init"]);
       git(root, ["config", "user.email", "m29@example.invalid"]);
       git(root, ["config", "user.name", "M29 Test"]);
+      mkdirSync(path.join(root, "supabase", "migrations"), { recursive: true });
+      mkdirSync(path.join(root, "apps", "web", "src"), { recursive: true });
       writeFileSync(path.join(root, ".gitignore"), "output/\n", "utf8");
-      writeFileSync(path.join(root, "tracked.txt"), "clean\n", "utf8");
-      git(root, ["add", ".gitignore", "tracked.txt"]);
+      writeFileSync(path.join(root, "supabase", "migrations", "20260101000000_base.sql"), "select 1;\n", "utf8");
+      writeFileSync(path.join(root, "apps", "web", "src", "tracked.ts"), "export const product = import.meta.env.VITE_PRODUCT_NAME;\n", "utf8");
+      git(root, ["add", ".gitignore", "supabase/migrations/20260101000000_base.sql", "apps/web/src/tracked.ts"]);
       git(root, ["commit", "-m", "initial"]);
+
+      const baselineMigration = migrationProvenance(root);
+      const baselineRuntime = findRuntimeEnvironmentNames(root);
+      expect(baselineMigration.count).toBe(1);
+      expect(baselineRuntime).toEqual(["VITE_PRODUCT_NAME"]);
 
       mkdirSync(path.join(root, "output"), { recursive: true });
       writeFileSync(path.join(root, "output", "manifest.json"), "{}\n", "utf8");
       expect(evaluateSourceProvenance({ root }).ok).toBe(true);
 
-      mkdirSync(path.join(root, "supabase", "migrations"), { recursive: true });
-      const migration = path.join(root, "supabase", "migrations", "20990101000000_untracked.sql");
-      writeFileSync(migration, "select 1;\n", "utf8");
+      writeFileSync(
+        path.join(root, ".git", "info", "exclude"),
+        "supabase/migrations/20990101000000_ignored.sql\napps/web/src/ignored-runtime.ts\n",
+        "utf8",
+      );
+      writeFileSync(path.join(root, "supabase", "migrations", "20990101000000_ignored.sql"), "select 2;\n", "utf8");
+      writeFileSync(path.join(root, "apps", "web", "src", "ignored-runtime.ts"), "export const leaked = process.env.VITE_UNCLASSIFIED_AUTHORITY;\n", "utf8");
+      expect(evaluateSourceProvenance({ root }).ok).toBe(true);
+      expect(migrationProvenance(root)).toEqual(baselineMigration);
+      expect(findRuntimeEnvironmentNames(root)).toEqual(baselineRuntime);
+
+      const visibleMigration = path.join(root, "supabase", "migrations", "20990102000000_visible.sql");
+      writeFileSync(visibleMigration, "select 3;\n", "utf8");
       let unsafe = evaluateSourceProvenance({ root });
       expect(unsafe.ok).toBe(false);
       expect(unsafe.checks).toContainEqual(expect.objectContaining({
         name: "worktree-state",
         status: "dirty_or_untracked_state",
       }));
-      rmSync(migration);
+      rmSync(visibleMigration);
 
-      mkdirSync(path.join(root, "apps", "web", "src"), { recursive: true });
-      writeFileSync(path.join(root, "apps", "web", "src", "untracked-runtime.ts"), "export const releaseAuthority = true;\n", "utf8");
+      const visibleRuntime = path.join(root, "apps", "web", "src", "visible-runtime.ts");
+      writeFileSync(visibleRuntime, "export const authority = process.env.VITE_VISIBLE_AUTHORITY;\n", "utf8");
       unsafe = evaluateSourceProvenance({ root });
       expect(unsafe.ok).toBe(false);
       expect(unsafe.checks).toContainEqual(expect.objectContaining({
