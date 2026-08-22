@@ -230,11 +230,11 @@ function gitText(root, args) {
 
 export function sourceProvenance({ root = process.cwd(), expectedSha = "" } = {}) {
   const sha = gitText(root, ["rev-parse", "HEAD"]);
-  const trackedStatus = gitText(root, ["status", "--porcelain", "--untracked-files=no"]);
+  const worktreeStatus = gitText(root, ["status", "--porcelain", "--untracked-files=all"]);
   const expected = String(expectedSha ?? "").trim();
   return {
     sha,
-    cleanTracked: trackedStatus.length === 0,
+    cleanWorktree: worktreeStatus.length === 0,
     expectedShaMatches: expected.length === 0 || expected === sha,
   };
 }
@@ -242,7 +242,7 @@ export function sourceProvenance({ root = process.cwd(), expectedSha = "" } = {}
 export function evaluateSourceProvenance({ root = process.cwd(), expectedSha = "" } = {}) {
   const source = sourceProvenance({ root, expectedSha });
   const checks = [
-    check("source", "tracked-state", source.cleanTracked, source.cleanTracked ? "info" : "error", source.cleanTracked ? "clean" : "dirty_tracked_state"),
+    check("source", "worktree-state", source.cleanWorktree, source.cleanWorktree ? "info" : "error", source.cleanWorktree ? "clean" : "dirty_or_untracked_state"),
     check("source", "expected-sha", source.expectedShaMatches, source.expectedShaMatches ? "info" : "error", source.expectedShaMatches ? "matches_checkout" : "expected_sha_mismatch"),
   ];
   return { ...summarizeChecks(checks), source };
@@ -305,7 +305,7 @@ export function buildReleaseManifest({
   env = process.env,
   timestamp = releaseTimestamp(env),
 } = {}) {
-  if (!source?.sha || source.cleanTracked !== true) throw new Error("Release manifest requires a clean tracked Git source.");
+  if (!source?.sha || source.cleanWorktree !== true) throw new Error("Release manifest requires a clean non-ignored Git worktree.");
   if (source.expectedShaMatches === false) throw new Error("Release manifest source SHA does not match the evaluated checkout.");
   const releaseId = String(env.VITE_APP_RELEASE || env.EXPO_PUBLIC_APP_RELEASE || "unversioned").trim() || "unversioned";
   const external = {
