@@ -8,7 +8,7 @@ export const EXTERNAL_ATTESTATION_REQUIRED = "external-attestation-required";
 
 const PLACEHOLDER_FRAGMENTS = ["your-project", "replace-with", "placeholder", "example.com", "change-me", "todo"];
 const PUBLIC_PREFIXES = ["VITE_", "EXPO_PUBLIC_"];
-const PUBLIC_AUTHORITY_PATTERN = /(?:SERVICE_ROLE|SECRET|PEPPER|CREDENTIAL|RATE_LIMIT_KEY)/i;
+const PUBLIC_AUTHORITY_PATTERN = /(?:SERVICE_ROLE|SECRET|PEPPER|CREDENTIAL|RATE_LIMIT_KEY|API_KEY|TOKEN|PASSWORD|PRIVATE_KEY)/i;
 const BUILTIN_RUNTIME_ENV_NAMES = new Set(["BASE_URL", "DEV", "MODE", "NODE_ENV", "PROD", "SSR"]);
 const PLACEHOLDER_EXPECTED_PUBLIC_NAMES = new Set([
   "VITE_SUPABASE_URL",
@@ -134,7 +134,7 @@ function tryReadHeadText(root, relativePath) {
 export function findUnsafePublicAuthorityNames(env = {}) {
   return Object.keys(env)
     .filter((name) => PUBLIC_PREFIXES.some((prefix) => name.startsWith(prefix)))
-    .filter((name) => PUBLIC_AUTHORITY_PATTERN.test(name))
+    .filter((name) => !CONTRACT_NAMES.has(name) || PUBLIC_AUTHORITY_PATTERN.test(name))
     .sort();
 }
 
@@ -144,7 +144,7 @@ export function evaluateEnvironment({ mode = "preview", env = process.env } = {}
   const scopes = relevantScopes(mode);
 
   for (const unsafeName of findUnsafePublicAuthorityNames(env)) {
-    checks.push(check("environment", unsafeName, false, "error", "unsafe_public_authority_name"));
+    checks.push(check("environment", unsafeName, false, "error", "unsafe_or_unclassified_public_name"));
   }
 
   for (const entry of ENVIRONMENT_CONTRACT) {
@@ -283,7 +283,7 @@ export function evaluateRepository({ mode = "preview", root = process.cwd() } = 
   for (const name of unclassified) checks.push(check("runtime-env-coverage", name, false, "error", "unclassified"));
   const unsafeNames = findUnsafePublicAuthorityNames(Object.fromEntries([...envExample.keys()].map((name) => [name, "present"])));
   if (unsafeNames.length === 0) checks.push(check("env-example", "public-authority-boundary", true, "info", "safe"));
-  for (const name of unsafeNames) checks.push(check("env-example", name, false, "error", "unsafe_public_authority_name"));
+  for (const name of unsafeNames) checks.push(check("env-example", name, false, "error", "unsafe_or_unclassified_public_name"));
   const migration = migrationProvenance(root);
   checks.push(check("migrations", "timestamp-uniqueness", true, "info", "verified"));
   checks.push(check("migrations", "fingerprint", true, "info", "computed_from_tracked_head"));
