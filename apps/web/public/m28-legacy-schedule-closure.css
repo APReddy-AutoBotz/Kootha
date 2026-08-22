@@ -1,0 +1,10 @@
+/*
+ * M28 schedule-authority closure.
+ * The legacy Admin editor no longer persists an independently entered end date;
+ * it is governed by the versioned schedule RPC from start date + number of days.
+ * Remove the stale editable control from the rendered/accessibility surface rather
+ * than presenting an input whose value would be silently ignored on save.
+ */
+.form-section[aria-labelledby="schedule-title"] > .form-grid > label:nth-child(2) {
+  display: none;
+}
