@@ -34,6 +34,18 @@ const sourceEvaluation = evaluateSourceProvenance({
   root,
   expectedSha: process.env.RELEASE_SOURCE_SHA || "",
 });
+
+console.log(`release-readiness mode=${mode} source=${configSource}`);
+for (const item of sourceEvaluation.checks) {
+  console.log(`${item.scope}:${item.name}: ${item.status} (${item.severity})`);
+}
+console.log(`evaluated-source-sha: ${sourceEvaluation.source.sha}`);
+
+if (!sourceEvaluation.ok) {
+  console.error("release-readiness: source provenance check failed; release inputs were not evaluated and no manifest was emitted");
+  process.exit(1);
+}
+
 const configurationEvaluation = configSource === "repository"
   ? evaluateRepository({ mode, root })
   : evaluateEnvironment({ mode, env: process.env });
@@ -43,18 +55,11 @@ const evaluation = summarizeChecks([
 ]);
 const migration = configurationEvaluation.migration ?? migrationProvenance(root);
 
-console.log(`release-readiness mode=${mode} source=${configSource}`);
-for (const item of evaluation.checks) {
+for (const item of configurationEvaluation.checks) {
   console.log(`${item.scope}:${item.name}: ${item.status} (${item.severity})`);
 }
-console.log(`evaluated-source-sha: ${sourceEvaluation.source.sha}`);
 console.log(`migration-count: ${migration.count}`);
 console.log(`migration-fingerprint: ${migration.fingerprint}`);
-
-if (!sourceEvaluation.ok) {
-  console.error("release-readiness: source provenance check failed; no release manifest was emitted");
-  process.exit(1);
-}
 
 const manifest = buildReleaseManifest({
   mode,
