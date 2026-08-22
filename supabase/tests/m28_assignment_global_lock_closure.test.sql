@@ -210,10 +210,16 @@ select is(
 );
 
 select lives_ok(
-  $$update public.ad_work_assignments
-    set status = 'needs_review', updated_at = clock_timestamp()
-    where id = '28c00000-0000-4000-8000-000000000203'$$,
-  'normal assignment mutation remains available for non-cancelled work'
+  $$select * from public.assign_driver_vehicle_to_ad_work(
+      '28c00000-0000-4000-8000-000000000103',
+      '28c00000-0000-4000-8000-000000000002',
+      '28c00000-0000-4000-8000-000000000003',
+      'needs_review',
+      'Normal non-cancelled assignment control',
+      '{}'::text[],
+      false
+    )$$,
+  'governed assignment mutation remains available for non-cancelled work'
 );
 
 select is(
@@ -223,7 +229,7 @@ select is(
     where id = '28c00000-0000-4000-8000-000000000203'
   ),
   'needs_review'::text,
-  'non-cancelled assignment state still updates normally'
+  'non-cancelled assignment state still updates normally through governed authority'
 );
 
 reset role;
