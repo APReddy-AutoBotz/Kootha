@@ -1,0 +1,192 @@
+name: M28 P2 controller closure
+
+on:
+  push:
+    branches:
+      - milestone/m28-commercial-schedule-operations
+    paths:
+      - .github/workflows/m28-p2-controller.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-closure:
+    if: github.event.head_commit.message != 'fix(m28): preserve mutation inputs on failure'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: milestone/m28-commercial-schedule-operations
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply exact P2 closure
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('apps/web/src/admin-commercial.tsx')
+          text = path.read_text()
+
+          old = '''  async function runMutation(rpc: string, body: Record<string, unknown>) {
+            if (!snapshot) return;
+            const adWorkId = snapshot.adWork.id;
+            const expectedFingerprint = snapshotFingerprint;
+            const requestId = ++requestSequence.current;
+            setBusy(true);
+            setError("");
+            setCustomerMessage("");
+            try {
+              const envelope = await postRpc<MutationEnvelope>(connection, rpc, body);
+              if (requestId !== requestSequence.current
+                || adWorkId !== selectedAdWorkRef.current
+                || expectedFingerprint !== snapshotFingerprint) return;
+              if (!applySnapshot(envelope.snapshot, requestId, adWorkId)) return;
+              if (typeof envelope.customerMessage === "string") setCustomerMessage(envelope.customerMessage);
+            } catch (mutationError) {
+              if (requestId === requestSequence.current && adWorkId === selectedAdWorkRef.current) {
+                setError(mutationError instanceof Error ? mutationError.message : "The change could not be saved.");
+              }
+            } finally {
+              if (requestId === requestSequence.current && adWorkId === selectedAdWorkRef.current) setBusy(false);
+            }
+          }'''
+          new = '''  async function runMutation(rpc: string, body: Record<string, unknown>): Promise<boolean> {
+            if (!snapshot) return false;
+            const adWorkId = snapshot.adWork.id;
+            const expectedFingerprint = snapshotFingerprint;
+            const requestId = ++requestSequence.current;
+            setBusy(true);
+            setError("");
+            setCustomerMessage("");
+            try {
+              const envelope = await postRpc<MutationEnvelope>(connection, rpc, body);
+              if (requestId !== requestSequence.current
+                || adWorkId !== selectedAdWorkRef.current
+                || expectedFingerprint !== snapshotFingerprint) return false;
+              if (!applySnapshot(envelope.snapshot, requestId, adWorkId)) return false;
+              if (typeof envelope.customerMessage === "string") setCustomerMessage(envelope.customerMessage);
+              return true;
+            } catch (mutationError) {
+              if (requestId === requestSequence.current && adWorkId === selectedAdWorkRef.current) {
+                setError(mutationError instanceof Error ? mutationError.message : "The change could not be saved.");
+              }
+              return false;
+            } finally {
+              if (requestId === requestSequence.current && adWorkId === selectedAdWorkRef.current) setBusy(false);
+            }
+          }'''
+          if text.count(old) != 1:
+              raise SystemExit('runMutation source did not match exact expected head')
+          text = text.replace(old, new, 1)
+
+          replacements = [
+              (
+                  '''    await runMutation("admin_reschedule_ad_work_v1", {
+                    p_ad_work_id: snapshot.adWork.id,
+                    p_new_start_date: newStartDate,
+                    p_reason: rescheduleReason.trim(),
+                    p_expected_version: snapshot.adWork.scheduleVersion,
+                  });
+                  setRescheduleReason("");''',
+                  '''    const saved = await runMutation("admin_reschedule_ad_work_v1", {
+                    p_ad_work_id: snapshot.adWork.id,
+                    p_new_start_date: newStartDate,
+                    p_reason: rescheduleReason.trim(),
+                    p_expected_version: snapshot.adWork.scheduleVersion,
+                  });
+                  if (saved) setRescheduleReason("");'''
+              ),
+              (
+                  '''    await runMutation("admin_reschedule_ad_work_day_v1", {
+                    p_ad_work_id: snapshot.adWork.id,
+                    p_ad_work_day_id: selectedDayId,
+                    p_new_date: newDayDate,
+                    p_reason: dayReason.trim(),
+                    p_expected_version: snapshot.adWork.scheduleVersion,
+                  });
+                  setDayReason("");
+                  setNewDayDate("");''',
+                  '''    const saved = await runMutation("admin_reschedule_ad_work_day_v1", {
+                    p_ad_work_id: snapshot.adWork.id,
+                    p_ad_work_day_id: selectedDayId,
+                    p_new_date: newDayDate,
+                    p_reason: dayReason.trim(),
+                    p_expected_version: snapshot.adWork.scheduleVersion,
+                  });
+                  if (saved) {
+                    setDayReason("");
+                    setNewDayDate("");
+                  }'''
+              ),
+              (
+                  '''    await runMutation("admin_cancel_ad_work_v1", {
+                    p_ad_work_id: snapshot.adWork.id,
+                    p_reason: cancellationReason.trim(),
+                    p_internal_note: cancellationInternalNote.trim() || null,
+                    p_expected_version: snapshot.adWork.scheduleVersion,
+                  });
+                  setCancellationReason("");
+                  setCancellationInternalNote("");''',
+                  '''    const saved = await runMutation("admin_cancel_ad_work_v1", {
+                    p_ad_work_id: snapshot.adWork.id,
+                    p_reason: cancellationReason.trim(),
+                    p_internal_note: cancellationInternalNote.trim() || null,
+                    p_expected_version: snapshot.adWork.scheduleVersion,
+                  });
+                  if (saved) {
+                    setCancellationReason("");
+                    setCancellationInternalNote("");
+                  }'''
+              ),
+          ]
+          for old_snippet, new_snippet in replacements:
+              if text.count(old_snippet) != 1:
+                  raise SystemExit('handler source did not match exact expected head')
+              text = text.replace(old_snippet, new_snippet, 1)
+          path.write_text(text)
+
+          test_path = Path('tests/m28-replay-current-snapshot-closure.test.ts')
+          test = test_path.read_text()
+          anchor = '''  it("keeps the Admin workbench bound to the authoritative snapshot returned by a mutation", () => {
+            expect(workbenchSource).toContain("const envelope = await postRpc<MutationEnvelope>(connection, rpc, body);");
+            expect(workbenchSource).toContain("expectedFingerprint !== snapshotFingerprint");
+            expect(workbenchSource).toContain("applySnapshot(envelope.snapshot, requestId, adWorkId)");
+            expect(workbenchSource).toContain("validateCommercialScheduleSnapshot(next)");
+          });'''
+          expanded = anchor + '''
+
+          it("preserves mutation inputs until a validated authoritative response succeeds", () => {
+            expect(workbenchSource).toContain("async function runMutation(rpc: string, body: Record<string, unknown>): Promise<boolean>");
+            expect(workbenchSource).toContain("if (!snapshot) return false;");
+            expect(workbenchSource).toContain("expectedFingerprint !== snapshotFingerprint) return false;");
+            expect(workbenchSource).toContain("if (!applySnapshot(envelope.snapshot, requestId, adWorkId)) return false;");
+            expect(workbenchSource).toContain("return true;");
+            expect(workbenchSource).toContain("const saved = await runMutation(\\"admin_reschedule_ad_work_v1\\"");
+            expect(workbenchSource).toContain("if (saved) setRescheduleReason(\\"\\");");
+            expect(workbenchSource).toContain("const saved = await runMutation(\\"admin_reschedule_ad_work_day_v1\\"");
+            expect(workbenchSource).toContain("if (saved) {\\n      setDayReason(\\"\\");\\n      setNewDayDate(\\"\\");");
+            expect(workbenchSource).toContain("const saved = await runMutation(\\"admin_cancel_ad_work_v1\\"");
+            expect(workbenchSource).toContain("if (saved) {\\n      setCancellationReason(\\"\\");\\n      setCancellationInternalNote(\\"\\");");
+          });'''
+          if test.count(anchor) != 1:
+              raise SystemExit('replay closure test anchor did not match exact expected head')
+          test_path.write_text(test.replace(anchor, expanded, 1))
+          PY
+
+          git diff --check
+          git diff -- apps/web/src/admin-commercial.tsx tests/m28-replay-current-snapshot-closure.test.ts
+      - name: Verify focused TypeScript contract
+        run: corepack enable && pnpm install --frozen-lockfile && pnpm vitest run tests/m28-replay-current-snapshot-closure.test.ts
+      - name: Publish closure and self-remove controller
+        shell: bash
+        run: |
+          git config user.name "Kootha Implementation Controller"
+          git config user.email "actions@users.noreply.github.com"
+          git add apps/web/src/admin-commercial.tsx tests/m28-replay-current-snapshot-closure.test.ts
+          git rm .github/workflows/m28-p2-controller.yml
+          git commit -m "fix(m28): preserve mutation inputs on failure"
+          git push origin HEAD:milestone/m28-commercial-schedule-operations
