@@ -1,3 +1,4 @@
+# M29 branch-scoped one-shot documentation controller.
 name: M29 README sync
 
 on:
