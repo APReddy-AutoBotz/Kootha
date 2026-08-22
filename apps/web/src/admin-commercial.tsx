@@ -373,7 +373,7 @@ export function CommercialScheduleWorkbench({
       <div className="admin-filter-grid">
         <label>
           Ad Work
-          <select value={selectedAdWorkId} onChange={(event) => setSelectedAdWorkId(event.target.value)}>
+          <select value={selectedAdWorkId} disabled={busy} onChange={(event) => setSelectedAdWorkId(event.target.value)}>
             <option value="">Choose Ad Work</option>
             {adWorks.map((work) => (
               <option value={work.id} key={work.id}>{work.title}{work.businessName ? ` — ${work.businessName}` : ""}</option>
