@@ -1,10 +1,11 @@
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 export const RELEASE_MODES = ["preview", "production"];
 export const CONFIG_SOURCES = ["repository", "environment"];
-export const EXTERNAL_STATUSES = ["blocked-not-run", "passed", "failed"];
+export const EXTERNAL_ATTESTATION_REQUIRED = "external-attestation-required";
 
 const PLACEHOLDER_FRAGMENTS = ["your-project", "replace-with", "placeholder", "example.com", "change-me", "todo"];
 const PUBLIC_PREFIXES = ["VITE_", "EXPO_PUBLIC_"];
@@ -59,6 +60,18 @@ export const ENVIRONMENT_CONTRACT = Object.freeze([
 ]);
 
 export const CONTRACT_NAMES = new Set(ENVIRONMENT_CONTRACT.map((entry) => entry.name));
+const CONTRACT_BY_NAME = new Map(ENVIRONMENT_CONTRACT.map((entry) => [entry.name, entry]));
+const FEATURE_DEPENDENCIES = Object.freeze({
+  TELEMETRY_INGEST_ENABLED: [
+    "SUPABASE_URL",
+    "SUPABASE_SERVICE_ROLE_KEY",
+    "TELEMETRY_CREDENTIAL_PEPPER",
+    "TELEMETRY_RATE_LIMIT_KEY",
+  ],
+  M22_RULE_ENGINE_ENABLED: ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"],
+  M23_COMPARISON_ENGINE_ENABLED: ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"],
+  M25_STATISTICAL_ENGINE_ENABLED: ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"],
+});
 
 function check(scope, name, ok, severity, status) {
   return { scope, name, ok, severity, status };
@@ -84,6 +97,16 @@ function safeBoolean(value) {
   return "invalid";
 }
 
+function validateConfiguredValue(name, value) {
+  const entry = CONTRACT_BY_NAME.get(name);
+  if (value === undefined || String(value).trim() === "") return { ok: false, status: "missing" };
+  if (isPlaceholder(value)) return { ok: false, status: "placeholder" };
+  if (entry?.minLength && String(value).trim().length < entry.minLength) {
+    return { ok: false, status: "below_minimum_length" };
+  }
+  return { ok: true, status: "configured" };
+}
+
 export function findUnsafePublicAuthorityNames(env = {}) {
   return Object.keys(env)
     .filter((name) => PUBLIC_PREFIXES.some((prefix) => name.startsWith(prefix)))
@@ -95,13 +118,16 @@ export function evaluateEnvironment({ mode = "preview", env = process.env } = {}
   if (!RELEASE_MODES.includes(mode)) throw new Error(`Unsupported release mode: ${mode}`);
   const checks = [];
   const scopes = relevantScopes(mode);
+
   for (const unsafeName of findUnsafePublicAuthorityNames(env)) {
     checks.push(check("environment", unsafeName, false, "error", "unsafe_public_authority_name"));
   }
+
   for (const entry of ENVIRONMENT_CONTRACT) {
     if (!scopes.has(entry.scope)) continue;
     const value = env[entry.name];
     const required = isRequired(entry, mode);
+
     if (entry.switchPolicy === "must-false") {
       const state = safeBoolean(value);
       if (state === "true") checks.push(check(entry.scope, entry.name, false, "error", "unsafe_enabled"));
@@ -110,12 +136,14 @@ export function evaluateEnvironment({ mode = "preview", env = process.env } = {}
       else checks.push(check(entry.scope, entry.name, true, "info", "safe_disabled"));
       continue;
     }
+
     if (entry.switchPolicy === "feature") {
       const state = safeBoolean(value);
       if (state === "invalid") checks.push(check(entry.scope, entry.name, false, "error", "invalid_boolean"));
       else checks.push(check(entry.scope, entry.name, true, "info", state === "true" ? "enabled" : "safe_disabled"));
       continue;
     }
+
     const conditionEnabled = entry.conditionalOn && safeBoolean(env[entry.conditionalOn]) === "true";
     const requiredNow = required || conditionEnabled;
     if (value === undefined || String(value).trim() === "") {
@@ -132,14 +160,21 @@ export function evaluateEnvironment({ mode = "preview", env = process.env } = {}
     }
     checks.push(check(entry.scope, entry.name, true, "info", "configured"));
   }
-  for (const feature of ["M22_RULE_ENGINE_ENABLED", "M23_COMPARISON_ENGINE_ENABLED", "M25_STATISTICAL_ENGINE_ENABLED"]) {
+
+  for (const [feature, dependencies] of Object.entries(FEATURE_DEPENDENCIES)) {
     if (safeBoolean(env[feature]) !== "true") continue;
-    for (const dependency of ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"]) {
-      const value = env[dependency];
-      const ok = typeof value === "string" && value.trim().length > 0 && !isPlaceholder(value);
-      checks.push(check("feature-dependency", `${feature}:${dependency}`, ok, ok ? "info" : "error", ok ? "configured" : "missing"));
+    for (const dependency of dependencies) {
+      const result = validateConfiguredValue(dependency, env[dependency]);
+      checks.push(check(
+        "feature-dependency",
+        `${feature}:${dependency}`,
+        result.ok,
+        result.ok ? "info" : "error",
+        result.status,
+      ));
     }
   }
+
   return summarizeChecks(checks);
 }
 
@@ -189,6 +224,30 @@ export function migrationProvenance(root = process.cwd()) {
   return { count: files.length, fingerprint: `sha256:${hash.digest("hex")}` };
 }
 
+function gitText(root, args) {
+  return execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+}
+
+export function sourceProvenance({ root = process.cwd(), expectedSha = "" } = {}) {
+  const sha = gitText(root, ["rev-parse", "HEAD"]);
+  const trackedStatus = gitText(root, ["status", "--porcelain", "--untracked-files=no"]);
+  const expected = String(expectedSha ?? "").trim();
+  return {
+    sha,
+    cleanTracked: trackedStatus.length === 0,
+    expectedShaMatches: expected.length === 0 || expected === sha,
+  };
+}
+
+export function evaluateSourceProvenance({ root = process.cwd(), expectedSha = "" } = {}) {
+  const source = sourceProvenance({ root, expectedSha });
+  const checks = [
+    check("source", "tracked-state", source.cleanTracked, source.cleanTracked ? "info" : "error", source.cleanTracked ? "clean" : "dirty_tracked_state"),
+    check("source", "expected-sha", source.expectedShaMatches, source.expectedShaMatches ? "info" : "error", source.expectedShaMatches ? "matches_checkout" : "expected_sha_mismatch"),
+  ];
+  return { ...summarizeChecks(checks), source };
+}
+
 function parseEnvExample(root) {
   const file = path.join(root, ".env.example");
   if (!existsSync(file)) return new Map();
@@ -231,35 +290,40 @@ export function summarizeChecks(checks) {
   return { ok: errors === 0, errors, warnings, checks };
 }
 
-export function normalizeExternalStatus(value) {
-  return EXTERNAL_STATUSES.includes(value) ? value : "blocked-not-run";
-}
-
 export function releaseTimestamp(env = process.env) {
   const raw = env.SOURCE_DATE_EPOCH;
   if (raw !== undefined && /^\d+$/.test(String(raw))) return new Date(Number(raw) * 1000).toISOString();
   return new Date().toISOString();
 }
 
-export function buildReleaseManifest({ mode, configSource, evaluation, migration, env = process.env, timestamp = releaseTimestamp(env) } = {}) {
-  const external = {
-    supabase: normalizeExternalStatus(env.RELEASE_SUPABASE_STATUS),
-    netlifyPreview: normalizeExternalStatus(env.RELEASE_NETLIFY_PREVIEW_STATUS),
-    rollback: normalizeExternalStatus(env.RELEASE_ROLLBACK_STATUS),
-  };
-  const sourceSha = String(env.RELEASE_SOURCE_SHA || env.GITHUB_SHA || "unknown").trim() || "unknown";
+export function buildReleaseManifest({
+  mode,
+  configSource,
+  evaluation,
+  migration,
+  source,
+  env = process.env,
+  timestamp = releaseTimestamp(env),
+} = {}) {
+  if (!source?.sha || source.cleanTracked !== true) throw new Error("Release manifest requires a clean tracked Git source.");
+  if (source.expectedShaMatches === false) throw new Error("Release manifest source SHA does not match the evaluated checkout.");
   const releaseId = String(env.VITE_APP_RELEASE || env.EXPO_PUBLIC_APP_RELEASE || "unversioned").trim() || "unversioned";
-  const externalReady = Object.values(external).every((status) => status === "passed");
+  const external = {
+    supabase: EXTERNAL_ATTESTATION_REQUIRED,
+    netlifyPreview: EXTERNAL_ATTESTATION_REQUIRED,
+    rollback: EXTERNAL_ATTESTATION_REQUIRED,
+  };
   return {
     schemaVersion: "m29-release-manifest-v1",
     mode,
     configSource,
-    sourceSha,
+    sourceSha: source.sha,
     releaseId,
     migration,
     checks: { ok: evaluation.ok, errors: evaluation.errors, warnings: evaluation.warnings, results: evaluation.checks },
     external,
-    promotionReady: evaluation.ok && externalReady,
+    promotionReady: false,
+    promotionDecision: "external-attestation-required",
     timestamp,
   };
 }
