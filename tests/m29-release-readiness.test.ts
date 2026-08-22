@@ -1,12 +1,19 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   CONTRACT_NAMES,
+  EXTERNAL_ATTESTATION_REQUIRED,
   buildReleaseManifest,
   evaluateEnvironment,
   evaluateRepository,
+  evaluateSourceProvenance,
   findRuntimeEnvironmentNames,
   findUnclassifiedRuntimeEnvironmentNames,
   migrationProvenance,
+  sourceProvenance,
 } from "../scripts/release-readiness.mjs";
 
 const previewEnvironment = {
@@ -38,6 +45,10 @@ const productionEnvironment = {
   ENQUIRY_RATE_LIMIT_SALT: "0123456789abcdef0123456789abcdef",
 };
 
+function git(cwd: string, args: string[]) {
+  return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+}
+
 describe("M29 hosted release readiness", () => {
   it("accepts the fail-closed preview contract without production-only secrets", () => {
     const result = evaluateEnvironment({ mode: "preview", env: previewEnvironment });
@@ -49,17 +60,12 @@ describe("M29 hosted release readiness", () => {
     const incomplete = evaluateEnvironment({ mode: "production", env: previewEnvironment });
     expect(incomplete.ok).toBe(false);
     expect(incomplete.checks.some((item) => item.name === "SUPABASE_SERVICE_ROLE_KEY" && item.status === "missing")).toBe(true);
-
-    const complete = evaluateEnvironment({ mode: "production", env: productionEnvironment });
-    expect(complete.ok).toBe(true);
+    expect(evaluateEnvironment({ mode: "production", env: productionEnvironment }).ok).toBe(true);
   });
 
   it("rejects premature enquiry or retention activation", () => {
     for (const name of ["ENQUIRY_INTAKE_ENABLED", "RETENTION_DELETION_ENABLED"]) {
-      const result = evaluateEnvironment({
-        mode: "production",
-        env: { ...productionEnvironment, [name]: "true" },
-      });
+      const result = evaluateEnvironment({ mode: "production", env: { ...productionEnvironment, [name]: "true" } });
       expect(result.ok).toBe(false);
       expect(result.checks).toContainEqual(expect.objectContaining({ name, status: "unsafe_enabled", severity: "error" }));
     }
@@ -76,18 +82,8 @@ describe("M29 hosted release readiness", () => {
     expect(JSON.stringify(result)).not.toContain(secretMarker);
   });
 
-  it("requires telemetry secrets only when telemetry ingest is explicitly enabled", () => {
-    const disabled = evaluateEnvironment({ mode: "preview", env: previewEnvironment });
-    expect(disabled.ok).toBe(true);
-
+  it("requires complete minimum-strength telemetry server authority when telemetry is enabled", () => {
     const missing = evaluateEnvironment({
-      mode: "preview",
-      env: { ...previewEnvironment, TELEMETRY_INGEST_ENABLED: "true" },
-    });
-    expect(missing.ok).toBe(false);
-    expect(missing.checks.some((item) => item.name === "TELEMETRY_CREDENTIAL_PEPPER" && item.status === "missing")).toBe(true);
-
-    const enabled = evaluateEnvironment({
       mode: "preview",
       env: {
         ...previewEnvironment,
@@ -96,18 +92,57 @@ describe("M29 hosted release readiness", () => {
         TELEMETRY_RATE_LIMIT_KEY: "fedcba9876543210fedcba9876543210",
       },
     });
+    expect(missing.ok).toBe(false);
+    expect(missing.checks).toContainEqual(expect.objectContaining({
+      name: "TELEMETRY_INGEST_ENABLED:SUPABASE_SERVICE_ROLE_KEY",
+      status: "missing",
+    }));
+
+    const weak = evaluateEnvironment({
+      mode: "preview",
+      env: {
+        ...previewEnvironment,
+        TELEMETRY_INGEST_ENABLED: "true",
+        SUPABASE_SERVICE_ROLE_KEY: "short",
+        TELEMETRY_CREDENTIAL_PEPPER: "0123456789abcdef0123456789abcdef",
+        TELEMETRY_RATE_LIMIT_KEY: "fedcba9876543210fedcba9876543210",
+      },
+    });
+    expect(weak.ok).toBe(false);
+    expect(weak.checks).toContainEqual(expect.objectContaining({
+      name: "TELEMETRY_INGEST_ENABLED:SUPABASE_SERVICE_ROLE_KEY",
+      status: "below_minimum_length",
+    }));
+
+    const enabled = evaluateEnvironment({
+      mode: "preview",
+      env: {
+        ...previewEnvironment,
+        TELEMETRY_INGEST_ENABLED: "true",
+        SUPABASE_SERVICE_ROLE_KEY: "server-only-service-role-value",
+        TELEMETRY_CREDENTIAL_PEPPER: "0123456789abcdef0123456789abcdef",
+        TELEMETRY_RATE_LIMIT_KEY: "fedcba9876543210fedcba9876543210",
+      },
+    });
     expect(enabled.ok).toBe(true);
   });
 
-  it("requires Supabase server authority when a scheduled engine is enabled", () => {
-    const result = evaluateEnvironment({
-      mode: "preview",
-      env: { ...previewEnvironment, M22_RULE_ENGINE_ENABLED: "true" },
-    });
-    expect(result.ok).toBe(false);
-    expect(result.checks).toContainEqual(expect.objectContaining({
+  it("requires minimum-strength Supabase server authority when a scheduled engine is enabled", () => {
+    const missing = evaluateEnvironment({ mode: "preview", env: { ...previewEnvironment, M22_RULE_ENGINE_ENABLED: "true" } });
+    expect(missing.ok).toBe(false);
+    expect(missing.checks).toContainEqual(expect.objectContaining({
       name: "M22_RULE_ENGINE_ENABLED:SUPABASE_SERVICE_ROLE_KEY",
       status: "missing",
+    }));
+
+    const weak = evaluateEnvironment({
+      mode: "preview",
+      env: { ...previewEnvironment, M22_RULE_ENGINE_ENABLED: "true", SUPABASE_SERVICE_ROLE_KEY: "short" },
+    });
+    expect(weak.ok).toBe(false);
+    expect(weak.checks).toContainEqual(expect.objectContaining({
+      name: "M22_RULE_ENGINE_ENABLED:SUPABASE_SERVICE_ROLE_KEY",
+      status: "below_minimum_length",
     }));
   });
 
@@ -122,48 +157,94 @@ describe("M29 hosted release readiness", () => {
 
   it("computes stable migration provenance", () => {
     const first = migrationProvenance();
-    const second = migrationProvenance();
     expect(first.count).toBeGreaterThan(0);
-    expect(first).toEqual(second);
+    expect(first).toEqual(migrationProvenance());
     expect(first.fingerprint).toMatch(/^sha256:[0-9a-f]{64}$/);
   });
 
-  it("builds a deterministic secret-free manifest and preserves blocked external truth", () => {
-    const evaluation = evaluateEnvironment({ mode: "preview", env: previewEnvironment });
-    const migration = migrationProvenance();
-    const env = {
-      ...previewEnvironment,
-      RELEASE_SOURCE_SHA: "abc123",
-      SOURCE_DATE_EPOCH: "0",
-      SUPABASE_SERVICE_ROLE_KEY: "DO_NOT_LEAK_SERVICE_ROLE",
-    };
-    const first = buildReleaseManifest({
-      mode: "preview",
-      configSource: "environment",
-      evaluation,
-      migration,
-      env,
-      timestamp: "1970-01-01T00:00:00.000Z",
-    });
-    const second = buildReleaseManifest({
-      mode: "preview",
-      configSource: "environment",
-      evaluation,
-      migration,
-      env,
-      timestamp: "1970-01-01T00:00:00.000Z",
-    });
-    expect(first).toEqual(second);
-    expect(first.external).toEqual({
-      supabase: "blocked-not-run",
-      netlifyPreview: "blocked-not-run",
-      rollback: "blocked-not-run",
-    });
-    expect(first.promotionReady).toBe(false);
-    expect(JSON.stringify(first)).not.toContain("DO_NOT_LEAK_SERVICE_ROLE");
+  it("binds source provenance to Git HEAD and rejects a mismatched expected SHA", () => {
+    const source = sourceProvenance();
+    expect(source.sha).toMatch(/^[0-9a-f]{40}$/);
+    expect(source.cleanTracked).toBe(true);
+    expect(source.expectedShaMatches).toBe(true);
+
+    const mismatch = evaluateSourceProvenance({ expectedSha: "0".repeat(40) });
+    expect(mismatch.ok).toBe(false);
+    expect(mismatch.checks).toContainEqual(expect.objectContaining({
+      name: "expected-sha",
+      status: "expected_sha_mismatch",
+    }));
   });
 
-  it("passes repository policy checks while leaving hosted evidence blocked", () => {
+  it("rejects tracked dirty source state", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "kootha-m29-source-"));
+    try {
+      git(root, ["init"]);
+      git(root, ["config", "user.email", "m29@example.invalid"]);
+      git(root, ["config", "user.name", "M29 Test"]);
+      writeFileSync(path.join(root, "tracked.txt"), "clean\n", "utf8");
+      git(root, ["add", "tracked.txt"]);
+      git(root, ["commit", "-m", "initial"]);
+      expect(evaluateSourceProvenance({ root }).ok).toBe(true);
+      writeFileSync(path.join(root, "tracked.txt"), "dirty\n", "utf8");
+      const dirty = evaluateSourceProvenance({ root });
+      expect(dirty.ok).toBe(false);
+      expect(dirty.checks).toContainEqual(expect.objectContaining({
+        name: "tracked-state",
+        status: "dirty_tracked_state",
+      }));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("cannot self-attest external checks or promotion from plain environment strings", () => {
+    const evaluation = evaluateEnvironment({ mode: "preview", env: previewEnvironment });
+    const source = sourceProvenance();
+    const env = {
+      ...previewEnvironment,
+      RELEASE_SUPABASE_STATUS: "passed",
+      RELEASE_NETLIFY_PREVIEW_STATUS: "passed",
+      RELEASE_ROLLBACK_STATUS: "passed",
+      SUPABASE_SERVICE_ROLE_KEY: "DO_NOT_LEAK_SERVICE_ROLE",
+    };
+    const manifest = buildReleaseManifest({
+      mode: "preview",
+      configSource: "environment",
+      evaluation,
+      migration: migrationProvenance(),
+      source,
+      env,
+      timestamp: "1970-01-01T00:00:00.000Z",
+    });
+    expect(manifest.external).toEqual({
+      supabase: EXTERNAL_ATTESTATION_REQUIRED,
+      netlifyPreview: EXTERNAL_ATTESTATION_REQUIRED,
+      rollback: EXTERNAL_ATTESTATION_REQUIRED,
+    });
+    expect(manifest.promotionReady).toBe(false);
+    expect(manifest.promotionDecision).toBe("external-attestation-required");
+    expect(JSON.stringify(manifest)).not.toContain("DO_NOT_LEAK_SERVICE_ROLE");
+  });
+
+  it("builds deterministic manifest content for the same evaluated source", () => {
+    const evaluation = evaluateEnvironment({ mode: "preview", env: previewEnvironment });
+    const source = sourceProvenance();
+    const args = {
+      mode: "preview",
+      configSource: "environment",
+      evaluation,
+      migration: migrationProvenance(),
+      source,
+      env: previewEnvironment,
+      timestamp: "1970-01-01T00:00:00.000Z",
+    };
+    const first = buildReleaseManifest(args);
+    expect(first).toEqual(buildReleaseManifest(args));
+    expect(first.sourceSha).toBe(source.sha);
+  });
+
+  it("passes repository policy checks while leaving hosted evidence outside local authority", () => {
     const result = evaluateRepository({ mode: "production" });
     expect(result.ok).toBe(true);
     expect(result.migration.count).toBeGreaterThan(0);
