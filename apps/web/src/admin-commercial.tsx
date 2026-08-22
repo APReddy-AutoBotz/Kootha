@@ -405,21 +405,21 @@ export function CommercialScheduleWorkbench({
             <div className="admin-filter-grid">
               <label>
                 Status
-                <select value={paymentStatus} onChange={(event) => setPaymentStatus(event.target.value as PaymentStatus)}>
+                <select value={paymentStatus} disabled={busy} onChange={(event) => setPaymentStatus(event.target.value as PaymentStatus)}>
                   {paymentStatuses.map((status) => <option value={status} key={status}>{paymentStatusLabels[status]}</option>)}
                 </select>
               </label>
               <label>
                 Total amount (INR)
-                <input type="number" min="0" step="0.01" value={totalAmount} onChange={(event) => setTotalAmount(event.target.value)} />
+                <input type="number" min="0" step="0.01" value={totalAmount} disabled={busy} onChange={(event) => setTotalAmount(event.target.value)} />
               </label>
               <label>
                 Paid amount (INR)
-                <input type="number" min="0" step="0.01" value={paidAmount} onChange={(event) => setPaidAmount(event.target.value)} />
+                <input type="number" min="0" step="0.01" value={paidAmount} disabled={busy} onChange={(event) => setPaidAmount(event.target.value)} />
               </label>
               <label>
                 Admin note
-                <input maxLength={500} value={commercialNote} onChange={(event) => setCommercialNote(event.target.value)} />
+                <input maxLength={500} value={commercialNote} disabled={busy} onChange={(event) => setCommercialNote(event.target.value)} />
               </label>
             </div>
             <button type="button" className="primary-button" disabled={busy} onClick={() => void savePayment()}>Save payment status</button>
@@ -429,8 +429,8 @@ export function CommercialScheduleWorkbench({
             <h3><CalendarClock size={18} aria-hidden="true" /> Reschedule whole work</h3>
             <p className="quiet-note">Available only before execution and before any phone/physical evidence exists. Prior release/readiness is invalidated.</p>
             <div className="admin-filter-grid">
-              <label>New start date<input type="date" value={newStartDate} onChange={(event) => setNewStartDate(event.target.value)} /></label>
-              <label>Customer-safe reason<input maxLength={500} value={rescheduleReason} onChange={(event) => setRescheduleReason(event.target.value)} /></label>
+              <label>New start date<input type="date" value={newStartDate} disabled={busy} onChange={(event) => setNewStartDate(event.target.value)} /></label>
+              <label>Customer-safe reason<input maxLength={500} value={rescheduleReason} disabled={busy} onChange={(event) => setRescheduleReason(event.target.value)} /></label>
             </div>
             <button type="button" className="secondary-button" disabled={busy} onClick={() => void rescheduleWork()}>Reschedule work</button>
           </section>
@@ -440,13 +440,13 @@ export function CommercialScheduleWorkbench({
             <div className="admin-filter-grid">
               <label>
                 Work day
-                <select value={selectedDayId} onChange={(event) => setSelectedDayId(event.target.value)}>
+                <select value={selectedDayId} disabled={busy} onChange={(event) => setSelectedDayId(event.target.value)}>
                   <option value="">Choose day</option>
                   {snapshot.days.map((day) => <option value={day.id} key={day.id}>{displayDate(day.workDate)} — {day.executionStatus}</option>)}
                 </select>
               </label>
-              <label>New date<input type="date" value={newDayDate} onChange={(event) => setNewDayDate(event.target.value)} /></label>
-              <label>Customer-safe reason<input maxLength={500} value={dayReason} onChange={(event) => setDayReason(event.target.value)} /></label>
+              <label>New date<input type="date" value={newDayDate} disabled={busy} onChange={(event) => setNewDayDate(event.target.value)} /></label>
+              <label>Customer-safe reason<input maxLength={500} value={dayReason} disabled={busy} onChange={(event) => setDayReason(event.target.value)} /></label>
             </div>
             <button type="button" className="secondary-button" disabled={busy} onClick={() => void rescheduleDay()}>Reschedule day</button>
           </section>
@@ -455,8 +455,8 @@ export function CommercialScheduleWorkbench({
             <h3>Cancel Ad Work</h3>
             <p className="quiet-note">Cancellation revokes work access, cancels non-completed days and stops active tracking. Closed/completed work cannot be cancelled here.</p>
             <div className="admin-filter-grid">
-              <label>Customer-safe reason<input maxLength={500} value={cancellationReason} onChange={(event) => setCancellationReason(event.target.value)} /></label>
-              <label>Internal note (never copied to customer)<input maxLength={500} value={cancellationInternalNote} onChange={(event) => setCancellationInternalNote(event.target.value)} /></label>
+              <label>Customer-safe reason<input maxLength={500} value={cancellationReason} disabled={busy} onChange={(event) => setCancellationReason(event.target.value)} /></label>
+              <label>Internal note (never copied to customer)<input maxLength={500} value={cancellationInternalNote} disabled={busy} onChange={(event) => setCancellationInternalNote(event.target.value)} /></label>
             </div>
             <button type="button" className="danger-button" disabled={busy || snapshot.adWork.planningStatus === "cancelled"} onClick={() => void cancelWork()}>Cancel Ad Work</button>
           </section>
