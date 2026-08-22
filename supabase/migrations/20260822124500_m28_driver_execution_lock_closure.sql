@@ -28,7 +28,7 @@ declare
   v_message text;
 begin
   v_note := nullif(trim(coalesce(p_note, '')), '');
-  v_type := coalesce(nullif(trim(p_proof_type, '')), 'other');
+  v_type := coalesce(nullif(trim(p_proof_type), ''), 'other');
 
   -- First authenticate without acquiring row/advisory locks so obviously invalid
   -- anonymous requests cannot occupy the global authority lock.
