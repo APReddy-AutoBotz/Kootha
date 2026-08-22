@@ -349,7 +349,7 @@ Admin final summary location proof works from /admin:
 6. Use Mark Ready for Closure or Close Ad Work to refresh the summary.
 7. Copy or print the final summary manually. M12 does not create public links or provider sends.
 
-Customer summary wording is limited to Phone Location Proof Status, Location Location Proof Required, Location Proof Active During Work, First Location Received, Last Location Received, Offline Location Sync, and Team Review Note. It does not expose latitude, longitude, accuracy, raw location points, tracking session ids, internal review notes, storage paths, route drawings, maps, distance billing, or public live tracking.
+Customer summary wording is limited to Phone Location Proof Status, Location Proof Required, Location Proof Active During Work, First Location Received, Last Location Received, Offline Location Sync, and Team Review Note. It does not expose latitude, longitude, accuracy, raw location points, tracking session ids, internal review notes, storage paths, route drawings, maps, distance billing, or public live tracking.
 
 Closure warnings include Phone Location Proof is not reviewed, No phone location updates were received, and Some location updates need follow-up. Closing with location warnings requires a Closure Reason. A customer-safe Phone Location Proof note can explain the customer wording, but it does not replace the Closure Reason.
 
@@ -532,7 +532,7 @@ M9 keeps customer_live_enabled and live_tracking_enabled false by default and do
 M10 keeps customer_live_enabled and live_tracking_enabled false by default and does not add customer live tracking behavior.
 
 
-M11 keeps customer_live_enabled and live_tracking_enabled false by default and does not add live tracking behavior.
+M11 keeps customer_live_enabled and live_tracking_enabled false by default and does not add customer live tracking behavior.
 
 M12 keeps customer_live_enabled and live_tracking_enabled false by default and does not add customer live tracking behavior.
 
@@ -546,4 +546,4 @@ M16 keeps customer_live_enabled and live_tracking_enabled false by default and d
 
 M17 keeps customer_live_enabled and live_tracking_enabled false by default and does not add customer live tracking behavior.
 
-M18 keeps customer_live_enabled and live_tracking_enabled false by default and does not add live tracking behavior.
+M18 keeps customer_live_enabled and live_tracking_enabled false by default and does not add customer live tracking behavior.
