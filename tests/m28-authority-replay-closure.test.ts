@@ -5,14 +5,20 @@ const migrationSource = readFileSync(
   "supabase/migrations/20260822083000_m28_authority_replay_closure.sql",
   "utf8",
 );
+const replayErrorContractSource = readFileSync(
+  "supabase/migrations/20260822084500_m28_replay_error_contract_closure.sql",
+  "utf8",
+);
+const effectiveSource = `${migrationSource}\n${replayErrorContractSource}`;
 
 describe("M28 authority and replay closure", () => {
   it("records one canonical result for response-loss replay without opening direct table authority", () => {
     expect(migrationSource).toContain("create table if not exists public.m28_mutation_operations");
     expect(migrationSource).toContain("primary key (actor_id, ad_work_id, mutation_type, request_key)");
-    expect(migrationSource).toContain("m28_claim_replay_v1");
+    expect(effectiveSource).toContain("m28_claim_replay_v1");
     expect(migrationSource).toContain("m28_record_result_v1");
-    expect(migrationSource).toContain("Operation identity conflicts with a different request");
+    expect(replayErrorContractSource).toContain("Commercial record changed; refresh and retry");
+    expect(replayErrorContractSource).toContain("Schedule changed; refresh and retry");
     expect(migrationSource).toContain("revoke all on public.m28_mutation_operations");
     expect(migrationSource).toContain("'payment_update'");
     expect(migrationSource).toContain("'initial_schedule'");

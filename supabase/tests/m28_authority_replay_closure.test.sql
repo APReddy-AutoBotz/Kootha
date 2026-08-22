@@ -159,7 +159,7 @@ select throws_ok(
     'partially_paid', 1000, 300, 'Changed retry', 0
   )$$,
   '40001',
-  'Operation identity conflicts with a different request',
+  'Commercial record changed; refresh and retry',
   'same payment operation identity cannot be reused with changed input'
 );
 
@@ -213,7 +213,7 @@ select throws_ok(
     0
   )$$,
   '40001',
-  'Operation identity conflicts with a different request',
+  'Schedule changed; refresh and retry',
   'same reschedule operation identity cannot be reused with changed input'
 );
 
