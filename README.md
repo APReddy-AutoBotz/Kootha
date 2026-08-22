@@ -235,7 +235,7 @@ Customer update records are created for release, start, break, resume, proof not
 
 ## M7 Proof Upload And Customer Update Sharing
 
-Apply the M7 migration after M0 through M6. It adds the private proof-photos storage bucket, photo proof upload records, driver upload slot RPCs, admin proof review RPCs, and manual Customer Update sharing fields.
+Apply the M7 migration after M0 through M6. It adds the private proof-photos storage bucket, photo proof upload records, driver upload slot RPCs, admin review RPCs, and manual Customer Update sharing fields.
 
 Driver photo proof works from the Android driver app:
 
