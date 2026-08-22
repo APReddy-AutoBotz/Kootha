@@ -79,11 +79,21 @@ describe("M28 commercial and schedule contract", () => {
         executionStatus: "planned",
       }],
       commercialEvents: [],
+      commercialEventsPage: {
+        limit: 20,
+        returned: 0,
+        hasMore: false,
+        nextBeforeVersion: null,
+      },
       scheduleEvents: [],
     };
     expect(validateCommercialScheduleSnapshot(snapshot)).toBe(true);
     expect(validateCommercialScheduleSnapshot({ ...snapshot, adWork: { ...snapshot.adWork, paymentStatus: "paid_somehow" } })).toBe(false);
     expect(validateCommercialScheduleSnapshot({ ...snapshot, adWork: { ...snapshot.adWork, scheduleVersion: -1 } })).toBe(false);
+    expect(validateCommercialScheduleSnapshot({
+      ...snapshot,
+      commercialEventsPage: { ...snapshot.commercialEventsPage, hasMore: true },
+    })).toBe(false);
   });
 
   it("keeps database authority static, versioned and evidence-preserving", () => {
