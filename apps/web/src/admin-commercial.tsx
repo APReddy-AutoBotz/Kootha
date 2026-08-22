@@ -253,8 +253,8 @@ export function CommercialScheduleWorkbench({
     }
   }
 
-  async function runMutation(rpc: string, body: Record<string, unknown>) {
-    if (!snapshot) return;
+  async function runMutation(rpc: string, body: Record<string, unknown>): Promise<boolean> {
+    if (!snapshot) return false;
     const adWorkId = snapshot.adWork.id;
     const expectedFingerprint = snapshotFingerprint;
     const requestId = ++requestSequence.current;
@@ -265,13 +265,15 @@ export function CommercialScheduleWorkbench({
       const envelope = await postRpc<MutationEnvelope>(connection, rpc, body);
       if (requestId !== requestSequence.current
         || adWorkId !== selectedAdWorkRef.current
-        || expectedFingerprint !== snapshotFingerprint) return;
-      if (!applySnapshot(envelope.snapshot, requestId, adWorkId)) return;
+        || expectedFingerprint !== snapshotFingerprint) return false;
+      if (!applySnapshot(envelope.snapshot, requestId, adWorkId)) return false;
       if (typeof envelope.customerMessage === "string") setCustomerMessage(envelope.customerMessage);
+      return true;
     } catch (mutationError) {
       if (requestId === requestSequence.current && adWorkId === selectedAdWorkRef.current) {
         setError(mutationError instanceof Error ? mutationError.message : "The change could not be saved.");
       }
+      return false;
     } finally {
       if (requestId === requestSequence.current && adWorkId === selectedAdWorkRef.current) setBusy(false);
     }
@@ -304,13 +306,13 @@ export function CommercialScheduleWorkbench({
       setError("Choose a new start date and enter a reschedule reason.");
       return;
     }
-    await runMutation("admin_reschedule_ad_work_v1", {
+    const saved = await runMutation("admin_reschedule_ad_work_v1", {
       p_ad_work_id: snapshot.adWork.id,
       p_new_start_date: newStartDate,
       p_reason: rescheduleReason.trim(),
       p_expected_version: snapshot.adWork.scheduleVersion,
     });
-    setRescheduleReason("");
+    if (saved) setRescheduleReason("");
   }
 
   async function rescheduleDay() {
@@ -318,15 +320,17 @@ export function CommercialScheduleWorkbench({
       setError("Choose a work day, new date and reason.");
       return;
     }
-    await runMutation("admin_reschedule_ad_work_day_v1", {
+    const saved = await runMutation("admin_reschedule_ad_work_day_v1", {
       p_ad_work_id: snapshot.adWork.id,
       p_ad_work_day_id: selectedDayId,
       p_new_date: newDayDate,
       p_reason: dayReason.trim(),
       p_expected_version: snapshot.adWork.scheduleVersion,
     });
-    setDayReason("");
-    setNewDayDate("");
+    if (saved) {
+      setDayReason("");
+      setNewDayDate("");
+    }
   }
 
   async function cancelWork() {
@@ -335,14 +339,16 @@ export function CommercialScheduleWorkbench({
       return;
     }
     if (!window.confirm(`Cancel ${snapshot.adWork.title}? This revokes executable access and cannot be undone in this workbench.`)) return;
-    await runMutation("admin_cancel_ad_work_v1", {
+    const saved = await runMutation("admin_cancel_ad_work_v1", {
       p_ad_work_id: snapshot.adWork.id,
       p_reason: cancellationReason.trim(),
       p_internal_note: cancellationInternalNote.trim() || null,
       p_expected_version: snapshot.adWork.scheduleVersion,
     });
-    setCancellationReason("");
-    setCancellationInternalNote("");
+    if (saved) {
+      setCancellationReason("");
+      setCancellationInternalNote("");
+    }
   }
 
   async function copyCustomerMessage() {
