@@ -43,6 +43,8 @@ jobs:
           Path('/tmp/m28_closure.py').write_text(script)
           PY
           python /tmp/m28_closure.py
+          test "$(grep -c '^select plan(12);$' supabase/tests/m28_execution_lock_schedule_history_closure.test.sql)" = "1"
+          sed -i 's/^select plan(12);$/select plan(13);/' supabase/tests/m28_execution_lock_schedule_history_closure.test.sql
           rm -f .github/workflows/pr36-m28-final-closure-observable.yml
           git diff --check
       - name: Install dependencies
