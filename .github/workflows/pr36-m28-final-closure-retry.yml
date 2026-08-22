@@ -15,7 +15,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: milestone/m28-commercial-schedule-operations
-          fetch-depth: 4
+          fetch-depth: 0
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -44,7 +44,8 @@ jobs:
           Path('/tmp/m28_closure.py').write_text(script)
           PY
           python /tmp/m28_closure.py
-          sed -i 's/select plan(12);/select plan(13);/' supabase/tests/m28_execution_lock_schedule_history_closure.test.sql
+          test "$(grep -c '^select plan(12);$' supabase/tests/m28_execution_lock_schedule_history_closure.test.sql)" = "1"
+          sed -i 's/^select plan(12);$/select plan(13);/' supabase/tests/m28_execution_lock_schedule_history_closure.test.sql
           rm -f .github/workflows/pr36-m28-final-closure.yml
           rm -f .github/workflows/pr36-m28-final-closure-observable.yml
           rm -f .github/workflows/pr36-m28-final-closure-retry.yml
