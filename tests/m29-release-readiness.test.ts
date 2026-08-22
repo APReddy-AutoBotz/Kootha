@@ -82,6 +82,87 @@ describe("M29 hosted release readiness", () => {
     expect(JSON.stringify(result)).not.toContain(secretMarker);
   });
 
+  it("rejects privileged server secret values copied into public client variables without disclosure", () => {
+    const collisions = [
+      ["VITE_SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"],
+      ["EXPO_PUBLIC_SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"],
+      ["VITE_TURNSTILE_SITE_KEY", "TURNSTILE_SECRET_KEY"],
+    ];
+
+    for (const [publicName, secretName] of collisions) {
+      const secretMarker = `DO_NOT_DISCLOSE_${secretName}_VALUE_0123456789`;
+      const result = evaluateEnvironment({
+        mode: "production",
+        env: {
+          ...productionEnvironment,
+          [secretName]: secretMarker,
+          [publicName]: `public-prefix-${secretMarker}-public-suffix`,
+        },
+      });
+      expect(result.ok).toBe(false);
+      expect(result.checks).toContainEqual(expect.objectContaining({
+        name: `${publicName}:${secretName}`,
+        status: "public_value_contains_privileged_server_secret",
+        severity: "error",
+      }));
+      expect(JSON.stringify(result)).not.toContain(secretMarker);
+    }
+  });
+
+  it("uses the exact lowercase runtime wire values for every feature switch", () => {
+    const featureSwitches = [
+      "TELEMETRY_INGEST_ENABLED",
+      "M22_RULE_ENGINE_ENABLED",
+      "M23_COMPARISON_ENGINE_ENABLED",
+      "M25_STATISTICAL_ENGINE_ENABLED",
+    ];
+    const malformedValues = ["TRUE", " true ", "False", " false ", "1"];
+
+    for (const feature of featureSwitches) {
+      for (const value of malformedValues) {
+        const result = evaluateEnvironment({ mode: "preview", env: { ...previewEnvironment, [feature]: value } });
+        expect(result.ok).toBe(false);
+        expect(result.checks).toContainEqual(expect.objectContaining({
+          name: feature,
+          status: "invalid_boolean",
+          severity: "error",
+        }));
+      }
+
+      const disabled = evaluateEnvironment({ mode: "preview", env: { ...previewEnvironment, [feature]: "false" } });
+      expect(disabled.ok).toBe(true);
+      expect(disabled.checks).toContainEqual(expect.objectContaining({ name: feature, status: "safe_disabled" }));
+
+      const enabled = evaluateEnvironment({
+        mode: "preview",
+        env: {
+          ...previewEnvironment,
+          [feature]: "true",
+          SUPABASE_SERVICE_ROLE_KEY: "server-only-service-role-value",
+          ...(feature === "TELEMETRY_INGEST_ENABLED"
+            ? {
+                TELEMETRY_CREDENTIAL_PEPPER: "0123456789abcdef0123456789abcdef",
+                TELEMETRY_RATE_LIMIT_KEY: "fedcba9876543210fedcba9876543210",
+              }
+            : {}),
+        },
+      });
+      expect(enabled.ok).toBe(true);
+      expect(enabled.checks).toContainEqual(expect.objectContaining({ name: feature, status: "enabled" }));
+    }
+  });
+
+  it("uses exact fail-closed runtime wire values for intake and retention switches", () => {
+    for (const feature of ["ENQUIRY_INTAKE_ENABLED", "RETENTION_DELETION_ENABLED"]) {
+      for (const value of ["FALSE", " false ", "TRUE", " true "]) {
+        const result = evaluateEnvironment({ mode: "production", env: { ...productionEnvironment, [feature]: value } });
+        expect(result.ok).toBe(false);
+        expect(result.checks).toContainEqual(expect.objectContaining({ name: feature, status: "invalid_boolean" }));
+      }
+      expect(evaluateEnvironment({ mode: "production", env: { ...productionEnvironment, [feature]: "false" } }).ok).toBe(true);
+    }
+  });
+
   it("requires complete minimum-strength telemetry server authority when telemetry is enabled", () => {
     const missing = evaluateEnvironment({
       mode: "preview",

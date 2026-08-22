@@ -90,10 +90,23 @@ function relevantScopes(mode) {
 }
 
 function safeBoolean(value) {
-  if (value === undefined || String(value).trim() === "") return "missing";
-  const normalized = String(value).trim().toLowerCase();
-  if (normalized === "true" || normalized === "false") return normalized;
+  if (value === undefined || value === "") return "missing";
+  if (value === "true" || value === "false") return value;
   return "invalid";
+}
+
+function findPublicSecretCollisions(env) {
+  const privilegedSecrets = ENVIRONMENT_CONTRACT
+    .filter((entry) => entry.exposure === "server" && entry.secret === true)
+    .map((entry) => [entry.name, env[entry.name]])
+    .filter(([, value]) => typeof value === "string" && value.length > 0);
+
+  return Object.entries(env)
+    .filter(([name, value]) => PUBLIC_PREFIXES.some((prefix) => name.startsWith(prefix)) && typeof value === "string")
+    .flatMap(([publicName, publicValue]) => privilegedSecrets
+      .filter(([, secretValue]) => publicValue.includes(secretValue))
+      .map(([secretName]) => ({ publicName, secretName })))
+    .sort((left, right) => `${left.publicName}:${left.secretName}`.localeCompare(`${right.publicName}:${right.secretName}`));
 }
 
 function validateConfiguredValue(name, value) {
@@ -145,6 +158,16 @@ export function evaluateEnvironment({ mode = "preview", env = process.env } = {}
 
   for (const unsafeName of findUnsafePublicAuthorityNames(env)) {
     checks.push(check("environment", unsafeName, false, "error", "unsafe_or_unclassified_public_name"));
+  }
+
+  for (const { publicName, secretName } of findPublicSecretCollisions(env)) {
+    checks.push(check(
+      "environment",
+      `${publicName}:${secretName}`,
+      false,
+      "error",
+      "public_value_contains_privileged_server_secret",
+    ));
   }
 
   for (const entry of ENVIRONMENT_CONTRACT) {
