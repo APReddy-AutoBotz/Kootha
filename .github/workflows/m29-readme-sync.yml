@@ -2,8 +2,8 @@
 name: M29 README sync
 
 on:
-  push:
-    branches: [milestone/m29-hosted-release-control]
+  pull_request:
+    types: [opened, reopened, synchronize]
   workflow_dispatch:
 
 permissions:
@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   sync-readme:
-    if: github.actor != 'github-actions[bot]'
+    if: github.event.pull_request.head.ref == 'milestone/m29-hosted-release-control' && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
