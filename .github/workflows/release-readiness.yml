@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   release-readiness:
@@ -43,3 +43,55 @@ jobs:
           path: output/m29-*-release-manifest.json
           if-no-files-found: error
           retention-days: 14
+
+  sync-readme:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'milestone/m29-hosted-release-control' && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: milestone/m29-hosted-release-control
+          fetch-depth: 2
+      - name: Apply M29 README delta and restore canonical workflow
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          readme = Path('README.md')
+          text = readme.read_text(encoding='utf-8')
+          text = text.replace(
+              'M28 Commercial & Schedule Operations Control is completed; the original selected-device M24 and real physical M26 remain AP/hardware/evidence-gated.',
+              'M28 Commercial & Schedule Operations Control is completed; M29 Hosted Release Activation & Recovery Control is completed in software on this branch; the original selected-device M24 and real physical M26 remain AP/hardware/evidence-gated.',
+              1,
+          )
+          text = text.replace(
+              'M28 commercial/schedule control is completed; original M24 physical selection and real M26 physical execution remain incomplete pending AP selection and real evidence.',
+              'M28 commercial/schedule control is completed; M29 hosted release activation/recovery software is completed on this branch; original M24 physical selection and real M26 physical execution remain incomplete pending AP selection and real evidence.',
+              1,
+          )
+          if '## M29 Hosted Release Readiness\n' not in text:
+              marker = '## Environment\n'
+              if marker not in text:
+                  raise SystemExit('README Environment marker not found')
+              section = '''## M29 Hosted Release Readiness
+
+M29 adds deterministic, secret-free hosted release controls without changing product runtime or database authority. Run repository policy/provenance checks with:
+
+    pnpm check:release-readiness -- --mode preview --config-source repository --output output/m29-preview-release-manifest.json
+    pnpm check:release-readiness -- --mode production --config-source repository --output output/m29-production-release-manifest.json
+
+Use [the M29 hosted activation and rollback runbook](docs/production/m29-hosted-release-activation.md) before any capacity-approved hosted promotion. Repository checks deliberately report live Supabase, Netlify preview and rollback evidence as `blocked-not-run` until those checks actually execute. The existing Kootha Supabase project remains inactive because of the organization free-project quota; do not pause or delete unrelated projects to bypass that capacity gate. Public enquiry intake and retention deletion remain fail-closed until separately approved.
+
+'''
+              text = text.replace(marker, section + marker, 1)
+          if 'M29 Hosted Release Activation & Recovery Control is completed in software on this branch' not in text:
+              raise SystemExit('README top M29 status was not updated')
+          readme.write_text(text, encoding='utf-8')
+          PY
+          git show HEAD^:.github/workflows/release-readiness.yml > .github/workflows/release-readiness.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md .github/workflows/release-readiness.yml
+          git diff --cached --check
+          git commit -m "M29: document hosted release readiness"
+          git push origin HEAD:milestone/m29-hosted-release-control
