@@ -31,6 +31,20 @@ describe("M28 final consistency closures", () => {
     expect(commercialWorkbench).toContain('if (saved) {\n      setDayReason("");\n      setNewDayDate("");');
   });
 
+  it("freezes every authoritative mutation payload control while busy", () => {
+    expect(commercialWorkbench).toContain("value={paymentStatus} disabled={busy}");
+    expect(commercialWorkbench).toContain("value={totalAmount} disabled={busy}");
+    expect(commercialWorkbench).toContain("value={paidAmount} disabled={busy}");
+    expect(commercialWorkbench).toContain("value={commercialNote} disabled={busy}");
+    expect(commercialWorkbench).toContain("value={newStartDate} disabled={busy}");
+    expect(commercialWorkbench).toContain("value={rescheduleReason} disabled={busy}");
+    expect(commercialWorkbench).toContain("value={selectedDayId} disabled={busy}");
+    expect(commercialWorkbench).toContain("value={newDayDate} disabled={busy}");
+    expect(commercialWorkbench).toContain("value={dayReason} disabled={busy}");
+    expect(commercialWorkbench).toContain("value={cancellationReason} disabled={busy}");
+    expect(commercialWorkbench).toContain("value={cancellationInternalNote} disabled={busy}");
+  });
+
   it("removes the stale legacy End-date editor without restoring direct schedule authority", () => {
     expect(webIndex).toContain('<link rel="stylesheet" href="/m28-legacy-schedule-closure.css" />');
     expect(legacyScheduleClosureCss).toContain(
