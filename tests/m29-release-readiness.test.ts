@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -165,7 +165,7 @@ describe("M29 hosted release readiness", () => {
   it("binds source provenance to Git HEAD and rejects a mismatched expected SHA", () => {
     const source = sourceProvenance();
     expect(source.sha).toMatch(/^[0-9a-f]{40}$/);
-    expect(source.cleanTracked).toBe(true);
+    expect(source.cleanWorktree).toBe(true);
     expect(source.expectedShaMatches).toBe(true);
 
     const mismatch = evaluateSourceProvenance({ expectedSha: "0".repeat(40) });
@@ -190,8 +190,47 @@ describe("M29 hosted release readiness", () => {
       const dirty = evaluateSourceProvenance({ root });
       expect(dirty.ok).toBe(false);
       expect(dirty.checks).toContainEqual(expect.objectContaining({
-        name: "tracked-state",
-        status: "dirty_tracked_state",
+        name: "worktree-state",
+        status: "dirty_or_untracked_state",
+      }));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects untracked release inputs but permits ignored generated output", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "kootha-m29-untracked-"));
+    try {
+      git(root, ["init"]);
+      git(root, ["config", "user.email", "m29@example.invalid"]);
+      git(root, ["config", "user.name", "M29 Test"]);
+      writeFileSync(path.join(root, ".gitignore"), "output/\n", "utf8");
+      writeFileSync(path.join(root, "tracked.txt"), "clean\n", "utf8");
+      git(root, ["add", ".gitignore", "tracked.txt"]);
+      git(root, ["commit", "-m", "initial"]);
+
+      mkdirSync(path.join(root, "output"), { recursive: true });
+      writeFileSync(path.join(root, "output", "manifest.json"), "{}\n", "utf8");
+      expect(evaluateSourceProvenance({ root }).ok).toBe(true);
+
+      mkdirSync(path.join(root, "supabase", "migrations"), { recursive: true });
+      const migration = path.join(root, "supabase", "migrations", "20990101000000_untracked.sql");
+      writeFileSync(migration, "select 1;\n", "utf8");
+      let unsafe = evaluateSourceProvenance({ root });
+      expect(unsafe.ok).toBe(false);
+      expect(unsafe.checks).toContainEqual(expect.objectContaining({
+        name: "worktree-state",
+        status: "dirty_or_untracked_state",
+      }));
+      rmSync(migration);
+
+      mkdirSync(path.join(root, "apps", "web", "src"), { recursive: true });
+      writeFileSync(path.join(root, "apps", "web", "src", "untracked-runtime.ts"), "export const releaseAuthority = true;\n", "utf8");
+      unsafe = evaluateSourceProvenance({ root });
+      expect(unsafe.ok).toBe(false);
+      expect(unsafe.checks).toContainEqual(expect.objectContaining({
+        name: "worktree-state",
+        status: "dirty_or_untracked_state",
       }));
     } finally {
       rmSync(root, { recursive: true, force: true });
