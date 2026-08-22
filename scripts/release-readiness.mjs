@@ -1,6 +1,5 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 export const RELEASE_MODES = ["preview", "production"];
@@ -107,6 +106,31 @@ function validateConfiguredValue(name, value) {
   return { ok: true, status: "configured" };
 }
 
+function gitText(root, args) {
+  return execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+}
+
+function trackedHeadFiles(root, pathspecs) {
+  const output = gitText(root, ["ls-tree", "-r", "--name-only", "HEAD", "--", ...pathspecs]);
+  return output ? output.split(/\r?\n/).filter(Boolean).sort() : [];
+}
+
+function readHeadText(root, relativePath) {
+  return execFileSync("git", ["show", `HEAD:${relativePath}`], {
+    cwd: root,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+}
+
+function tryReadHeadText(root, relativePath) {
+  try {
+    return readHeadText(root, relativePath);
+  } catch {
+    return undefined;
+  }
+}
+
 export function findUnsafePublicAuthorityNames(env = {}) {
   return Object.keys(env)
     .filter((name) => PUBLIC_PREFIXES.some((prefix) => name.startsWith(prefix)))
@@ -178,27 +202,13 @@ export function evaluateEnvironment({ mode = "preview", env = process.env } = {}
   return summarizeChecks(checks);
 }
 
-function walkFiles(root, relativeDir) {
-  const absoluteDir = path.join(root, relativeDir);
-  if (!existsSync(absoluteDir)) return [];
-  const result = [];
-  for (const entry of readdirSync(absoluteDir, { withFileTypes: true })) {
-    const relative = path.join(relativeDir, entry.name);
-    if (entry.isDirectory()) {
-      if (["node_modules", "dist", "build", ".expo"].includes(entry.name)) continue;
-      result.push(...walkFiles(root, relative));
-    } else if (/\.(?:js|mjs|cjs|ts|tsx|jsx)$/.test(entry.name) && !/\.(?:test|spec)\./.test(entry.name)) {
-      result.push(relative);
-    }
-  }
-  return result;
-}
-
 export function findRuntimeEnvironmentNames(root = process.cwd()) {
-  const files = [...walkFiles(root, "apps/web/src"), ...walkFiles(root, "apps/driver"), ...walkFiles(root, "netlify/functions")].sort();
+  const files = trackedHeadFiles(root, ["apps/web/src", "apps/driver", "netlify/functions"])
+    .filter((relative) => /\.(?:js|mjs|cjs|ts|tsx|jsx)$/.test(relative))
+    .filter((relative) => !/\.(?:test|spec)\./.test(relative));
   const names = new Set();
   for (const relative of files) {
-    const source = readFileSync(path.join(root, relative), "utf8");
+    const source = readHeadText(root, relative);
     for (const match of source.matchAll(/process\.env\.([A-Z][A-Z0-9_]*)/g)) names.add(match[1]);
     for (const match of source.matchAll(/import\.meta\.env\.([A-Z][A-Z0-9_]*)/g)) names.add(match[1]);
   }
@@ -210,22 +220,18 @@ export function findUnclassifiedRuntimeEnvironmentNames(root = process.cwd()) {
 }
 
 export function migrationProvenance(root = process.cwd()) {
-  const directory = path.join(root, "supabase", "migrations");
-  const files = readdirSync(directory).filter((name) => name.endsWith(".sql")).sort();
-  const timestamps = files.map((name) => name.split("_")[0]);
+  const files = trackedHeadFiles(root, ["supabase/migrations"])
+    .filter((relative) => relative.endsWith(".sql"));
+  const timestamps = files.map((relative) => path.basename(relative).split("_")[0]);
   if (new Set(timestamps).size !== timestamps.length) throw new Error("Duplicate migration timestamp detected.");
   const hash = createHash("sha256");
-  for (const name of files) {
-    hash.update(name);
+  for (const relative of files) {
+    hash.update(relative);
     hash.update("\0");
-    hash.update(readFileSync(path.join(directory, name)));
+    hash.update(readHeadText(root, relative));
     hash.update("\0");
   }
   return { count: files.length, fingerprint: `sha256:${hash.digest("hex")}` };
-}
-
-function gitText(root, args) {
-  return execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 }
 
 export function sourceProvenance({ root = process.cwd(), expectedSha = "" } = {}) {
@@ -249,10 +255,10 @@ export function evaluateSourceProvenance({ root = process.cwd(), expectedSha = "
 }
 
 function parseEnvExample(root) {
-  const file = path.join(root, ".env.example");
-  if (!existsSync(file)) return new Map();
+  const contents = tryReadHeadText(root, ".env.example");
+  if (contents === undefined) return new Map();
   const values = new Map();
-  for (const rawLine of readFileSync(file, "utf8").split(/\r?\n/)) {
+  for (const rawLine of contents.split(/\r?\n/)) {
     const line = rawLine.trim();
     if (!line || line.startsWith("#") || !line.includes("=")) continue;
     const index = line.indexOf("=");
@@ -280,7 +286,7 @@ export function evaluateRepository({ mode = "preview", root = process.cwd() } = 
   for (const name of unsafeNames) checks.push(check("env-example", name, false, "error", "unsafe_public_authority_name"));
   const migration = migrationProvenance(root);
   checks.push(check("migrations", "timestamp-uniqueness", true, "info", "verified"));
-  checks.push(check("migrations", "fingerprint", true, "info", "computed"));
+  checks.push(check("migrations", "fingerprint", true, "info", "computed_from_tracked_head"));
   return { ...summarizeChecks(checks), migration };
 }
 
