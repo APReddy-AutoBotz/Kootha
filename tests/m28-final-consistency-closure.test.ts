@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
+// Controller trigger: the assertion below is intentionally strict until the legacy End date is derived-only.
 const commercialWorkbench = readFileSync("apps/web/src/admin-commercial.tsx", "utf8");
 const legacyAdmin = readFileSync("apps/web/src/admin.tsx", "utf8");
 const finalClosureMigration = readFileSync(
