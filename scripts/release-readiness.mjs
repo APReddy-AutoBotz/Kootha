@@ -109,12 +109,60 @@ function findPublicSecretCollisions(env) {
     .sort((left, right) => `${left.publicName}:${left.secretName}`.localeCompare(`${right.publicName}:${right.secretName}`));
 }
 
+const SUPABASE_PUBLIC_CREDENTIAL_NAMES = new Set([
+  "VITE_SUPABASE_ANON_KEY",
+  "EXPO_PUBLIC_SUPABASE_ANON_KEY",
+]);
+const SUPABASE_URL_NAMES = new Set([
+  "VITE_SUPABASE_URL",
+  "SUPABASE_URL",
+  "EXPO_PUBLIC_SUPABASE_URL",
+]);
+
+function decodeJwtPayload(value) {
+  const parts = value.split(".");
+  if (parts.length !== 3) return undefined;
+  try {
+    return JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+  } catch {
+    return undefined;
+  }
+}
+
+function validateSupabasePublicCredential(value) {
+  const credential = String(value).trim();
+  if (/^sb_secret_/i.test(credential) || /service[\s_-]*role/i.test(credential)) {
+    return { ok: false, status: "privileged_supabase_credential" };
+  }
+  const payload = decodeJwtPayload(credential);
+  if (payload && payload.role !== "anon") {
+    return { ok: false, status: "privileged_supabase_credential" };
+  }
+  return { ok: true, status: "configured" };
+}
+
+function parseSupabaseProjectAuthority(value) {
+  try {
+    const parsed = new URL(String(value));
+    if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.port
+      || parsed.search || parsed.hash || (parsed.pathname !== "/" && parsed.pathname !== "")) return undefined;
+    const match = parsed.hostname.toLowerCase().match(/^([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)\.supabase\.co$/);
+    return match?.[1];
+  } catch {
+    return undefined;
+  }
+}
+
 function validateConfiguredValue(name, value) {
   const entry = CONTRACT_BY_NAME.get(name);
   if (value === undefined || String(value).trim() === "") return { ok: false, status: "missing" };
   if (isPlaceholder(value)) return { ok: false, status: "placeholder" };
   if (entry?.minLength && String(value).trim().length < entry.minLength) {
     return { ok: false, status: "below_minimum_length" };
+  }
+  if (SUPABASE_PUBLIC_CREDENTIAL_NAMES.has(name)) return validateSupabasePublicCredential(value);
+  if (SUPABASE_URL_NAMES.has(name) && !parseSupabaseProjectAuthority(value)) {
+    return { ok: false, status: "invalid_supabase_project_url" };
   }
   return { ok: true, status: "configured" };
 }
@@ -201,11 +249,19 @@ export function evaluateEnvironment({ mode = "preview", env = process.env } = {}
       checks.push(check(entry.scope, entry.name, !requiredNow, requiredNow ? "error" : "warning", "placeholder"));
       continue;
     }
-    if (entry.minLength && String(value).trim().length < entry.minLength) {
-      checks.push(check(entry.scope, entry.name, false, "error", "below_minimum_length"));
-      continue;
-    }
-    checks.push(check(entry.scope, entry.name, true, "info", "configured"));
+    const configured = validateConfiguredValue(entry.name, value);
+    checks.push(check(entry.scope, entry.name, configured.ok, configured.ok ? "info" : "error", configured.status));
+  }
+
+  const projectAuthorities = [...SUPABASE_URL_NAMES]
+    .filter((name) => mode === "production" || name !== "EXPO_PUBLIC_SUPABASE_URL")
+    .map((name) => [name, parseSupabaseProjectAuthority(env[name])])
+    .filter(([, authority]) => authority !== undefined);
+  const distinctAuthorities = new Set(projectAuthorities.map(([, authority]) => authority));
+  if (distinctAuthorities.size > 1) {
+    checks.push(check("environment", "supabase-project-authority", false, "error", "cross_project_authority"));
+  } else if (projectAuthorities.length > 0) {
+    checks.push(check("environment", "supabase-project-authority", true, "info", "single_project_authority"));
   }
 
   for (const [feature, dependencies] of Object.entries(FEATURE_DEPENDENCIES)) {
