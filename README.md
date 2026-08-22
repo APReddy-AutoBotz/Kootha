@@ -1,10 +1,10 @@
 # Kootha
 
-Kootha is a field advertisement planning and proof platform. The repository currently includes M0 foundation, M1 public website and enquiries, M2 admin lead management, M3 campaign planning and scheduling, M4 driver and vehicle onboarding, M5 driver and vehicle assignment to ad work, M6 ad work execution without GPS, M7 proof upload and customer update sharing, M8 final proof summary and campaign closure, M9 mobile GPS tracking foundation, M10 mobile GPS reliability and offline buffer, M11 admin tracking review without maps, M12 location proof in final summary, M13 pilot readiness and deployment preparation, M14 controlled pilot dry run preparation, M15 real device pilot setup and deployment preparation, M16 real device pilot execution evidence, M17 real device pilot blocker remediation, M18 real-device pilot evidence retry preflight, M20A registry/history, M20B deterministic simulator, M21 secure physical telemetry ingestion, M22 Tracking Health and alerts, and M23 phone-versus-physical-device comparison. M18 remains incomplete/in progress; M20A–M23, M24F, M25, the software-only M26 commissioning/evidence layer, and M27 Governed Operations Export & Audit Workbench are completed; M28 Commercial & Schedule Operations Control is completed; the original selected-device M24 and real physical M26 remain AP/hardware/evidence-gated.
+Kootha is a field advertisement planning and proof platform. The repository currently includes M0 foundation, M1 public website and enquiries, M2 admin lead management, M3 campaign planning and scheduling, M4 driver and vehicle onboarding, M5 driver and vehicle assignment to ad work, M6 ad work execution without GPS, M7 proof upload and customer update sharing, M8 final proof summary and campaign closure, M9 mobile GPS tracking foundation, M10 mobile GPS reliability and offline buffer, M11 admin tracking review without maps, M12 location proof in final summary, M13 pilot readiness and deployment preparation, M14 controlled pilot dry run preparation, M15 real device pilot setup and deployment preparation, M16 real device pilot execution evidence, M17 real device pilot blocker remediation, M18 real-device pilot evidence retry preflight, M20A registry/history, M20B deterministic simulator, M21 secure physical telemetry ingestion, M22 Tracking Health and alerts, and M23 phone-versus-physical-device comparison. M18 remains incomplete/in progress; M20A–M23, M24F, M25, the software-only M26 commissioning/evidence layer, and M27 Governed Operations Export & Audit Workbench are completed; M28 Commercial & Schedule Operations Control is completed; M29 Hosted Release Activation & Recovery Control is completed in software on this branch; the original selected-device M24 and real physical M26 remain AP/hardware/evidence-gated.
 
 ## Current Scope
 
-Current milestone status on this branch: M18 remains incomplete; M20A–M23, M24F, M25, the software-only M26 layer, and M27 governed export/audit work are completed; M28 commercial/schedule control is completed; original M24 physical selection and real M26 physical execution remain incomplete pending AP selection and real evidence. The existing Kootha Supabase project is inactive and currently blocked by the organization free-project quota; no unrelated project was paused. No hosted migration, public production deployment, hardware, real vendor credential, or production ML action is included.
+Current milestone status on this branch: M18 remains incomplete; M20A–M23, M24F, M25, the software-only M26 layer, and M27 governed export/audit work are completed; M28 commercial/schedule control is completed; M29 hosted release activation/recovery software is completed on this branch; original M24 physical selection and real M26 physical execution remain incomplete pending AP selection and real evidence. The existing Kootha Supabase project is inactive and currently blocked by the organization free-project quota; no unrelated project was paused. No hosted migration, public production deployment, hardware, real vendor credential, or production ML action is included.
 
 - React + Vite public website at /.
 - Public enquiry form with server-side validation through a protected Netlify/Turnstile intake endpoint.
@@ -86,6 +86,15 @@ Run the M17 remediation readiness check without printing environment values or c
     pnpm check:pilot-readiness
 
 This checks that the M17 remediation docs exist, required public environment variable names are documented, `.env.example` remains placeholder-only, and unsafe service-role-like frontend env names are absent.
+
+## M29 Hosted Release Readiness
+
+M29 adds deterministic, secret-free hosted release controls without changing product runtime or database authority. Run repository policy/provenance checks with:
+
+    pnpm check:release-readiness -- --mode preview --config-source repository --output output/m29-preview-release-manifest.json
+    pnpm check:release-readiness -- --mode production --config-source repository --output output/m29-production-release-manifest.json
+
+Use [the M29 hosted activation and rollback runbook](docs/production/m29-hosted-release-activation.md) before any capacity-approved hosted promotion. Local/repository manifests cannot attest live Supabase, Netlify preview, or rollback success; those remain `external-attestation-required` until independently verified by the release controller. The existing Kootha Supabase project remains inactive because of the organization free-project quota; do not pause or delete unrelated projects to bypass that capacity gate. Public enquiry intake and retention deletion remain fail-closed until separately approved.
 
 ## Environment
 
@@ -340,7 +349,7 @@ Admin final summary location proof works from /admin:
 6. Use Mark Ready for Closure or Close Ad Work to refresh the summary.
 7. Copy or print the final summary manually. M12 does not create public links or provider sends.
 
-Customer summary wording is limited to Phone Location Proof Status, Location Proof Required, Location Proof Active During Work, First Location Received, Last Location Received, Offline Location Sync, and Team Review Note. It does not expose latitude, longitude, accuracy, raw location points, tracking session ids, internal review notes, storage paths, route drawings, maps, distance billing, or public live tracking.
+Customer summary wording is limited to Phone Location Proof Status, Location Location Proof Required, Location Proof Active During Work, First Location Received, Last Location Received, Offline Location Sync, and Team Review Note. It does not expose latitude, longitude, accuracy, raw location points, tracking session ids, internal review notes, storage paths, route drawings, maps, distance billing, or public live tracking.
 
 Closure warnings include Phone Location Proof is not reviewed, No phone location updates were received, and Some location updates need follow-up. Closing with location warnings requires a Closure Reason. A customer-safe Phone Location Proof note can explain the customer wording, but it does not replace the Closure Reason.
 
@@ -482,6 +491,7 @@ The driver app is Expo React Native and Android-first. M9 requests foreground ph
     pnpm build
     pnpm check:pilot-env
     pnpm check:pilot-readiness
+    pnpm check:release-readiness -- --mode preview --config-source repository
 
 ## Supabase Migration Note
 
@@ -522,7 +532,7 @@ M9 keeps customer_live_enabled and live_tracking_enabled false by default and do
 M10 keeps customer_live_enabled and live_tracking_enabled false by default and does not add customer live tracking behavior.
 
 
-M11 keeps customer_live_enabled and live_tracking_enabled false by default and does not add customer live tracking behavior.
+M11 keeps customer_live_enabled and live_tracking_enabled false by default and does not add live tracking behavior.
 
 M12 keeps customer_live_enabled and live_tracking_enabled false by default and does not add customer live tracking behavior.
 
@@ -536,4 +546,4 @@ M16 keeps customer_live_enabled and live_tracking_enabled false by default and d
 
 M17 keeps customer_live_enabled and live_tracking_enabled false by default and does not add customer live tracking behavior.
 
-M18 keeps customer_live_enabled and live_tracking_enabled false by default and does not add customer live tracking behavior.
+M18 keeps customer_live_enabled and live_tracking_enabled false by default and does not add live tracking behavior.
