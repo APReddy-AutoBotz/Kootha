@@ -49,6 +49,11 @@ function git(cwd: string, args: string[]) {
   return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 }
 
+function jwtWithRole(role: string) {
+  const encode = (value: object) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  return `${encode({ alg: "HS256", typ: "JWT" })}.${encode({ role })}.test-signature`;
+}
+
 describe("M29 hosted release readiness", () => {
   it("accepts the fail-closed preview contract without production-only secrets", () => {
     const result = evaluateEnvironment({ mode: "preview", env: previewEnvironment });
@@ -107,6 +112,90 @@ describe("M29 hosted release readiness", () => {
       }));
       expect(JSON.stringify(result)).not.toContain(secretMarker);
     }
+  });
+
+  it("rejects privileged Supabase browser credentials without relying on a server-side copy", () => {
+    const privileged = [
+      jwtWithRole("service_role"),
+      ["sb", "secret", "stale", "rotated", "credential"].join("_"),
+      "legacy-service-role-value",
+    ];
+    for (const publicName of ["VITE_SUPABASE_ANON_KEY", "EXPO_PUBLIC_SUPABASE_ANON_KEY"]) {
+      for (const secretMarker of privileged) {
+        const result = evaluateEnvironment({
+          mode: publicName.startsWith("EXPO_") ? "production" : "preview",
+          env: {
+            ...(publicName.startsWith("EXPO_") ? productionEnvironment : previewEnvironment),
+            [publicName]: secretMarker,
+            ...(publicName.startsWith("EXPO_") ? { SUPABASE_SERVICE_ROLE_KEY: "different-current-server-key" } : {}),
+          },
+        });
+        expect(result.ok).toBe(false);
+        expect(result.checks).toContainEqual(expect.objectContaining({
+          name: publicName,
+          status: "privileged_supabase_credential",
+        }));
+        expect(JSON.stringify(result)).not.toContain(secretMarker);
+      }
+    }
+  });
+
+  it("preserves valid Supabase anon and publishable browser credentials", () => {
+    for (const credential of [jwtWithRole("anon"), "sb_publishable_public-client-value"]) {
+      expect(evaluateEnvironment({
+        mode: "preview",
+        env: { ...previewEnvironment, VITE_SUPABASE_ANON_KEY: credential },
+      }).ok).toBe(true);
+    }
+  });
+
+  it("requires valid URLs identifying one Supabase project authority", () => {
+    const invalidUrls = [
+      "definitely-not-a-url",
+      "https://supabase.co",
+      "https:///missing-hostname",
+      "https://user:pass@kootha.supabase.co",
+      "https://kootha.supabase.co:8443",
+      "https://kootha.supabase.co/rest/v1",
+      "https://kootha.supabase.co?query=yes",
+      "https://kootha.supabase.co#fragment",
+    ];
+    for (const value of invalidUrls) {
+      const result = evaluateEnvironment({ mode: "preview", env: { ...previewEnvironment, VITE_SUPABASE_URL: value } });
+      expect(result.ok).toBe(false);
+      expect(result.checks).toContainEqual(expect.objectContaining({
+        name: "VITE_SUPABASE_URL",
+        status: "invalid_supabase_project_url",
+      }));
+    }
+    expect(evaluateEnvironment({
+      mode: "preview",
+      env: { ...previewEnvironment, VITE_SUPABASE_URL: "https://example.com" },
+    }).ok).toBe(false);
+
+    const previewSplit = evaluateEnvironment({
+      mode: "preview",
+      env: { ...previewEnvironment, SUPABASE_URL: "https://another-project.supabase.co" },
+    });
+    expect(previewSplit.ok).toBe(false);
+    expect(previewSplit.checks).toContainEqual(expect.objectContaining({ status: "cross_project_authority" }));
+
+    const productionSplit = evaluateEnvironment({
+      mode: "production",
+      env: { ...productionEnvironment, EXPO_PUBLIC_SUPABASE_URL: "https://another-project.supabase.co" },
+    });
+    expect(productionSplit.ok).toBe(false);
+    expect(productionSplit.checks).toContainEqual(expect.objectContaining({ status: "cross_project_authority" }));
+
+    expect(evaluateEnvironment({
+      mode: "production",
+      env: {
+        ...productionEnvironment,
+        VITE_SUPABASE_URL: "https://KOOTHA.supabase.co/",
+        SUPABASE_URL: "https://kootha.supabase.co",
+        EXPO_PUBLIC_SUPABASE_URL: "https://kootha.supabase.co/",
+      },
+    }).ok).toBe(true);
   });
 
   it("uses the exact lowercase runtime wire values for every feature switch", () => {
