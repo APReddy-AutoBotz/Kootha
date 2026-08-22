@@ -6,17 +6,24 @@ export const RELEASE_MODES = ["preview", "production"];
 export const CONFIG_SOURCES = ["repository", "environment"];
 export const EXTERNAL_STATUSES = ["blocked-not-run", "passed", "failed"];
 
-const PLACEHOLDER_FRAGMENTS = [
-  "your-project",
-  "replace-with",
-  "placeholder",
-  "example.com",
-  "change-me",
-  "todo",
-];
+const PLACEHOLDER_FRAGMENTS = ["your-project", "replace-with", "placeholder", "example.com", "change-me", "todo"];
 const PUBLIC_PREFIXES = ["VITE_", "EXPO_PUBLIC_"];
 const PUBLIC_AUTHORITY_PATTERN = /(?:SERVICE_ROLE|SECRET|PEPPER|CREDENTIAL|RATE_LIMIT_KEY)/i;
 const BUILTIN_RUNTIME_ENV_NAMES = new Set(["BASE_URL", "DEV", "MODE", "NODE_ENV", "PROD", "SSR"]);
+const PLACEHOLDER_EXPECTED_PUBLIC_NAMES = new Set([
+  "VITE_SUPABASE_URL",
+  "VITE_SUPABASE_ANON_KEY",
+  "VITE_CONTACT_PHONE",
+  "VITE_CONTACT_PHONE_DISPLAY",
+  "VITE_TURNSTILE_SITE_KEY",
+  "VITE_SENTRY_DSN",
+  "VITE_APP_RELEASE",
+  "EXPO_PUBLIC_SUPABASE_URL",
+  "EXPO_PUBLIC_SUPABASE_ANON_KEY",
+  "EXPO_PUBLIC_ADMIN_PHONE",
+  "EXPO_PUBLIC_SENTRY_DSN",
+  "EXPO_PUBLIC_APP_RELEASE",
+]);
 
 export const ENVIRONMENT_CONTRACT = Object.freeze([
   { name: "VITE_PRODUCT_NAME", exposure: "public", scope: "web", preview: true, production: true },
@@ -28,7 +35,6 @@ export const ENVIRONMENT_CONTRACT = Object.freeze([
   { name: "VITE_CONTACT_PHONE_DISPLAY", exposure: "public", scope: "web", preview: false, production: true },
   { name: "VITE_TURNSTILE_SITE_KEY", exposure: "public", scope: "web", preview: false, production: true },
   { name: "VITE_SENTRY_DSN", exposure: "public", scope: "web", preview: false, production: true },
-
   { name: "EXPO_PUBLIC_PRODUCT_NAME", exposure: "public", scope: "driver", preview: false, production: true },
   { name: "EXPO_PUBLIC_SUPABASE_URL", exposure: "public", scope: "driver", preview: false, production: true },
   { name: "EXPO_PUBLIC_SUPABASE_ANON_KEY", exposure: "public", scope: "driver", preview: false, production: true },
@@ -36,12 +42,10 @@ export const ENVIRONMENT_CONTRACT = Object.freeze([
   { name: "EXPO_PUBLIC_SENTRY_DSN", exposure: "public", scope: "driver", preview: false, production: true },
   { name: "EXPO_PUBLIC_SENTRY_ENVIRONMENT", exposure: "public", scope: "driver", preview: false, production: true },
   { name: "EXPO_PUBLIC_APP_RELEASE", exposure: "public", scope: "driver", preview: false, production: true },
-
   { name: "SUPABASE_URL", exposure: "server", scope: "server", preview: true, production: true },
   { name: "SUPABASE_SERVICE_ROLE_KEY", exposure: "server", scope: "server", secret: true, minLength: 20, preview: false, production: true },
   { name: "TURNSTILE_SECRET_KEY", exposure: "server", scope: "server", secret: true, minLength: 20, preview: false, production: true },
   { name: "ENQUIRY_RATE_LIMIT_SALT", exposure: "server", scope: "server", secret: true, minLength: 32, preview: false, production: true },
-
   { name: "ENQUIRY_INTAKE_ENABLED", exposure: "server", scope: "server", switchPolicy: "must-false", preview: false, production: true },
   { name: "RETENTION_DELETION_ENABLED", exposure: "server", scope: "server", switchPolicy: "must-false", preview: false, production: true },
   { name: "TELEMETRY_INGEST_ENABLED", exposure: "server", scope: "server", switchPolicy: "feature", preview: false, production: false },
@@ -91,37 +95,27 @@ export function evaluateEnvironment({ mode = "preview", env = process.env } = {}
   if (!RELEASE_MODES.includes(mode)) throw new Error(`Unsupported release mode: ${mode}`);
   const checks = [];
   const scopes = relevantScopes(mode);
-
   for (const unsafeName of findUnsafePublicAuthorityNames(env)) {
     checks.push(check("environment", unsafeName, false, "error", "unsafe_public_authority_name"));
   }
-
   for (const entry of ENVIRONMENT_CONTRACT) {
     if (!scopes.has(entry.scope)) continue;
     const value = env[entry.name];
     const required = isRequired(entry, mode);
-
     if (entry.switchPolicy === "must-false") {
       const state = safeBoolean(value);
-      if (state === "true") {
-        checks.push(check(entry.scope, entry.name, false, "error", "unsafe_enabled"));
-      } else if (state === "invalid") {
-        checks.push(check(entry.scope, entry.name, false, "error", "invalid_boolean"));
-      } else if (required && state === "missing") {
-        checks.push(check(entry.scope, entry.name, false, "error", "missing_explicit_fail_closed_switch"));
-      } else {
-        checks.push(check(entry.scope, entry.name, true, "info", "safe_disabled"));
-      }
+      if (state === "true") checks.push(check(entry.scope, entry.name, false, "error", "unsafe_enabled"));
+      else if (state === "invalid") checks.push(check(entry.scope, entry.name, false, "error", "invalid_boolean"));
+      else if (required && state === "missing") checks.push(check(entry.scope, entry.name, false, "error", "missing_explicit_fail_closed_switch"));
+      else checks.push(check(entry.scope, entry.name, true, "info", "safe_disabled"));
       continue;
     }
-
     if (entry.switchPolicy === "feature") {
       const state = safeBoolean(value);
       if (state === "invalid") checks.push(check(entry.scope, entry.name, false, "error", "invalid_boolean"));
       else checks.push(check(entry.scope, entry.name, true, "info", state === "true" ? "enabled" : "safe_disabled"));
       continue;
     }
-
     const conditionEnabled = entry.conditionalOn && safeBoolean(env[entry.conditionalOn]) === "true";
     const requiredNow = required || conditionEnabled;
     if (value === undefined || String(value).trim() === "") {
@@ -138,7 +132,6 @@ export function evaluateEnvironment({ mode = "preview", env = process.env } = {}
     }
     checks.push(check(entry.scope, entry.name, true, "info", "configured"));
   }
-
   for (const feature of ["M22_RULE_ENGINE_ENABLED", "M23_COMPARISON_ENGINE_ENABLED", "M25_STATISTICAL_ENGINE_ENABLED"]) {
     if (safeBoolean(env[feature]) !== "true") continue;
     for (const dependency of ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"]) {
@@ -147,7 +140,6 @@ export function evaluateEnvironment({ mode = "preview", env = process.env } = {}
       checks.push(check("feature-dependency", `${feature}:${dependency}`, ok, ok ? "info" : "error", ok ? "configured" : "missing"));
     }
   }
-
   return summarizeChecks(checks);
 }
 
@@ -168,11 +160,7 @@ function walkFiles(root, relativeDir) {
 }
 
 export function findRuntimeEnvironmentNames(root = process.cwd()) {
-  const files = [
-    ...walkFiles(root, "apps/web/src"),
-    ...walkFiles(root, "apps/driver"),
-    ...walkFiles(root, "netlify/functions"),
-  ].sort();
+  const files = [...walkFiles(root, "apps/web/src"), ...walkFiles(root, "apps/driver"), ...walkFiles(root, "netlify/functions")].sort();
   const names = new Set();
   for (const relative of files) {
     const source = readFileSync(path.join(root, relative), "utf8");
@@ -183,8 +171,7 @@ export function findRuntimeEnvironmentNames(root = process.cwd()) {
 }
 
 export function findUnclassifiedRuntimeEnvironmentNames(root = process.cwd()) {
-  return findRuntimeEnvironmentNames(root)
-    .filter((name) => !CONTRACT_NAMES.has(name) && !BUILTIN_RUNTIME_ENV_NAMES.has(name));
+  return findRuntimeEnvironmentNames(root).filter((name) => !CONTRACT_NAMES.has(name) && !BUILTIN_RUNTIME_ENV_NAMES.has(name));
 }
 
 export function migrationProvenance(root = process.cwd()) {
@@ -222,18 +209,16 @@ export function evaluateRepository({ mode = "preview", root = process.cwd() } = 
   for (const entry of ENVIRONMENT_CONTRACT.filter((candidate) => candidate.exposure === "public")) {
     const present = envExample.has(entry.name);
     checks.push(check("env-example", entry.name, present, present ? "info" : "error", present ? "documented" : "missing"));
-    if (present && !isPlaceholder(envExample.get(entry.name)) && /(?:SUPABASE|SENTRY|TURNSTILE)/.test(entry.name)) {
+    if (present && PLACEHOLDER_EXPECTED_PUBLIC_NAMES.has(entry.name) && !isPlaceholder(envExample.get(entry.name))) {
       checks.push(check("env-example", entry.name, false, "error", "non_placeholder_public_in_example"));
     }
   }
   const unclassified = findUnclassifiedRuntimeEnvironmentNames(root);
   if (unclassified.length === 0) checks.push(check("runtime-env-coverage", "contract", true, "info", "complete"));
   for (const name of unclassified) checks.push(check("runtime-env-coverage", name, false, "error", "unclassified"));
-
   const unsafeNames = findUnsafePublicAuthorityNames(Object.fromEntries([...envExample.keys()].map((name) => [name, "present"])));
   if (unsafeNames.length === 0) checks.push(check("env-example", "public-authority-boundary", true, "info", "safe"));
   for (const name of unsafeNames) checks.push(check("env-example", name, false, "error", "unsafe_public_authority_name"));
-
   const migration = migrationProvenance(root);
   checks.push(check("migrations", "timestamp-uniqueness", true, "info", "verified"));
   checks.push(check("migrations", "fingerprint", true, "info", "computed"));
@@ -256,14 +241,7 @@ export function releaseTimestamp(env = process.env) {
   return new Date().toISOString();
 }
 
-export function buildReleaseManifest({
-  mode,
-  configSource,
-  evaluation,
-  migration,
-  env = process.env,
-  timestamp = releaseTimestamp(env),
-} = {}) {
+export function buildReleaseManifest({ mode, configSource, evaluation, migration, env = process.env, timestamp = releaseTimestamp(env) } = {}) {
   const external = {
     supabase: normalizeExternalStatus(env.RELEASE_SUPABASE_STATUS),
     netlifyPreview: normalizeExternalStatus(env.RELEASE_NETLIFY_PREVIEW_STATUS),
@@ -279,12 +257,7 @@ export function buildReleaseManifest({
     sourceSha,
     releaseId,
     migration,
-    checks: {
-      ok: evaluation.ok,
-      errors: evaluation.errors,
-      warnings: evaluation.warnings,
-      results: evaluation.checks,
-    },
+    checks: { ok: evaluation.ok, errors: evaluation.errors, warnings: evaluation.warnings, results: evaluation.checks },
     external,
     promotionReady: evaluation.ok && externalReady,
     timestamp,
