@@ -15,7 +15,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: pnpm/action-setup@v4
         with: { version: 9.15.4 }
       - uses: actions/setup-node@v4
@@ -25,21 +27,21 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Bind reproducible source time
         shell: bash
-        run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct \"$GITHUB_SHA\")" >> "$GITHUB_ENV"
+        run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
       - name: Preview repository readiness
         env:
-          RELEASE_SOURCE_SHA: ${{ github.sha }}
+          RELEASE_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: pnpm check:release-readiness -- --mode preview --config-source repository --output output/m29-preview-release-manifest.json
       - name: Production repository readiness
         env:
-          RELEASE_SOURCE_SHA: ${{ github.sha }}
+          RELEASE_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: pnpm check:release-readiness -- --mode production --config-source repository --output output/m29-production-release-manifest.json
       - name: Focused M29 regression
         run: pnpm test:m29-release-readiness
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: m29-release-readiness-${{ github.sha }}
+          name: m29-release-readiness-${{ github.event.pull_request.head.sha || github.sha }}
           path: output/m29-*-release-manifest.json
           if-no-files-found: error
           retention-days: 14
