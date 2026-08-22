@@ -81,7 +81,7 @@ insert into public.ad_works (
   (
     '28f00000-0000-4000-8000-000000000102',
     'Active child ownership destination',
-    current_date + 2, current_date + 2, 0,
+    current_date + 2, current_date + 2, 1,
     'scheduled', 'planned', 'not_assigned',
     'not_released', 'not_started', 'not_ready', 'admin_managed'
   );
