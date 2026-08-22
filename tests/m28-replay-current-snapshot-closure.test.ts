@@ -26,4 +26,18 @@ describe("M28 replay current-snapshot closure", () => {
     expect(workbenchSource).toContain("applySnapshot(envelope.snapshot, requestId, adWorkId)");
     expect(workbenchSource).toContain("validateCommercialScheduleSnapshot(next)");
   });
+
+  it("preserves mutation inputs until a validated authoritative response succeeds", () => {
+    expect(workbenchSource).toContain("async function runMutation(rpc: string, body: Record<string, unknown>): Promise<boolean>");
+    expect(workbenchSource).toContain("if (!snapshot) return false;");
+    expect(workbenchSource).toContain("expectedFingerprint !== snapshotFingerprint) return false;");
+    expect(workbenchSource).toContain("if (!applySnapshot(envelope.snapshot, requestId, adWorkId)) return false;");
+    expect(workbenchSource).toContain("return true;");
+    expect(workbenchSource).toContain('const saved = await runMutation("admin_reschedule_ad_work_v1"');
+    expect(workbenchSource).toContain('if (saved) setRescheduleReason("");');
+    expect(workbenchSource).toContain('const saved = await runMutation("admin_reschedule_ad_work_day_v1"');
+    expect(workbenchSource).toContain('if (saved) {\n      setDayReason("");\n      setNewDayDate("");');
+    expect(workbenchSource).toContain('const saved = await runMutation("admin_cancel_ad_work_v1"');
+    expect(workbenchSource).toContain('if (saved) {\n      setCancellationReason("");\n      setCancellationInternalNote("");');
+  });
 });
