@@ -1,0 +1,560 @@
+name: PR36 M28 final closure controller
+
+on:
+  push:
+    branches:
+      - milestone/m28-commercial-schedule-operations
+
+permissions:
+  contents: write
+
+jobs:
+  close-review-family:
+    if: github.event.head_commit.message == 'chore: run M28 final closure controller'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Apply integrated M28 closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "c577cfb1d5a8cefde989def7b41299a5ce207794"
+          python <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: Path, old: str, new: str):
+              text = path.read_text()
+              if text.count(old) != 1:
+                  raise SystemExit(f"expected one match in {path}: found {text.count(old)}")
+              path.write_text(text.replace(old, new, 1))
+
+          shared = Path("packages/shared/src/commercialSchedule.ts")
+          replace_once(shared,
+          '''  commercialEvents: CommercialEvent[];\n  commercialEventsPage: CommercialEventPageMetadata;\n  scheduleEvents: ScheduleEvent[];\n''',
+          '''  commercialEvents: CommercialEvent[];\n  commercialEventsPage: CommercialEventPageMetadata;\n  scheduleEvents: ScheduleEvent[];\n  scheduleEventsPage: CommercialEventPageMetadata;\n''')
+          replace_once(shared,
+          '''function isCommercialEventPageMetadata(value: unknown): value is CommercialEventPageMetadata {\n''',
+          '''function isScheduleEvent(value: unknown): value is ScheduleEvent {\n  return isRecord(value)\n    && typeof value.id === "string"\n    && ["ad_work_rescheduled", "day_rescheduled", "ad_work_cancelled"].includes(String(value.eventType))\n    && (value.adWorkDayId === null || typeof value.adWorkDayId === "string")\n    && typeof value.reason === "string"\n    && typeof value.customerMessage === "string"\n    && Number.isInteger(value.version)\n    && typeof value.createdAt === "string";\n}\n\nfunction isCommercialEventPageMetadata(value: unknown): value is CommercialEventPageMetadata {\n''')
+          replace_once(shared,
+          '''export function validateCommercialScheduleSnapshot(value: unknown): value is CommercialScheduleSnapshot {\n''',
+          '''export function validateScheduleHistoryPage(value: unknown): value is { events: ScheduleEvent[]; page: CommercialEventPageMetadata } {\n  if (!isRecord(value) || !Array.isArray(value.events) || !isCommercialEventPageMetadata(value.page)) return false;\n  return value.events.length === value.page.returned\n    && value.events.length <= value.page.limit\n    && value.events.every(isScheduleEvent);\n}\n\nexport function validateCommercialScheduleSnapshot(value: unknown): value is CommercialScheduleSnapshot {\n''')
+          replace_once(shared,
+          '''      || !Array.isArray(value.commercialEvents)\n      || !isCommercialEventPageMetadata(value.commercialEventsPage)\n      || !Array.isArray(value.scheduleEvents)) return false;\n  if (value.commercialEvents.length !== value.commercialEventsPage.returned\n      || value.commercialEvents.length > value.commercialEventsPage.limit) return false;\n''',
+          '''      || !Array.isArray(value.commercialEvents)\n      || !isCommercialEventPageMetadata(value.commercialEventsPage)\n      || !Array.isArray(value.scheduleEvents)\n      || !isCommercialEventPageMetadata(value.scheduleEventsPage)) return false;\n  if (value.commercialEvents.length !== value.commercialEventsPage.returned\n      || value.commercialEvents.length > value.commercialEventsPage.limit\n      || value.scheduleEvents.length !== value.scheduleEventsPage.returned\n      || value.scheduleEvents.length > value.scheduleEventsPage.limit) return false;\n''')
+          replace_once(shared,
+          '''    && value.commercialEvents.every(isCommercialEvent)\n    && value.scheduleEvents.every((event) => isRecord(event)\n      && typeof event.id === "string"\n      && ["ad_work_rescheduled", "day_rescheduled", "ad_work_cancelled"].includes(String(event.eventType))\n      && typeof event.reason === "string"\n      && typeof event.customerMessage === "string"\n      && Number.isInteger(event.version));\n''',
+          '''    && value.commercialEvents.every(isCommercialEvent)\n    && value.scheduleEvents.every(isScheduleEvent);\n''')
+
+          ui = Path("apps/web/src/admin-commercial.tsx")
+          replace_once(ui,
+          '''  validateCommercialHistoryPage,\n  validateCommercialScheduleSnapshot,\n  validatePaymentDraft,\n''',
+          '''  validateCommercialHistoryPage,\n  validateCommercialScheduleSnapshot,\n  validateScheduleHistoryPage,\n  validatePaymentDraft,\n''')
+          replace_once(ui,
+          '''  CommercialScheduleSnapshot,\n  PaymentStatus,\n''',
+          '''  CommercialScheduleSnapshot,\n  PaymentStatus,\n  ScheduleEvent,\n''')
+          replace_once(ui,
+          '''  const [commercialHistoryEvents, setCommercialHistoryEvents] = useState<CommercialEvent[]>([]);\n  const [commercialHistoryPage, setCommercialHistoryPage] = useState<CommercialEventPageMetadata | null>(null);\n''',
+          '''  const [commercialHistoryEvents, setCommercialHistoryEvents] = useState<CommercialEvent[]>([]);\n  const [commercialHistoryPage, setCommercialHistoryPage] = useState<CommercialEventPageMetadata | null>(null);\n  const [scheduleHistoryEvents, setScheduleHistoryEvents] = useState<ScheduleEvent[]>([]);\n  const [scheduleHistoryPage, setScheduleHistoryPage] = useState<CommercialEventPageMetadata | null>(null);\n''')
+          replace_once(ui,
+          '''    setCommercialHistoryEvents([]);\n    setCommercialHistoryPage(null);\n    setError("");\n''',
+          '''    setCommercialHistoryEvents([]);\n    setCommercialHistoryPage(null);\n    setScheduleHistoryEvents([]);\n    setScheduleHistoryPage(null);\n    setError("");\n''')
+          replace_once(ui,
+          '''    setCommercialHistoryEvents(next.commercialEvents);\n    setCommercialHistoryPage(next.commercialEventsPage);\n    setPaymentStatus(next.adWork.paymentStatus);\n''',
+          '''    setCommercialHistoryEvents(next.commercialEvents);\n    setCommercialHistoryPage(next.commercialEventsPage);\n    setScheduleHistoryEvents(next.scheduleEvents);\n    setScheduleHistoryPage(next.scheduleEventsPage);\n    setPaymentStatus(next.adWork.paymentStatus);\n''')
+          marker = '''  async function runMutation(rpc: string, body: Record<string, unknown>) {\n'''
+          if ui.read_text().count(marker) != 1:
+              raise SystemExit("runMutation insertion marker mismatch")
+          schedule_loader = '''  async function loadOlderScheduleHistory() {\n    if (!snapshot || !scheduleHistoryPage?.hasMore || scheduleHistoryPage.nextBeforeVersion === null) return;\n    const adWorkId = snapshot.adWork.id;\n    const expectedFingerprint = snapshotFingerprint;\n    const beforeVersion = scheduleHistoryPage.nextBeforeVersion;\n    const requestId = ++requestSequence.current;\n    setBusy(true);\n    setError("");\n    try {\n      const next = await postRpc<unknown>(connection, "admin_list_ad_work_schedule_events_v1", {\n        p_ad_work_id: adWorkId,\n        p_before_version: beforeVersion,\n        p_limit: 20,\n      });\n      if (requestId !== requestSequence.current\n        || adWorkId !== selectedAdWorkRef.current\n        || expectedFingerprint !== snapshotFingerprint) return;\n      if (!validateScheduleHistoryPage(next)) {\n        throw new Error("The server returned an invalid schedule-history page.");\n      }\n      setScheduleHistoryEvents((current) => {\n        const seen = new Set(current.map((event) => event.id));\n        return [...current, ...next.events.filter((event) => !seen.has(event.id))];\n      });\n      setScheduleHistoryPage(next.page);\n    } catch (historyError) {\n      if (requestId === requestSequence.current && adWorkId === selectedAdWorkRef.current) {\n        setError(historyError instanceof Error ? historyError.message : "Could not load older schedule history.");\n      }\n    } finally {\n      if (requestId === requestSequence.current && adWorkId === selectedAdWorkRef.current) setBusy(false);\n    }\n  }\n\n'''
+          ui.write_text(ui.read_text().replace(marker, schedule_loader + marker, 1))
+          replace_once(ui,
+          '''          <section className="form-section">\n            <h3>Schedule lifecycle history</h3>\n            {snapshot.scheduleEvents.length === 0 ? <p className="quiet-note">No cancellation/reschedule changes recorded yet.</p> : (\n              <div className="table-scroll"><table className="data-table"><thead><tr><th>When</th><th>Change</th><th>Reason</th><th>Version</th></tr></thead><tbody>\n                {snapshot.scheduleEvents.map((event) => <tr key={event.id}><td>{displayTime(event.createdAt)}</td><td>{event.eventType.replaceAll("_", " ")}</td><td>{event.reason}</td><td>{event.version}</td></tr>)}\n              </tbody></table></div>\n            )}\n          </section>\n''',
+          '''          <section className="form-section">\n            <h3>Schedule lifecycle history</h3>\n            {scheduleHistoryEvents.length === 0 ? <p className="quiet-note">No cancellation/reschedule changes recorded yet.</p> : (\n              <>\n                <p className="quiet-note">\n                  Showing {scheduleHistoryEvents.length} schedule change{scheduleHistoryEvents.length === 1 ? "" : "s"}.\n                  {scheduleHistoryPage?.hasMore ? " Older entries are available." : " Complete available history is loaded."}\n                </p>\n                <div className="table-scroll"><table className="data-table"><thead><tr><th>When</th><th>Change</th><th>Reason</th><th>Version</th></tr></thead><tbody>\n                  {scheduleHistoryEvents.map((event) => <tr key={event.id}><td>{displayTime(event.createdAt)}</td><td>{event.eventType.replaceAll("_", " ")}</td><td>{event.reason}</td><td>{event.version}</td></tr>)}\n                </tbody></table></div>\n                {scheduleHistoryPage?.hasMore && (\n                  <button type="button" className="secondary-button" disabled={busy} onClick={() => void loadOlderScheduleHistory()}>\n                    Load older schedule history\n                  </button>\n                )}\n              </>\n            )}\n          </section>\n''')
+
+          contract_test = Path("tests/m28-commercial-schedule.test.ts")
+          replace_once(contract_test,
+          '''      scheduleEvents: [],\n    };\n''',
+          '''      scheduleEvents: [],\n      scheduleEventsPage: {\n        limit: 20,\n        returned: 0,\n        hasMore: false,\n        nextBeforeVersion: null,\n      },\n    };\n''')
+
+          migration = Path("supabase/migrations/20260822110000_m28_execution_lock_schedule_history_closure.sql")
+          migration.write_text(r'''-- M28 final review closure: canonical legacy execution lock order and bounded schedule history.
+set search_path = public;
+
+create or replace function public.admin_update_ad_work_day(
+  p_ad_work_day_id uuid,
+  p_action text,
+  p_note text default null
+)
+returns table(ad_work_day_id uuid, execution_status text, result_message text)
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_day public.ad_work_days%rowtype;
+  v_ad_work public.ad_works%rowtype;
+  v_status text;
+begin
+  if not public.is_admin() then raise exception 'Admin access required' using errcode = '42501'; end if;
+  if p_action not in ('start', 'complete', 'report_issue') then raise exception 'Invalid work action' using errcode = '22000'; end if;
+
+  -- M21 telemetry and M28 cancellation both serialize on this lock before row locks.
+  -- Legacy admin execution must follow the same order to avoid advisory/row deadlocks.
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('m21-authority-global', 2100)
+  );
+
+  select * into v_day from public.ad_work_days where id = p_ad_work_day_id for update;
+  if not found then raise exception 'Work day not found' using errcode = 'P0002'; end if;
+  select * into v_ad_work from public.ad_works where id = v_day.ad_work_id for update;
+  if v_ad_work.execution_mode <> 'admin_managed' then raise exception 'This work is managed in the driver app' using errcode = '22000'; end if;
+
+  if p_action = 'start' then
+    v_status := 'running';
+    update public.ad_work_days
+    set execution_status = v_status,
+        execution_started_at = coalesce(execution_started_at, clock_timestamp()),
+        execution_updated_at = clock_timestamp()
+    where id = v_day.id;
+    update public.ad_works set execution_overall_status = 'running', updated_at = clock_timestamp() where id = v_ad_work.id;
+  elsif p_action = 'complete' then
+    v_status := 'completed';
+    update public.ad_work_days
+    set execution_status = v_status,
+        execution_completed_at = clock_timestamp(),
+        completion_note = nullif(trim(coalesce(p_note, '')), ''),
+        execution_updated_at = clock_timestamp()
+    where id = v_day.id;
+    update public.ad_works
+    set execution_overall_status = case
+          when not exists (
+            select 1 from public.ad_work_days d
+            where d.ad_work_id = v_ad_work.id and d.id <> v_day.id and d.execution_status <> 'completed'
+          ) then 'completed' else 'running' end,
+        execution_completed_at = case
+          when not exists (
+            select 1 from public.ad_work_days d
+            where d.ad_work_id = v_ad_work.id and d.id <> v_day.id and d.execution_status <> 'completed'
+          ) then clock_timestamp() else execution_completed_at end,
+        updated_at = clock_timestamp()
+    where id = v_ad_work.id;
+  else
+    v_status := 'issue_reported';
+    update public.ad_work_days
+    set execution_status = v_status,
+        issue_note = nullif(trim(coalesce(p_note, '')), ''),
+        execution_updated_at = clock_timestamp()
+    where id = v_day.id;
+  end if;
+
+  return query select v_day.id, v_status,
+    case p_action when 'start' then 'Work started.' when 'complete' then 'Work completed.' else 'Issue recorded.' end;
+end;
+$$;
+
+revoke all on function public.admin_update_ad_work_day(uuid,text,text) from public, anon, authenticated, service_role;
+grant execute on function public.admin_update_ad_work_day(uuid,text,text) to authenticated;
+
+create or replace function public.m28_build_snapshot_v1(p_ad_work_id uuid)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = pg_catalog, public
+as $$
+  with recent_commercial as (
+    select e.id, e.payment_status, e.total_amount, e.paid_amount, e.balance_amount,
+           e.commercial_version, e.created_at
+    from public.ad_work_commercial_events e
+    where e.ad_work_id = p_ad_work_id
+    order by e.commercial_version desc
+    limit 20
+  ),
+  commercial_page as (
+    select count(*)::integer as returned, min(commercial_version) as min_version
+    from recent_commercial
+  ),
+  recent_schedule as (
+    select e.id, e.event_type, e.ad_work_day_id, e.from_start_date, e.from_end_date,
+           e.to_start_date, e.to_end_date, e.reason, e.customer_message,
+           e.schedule_version, e.created_at
+    from public.ad_work_schedule_events e
+    where e.ad_work_id = p_ad_work_id
+    order by e.schedule_version desc
+    limit 20
+  ),
+  schedule_page as (
+    select count(*)::integer as returned, min(schedule_version) as min_version
+    from recent_schedule
+  )
+  select jsonb_build_object(
+    'adWork', jsonb_build_object(
+      'id', aw.id,
+      'title', aw.title,
+      'businessName', aw.business_name,
+      'customerName', aw.customer_name,
+      'startDate', aw.start_date,
+      'endDate', aw.end_date,
+      'planningStatus', aw.planning_status,
+      'executionReleaseStatus', aw.execution_release_status,
+      'executionOverallStatus', aw.execution_overall_status,
+      'closureStatus', aw.closure_status,
+      'paymentStatus', aw.payment_status,
+      'totalAmount', aw.total_amount::double precision,
+      'paidAmount', aw.paid_amount::double precision,
+      'balanceAmount', (aw.total_amount - aw.paid_amount)::double precision,
+      'commercialNote', aw.commercial_note,
+      'commercialVersion', aw.commercial_version,
+      'scheduleVersion', aw.schedule_version,
+      'cancellationReason', aw.cancellation_reason,
+      'cancelledAt', aw.cancelled_at
+    ),
+    'days', coalesce((
+      select jsonb_agg(jsonb_build_object(
+        'id', d.id,
+        'workDate', d.work_date,
+        'status', d.status,
+        'planningStatus', d.planning_status,
+        'executionStatus', d.execution_status
+      ) order by d.work_date, d.id)
+      from public.ad_work_days d where d.ad_work_id = aw.id
+    ), '[]'::jsonb),
+    'commercialEvents', coalesce((
+      select jsonb_agg(jsonb_build_object(
+        'id', e.id,
+        'paymentStatus', e.payment_status,
+        'totalAmount', e.total_amount::double precision,
+        'paidAmount', e.paid_amount::double precision,
+        'balanceAmount', e.balance_amount::double precision,
+        'version', e.commercial_version,
+        'createdAt', e.created_at
+      ) order by e.commercial_version desc)
+      from recent_commercial e
+    ), '[]'::jsonb),
+    'commercialEventsPage', jsonb_build_object(
+      'limit', 20,
+      'returned', cp.returned,
+      'hasMore', exists (
+        select 1 from public.ad_work_commercial_events older
+        where older.ad_work_id = aw.id and cp.min_version is not null
+          and older.commercial_version < cp.min_version
+      ),
+      'nextBeforeVersion', case when exists (
+        select 1 from public.ad_work_commercial_events older
+        where older.ad_work_id = aw.id and cp.min_version is not null
+          and older.commercial_version < cp.min_version
+      ) then cp.min_version else null end
+    ),
+    'scheduleEvents', coalesce((
+      select jsonb_agg(jsonb_build_object(
+        'id', e.id,
+        'eventType', e.event_type,
+        'adWorkDayId', e.ad_work_day_id,
+        'fromStartDate', e.from_start_date,
+        'fromEndDate', e.from_end_date,
+        'toStartDate', e.to_start_date,
+        'toEndDate', e.to_end_date,
+        'reason', e.reason,
+        'customerMessage', e.customer_message,
+        'version', e.schedule_version,
+        'createdAt', e.created_at
+      ) order by e.schedule_version desc)
+      from recent_schedule e
+    ), '[]'::jsonb),
+    'scheduleEventsPage', jsonb_build_object(
+      'limit', 20,
+      'returned', sp.returned,
+      'hasMore', exists (
+        select 1 from public.ad_work_schedule_events older
+        where older.ad_work_id = aw.id and sp.min_version is not null
+          and older.schedule_version < sp.min_version
+      ),
+      'nextBeforeVersion', case when exists (
+        select 1 from public.ad_work_schedule_events older
+        where older.ad_work_id = aw.id and sp.min_version is not null
+          and older.schedule_version < sp.min_version
+      ) then sp.min_version else null end
+    )
+  )
+  from public.ad_works aw
+  cross join commercial_page cp
+  cross join schedule_page sp
+  where aw.id = p_ad_work_id;
+$$;
+
+create or replace function public.admin_list_ad_work_schedule_events_v1(
+  p_ad_work_id uuid,
+  p_before_version bigint default null,
+  p_limit integer default 20
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_events jsonb;
+  v_returned integer;
+  v_min_version bigint;
+  v_has_more boolean;
+begin
+  perform public.m20a_require_admin();
+  if not exists (select 1 from public.ad_works where id = p_ad_work_id) then
+    raise exception 'Ad Work not found' using errcode = 'P0002';
+  end if;
+  if p_limit is null or p_limit < 1 or p_limit > 100 then
+    raise exception 'Schedule history page size must be between 1 and 100' using errcode = '22023';
+  end if;
+  if p_before_version is not null and p_before_version < 1 then
+    raise exception 'Schedule history cursor must be positive' using errcode = '22023';
+  end if;
+
+  with selected as (
+    select e.id, e.event_type, e.ad_work_day_id, e.from_start_date, e.from_end_date,
+           e.to_start_date, e.to_end_date, e.reason, e.customer_message,
+           e.schedule_version, e.created_at
+    from public.ad_work_schedule_events e
+    where e.ad_work_id = p_ad_work_id
+      and (p_before_version is null or e.schedule_version < p_before_version)
+    order by e.schedule_version desc
+    limit p_limit
+  )
+  select
+    coalesce(jsonb_agg(jsonb_build_object(
+      'id', s.id,
+      'eventType', s.event_type,
+      'adWorkDayId', s.ad_work_day_id,
+      'fromStartDate', s.from_start_date,
+      'fromEndDate', s.from_end_date,
+      'toStartDate', s.to_start_date,
+      'toEndDate', s.to_end_date,
+      'reason', s.reason,
+      'customerMessage', s.customer_message,
+      'version', s.schedule_version,
+      'createdAt', s.created_at
+    ) order by s.schedule_version desc), '[]'::jsonb),
+    count(*)::integer,
+    min(s.schedule_version)
+  into v_events, v_returned, v_min_version
+  from selected s;
+
+  v_has_more := v_min_version is not null and exists (
+    select 1 from public.ad_work_schedule_events older
+    where older.ad_work_id = p_ad_work_id and older.schedule_version < v_min_version
+  );
+
+  return jsonb_build_object(
+    'events', v_events,
+    'page', jsonb_build_object(
+      'limit', p_limit,
+      'returned', v_returned,
+      'hasMore', v_has_more,
+      'nextBeforeVersion', case when v_has_more then v_min_version else null end
+    )
+  );
+end;
+$$;
+
+revoke all on function public.admin_list_ad_work_schedule_events_v1(uuid,bigint,integer)
+  from public, anon, authenticated, service_role;
+grant execute on function public.admin_list_ad_work_schedule_events_v1(uuid,bigint,integer) to authenticated;
+''')
+
+          sql_test = Path("supabase/tests/m28_execution_lock_schedule_history_closure.test.sql")
+          sql_test.write_text(r'''begin;
+create extension if not exists pgtap with schema extensions;
+select plan(12);
+
+select has_function(
+  'public', 'admin_list_ad_work_schedule_events_v1', array['uuid','bigint','integer'],
+  'M28 bounded schedule-history RPC exists'
+);
+
+select ok(
+  position('m21-authority-global' in lower(pg_get_functiondef('public.admin_update_ad_work_day(uuid,text,text)'::regprocedure))) > 0
+  and position('m21-authority-global' in lower(pg_get_functiondef('public.admin_update_ad_work_day(uuid,text,text)'::regprocedure)))
+      < position('for update' in lower(pg_get_functiondef('public.admin_update_ad_work_day(uuid,text,text)'::regprocedure))),
+  'legacy admin day execution takes M21 global authority before any row lock'
+);
+
+insert into public.user_profiles(auth_user_id, display_name, role)
+values
+  ('28c00000-0000-4000-8000-0000000000a1', 'M28 History Admin', 'admin'),
+  ('28c00000-0000-4000-8000-0000000000a2', 'M28 History Staff', 'staff');
+
+insert into public.ad_works(
+  id, title, start_date, end_date, status, planning_status,
+  assignment_status, execution_release_status, execution_overall_status,
+  closure_status, execution_mode
+) values (
+  '28c00000-0000-4000-8000-000000000101', 'M28 schedule history paging',
+  current_date + 1, current_date + 1, 'scheduled', 'planned',
+  'not_assigned', 'not_released', 'not_started', 'not_ready', 'admin_managed'
+);
+
+insert into public.ad_work_days(id, ad_work_id, work_date, status, planning_status, execution_status)
+values (
+  '28c00000-0000-4000-8000-000000000201',
+  '28c00000-0000-4000-8000-000000000101', current_date + 1,
+  'scheduled', 'planned', 'planned'
+);
+
+insert into public.ad_work_schedule_events(
+  id, ad_work_id, actor_id, event_type, from_start_date, from_end_date,
+  to_start_date, to_end_date, reason, customer_message, schedule_version, created_at
+)
+select
+  ('28c00000-0000-4000-8000-' || lpad(g::text, 12, '0'))::uuid,
+  '28c00000-0000-4000-8000-000000000101'::uuid,
+  '28c00000-0000-4000-8000-0000000000a1'::uuid,
+  'ad_work_rescheduled', current_date + g, current_date + g,
+  current_date + g + 1, current_date + g + 1,
+  'Schedule reason ' || g, 'Customer schedule update ' || g, g,
+  clock_timestamp() + make_interval(secs => g)
+from generate_series(1,25) g;
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '28c00000-0000-4000-8000-0000000000a2', true);
+select throws_ok(
+  $$select public.admin_list_ad_work_schedule_events_v1('28c00000-0000-4000-8000-000000000101', null, 20)$$,
+  '42501', 'Admin access required', 'non-admin cannot page schedule history'
+);
+
+select set_config('request.jwt.claim.sub', '28c00000-0000-4000-8000-0000000000a1', true);
+select is(
+  jsonb_array_length(public.admin_get_commercial_schedule_v1('28c00000-0000-4000-8000-000000000101')->'scheduleEvents'),
+  20, 'snapshot embeds only the newest 20 schedule events'
+);
+select is(
+  public.admin_get_commercial_schedule_v1('28c00000-0000-4000-8000-000000000101')->'scheduleEventsPage'->>'hasMore',
+  'true', 'snapshot advertises older schedule history'
+);
+select is(
+  public.admin_get_commercial_schedule_v1('28c00000-0000-4000-8000-000000000101')->'scheduleEventsPage'->>'nextBeforeVersion',
+  '6', 'snapshot schedule cursor is deterministic'
+);
+select is(
+  (select string_agg(value->>'version', ',' order by ordinality)
+   from jsonb_array_elements(public.admin_list_ad_work_schedule_events_v1(
+     '28c00000-0000-4000-8000-000000000101', 6, 3
+   )->'events') with ordinality),
+  '5,4,3', 'schedule history cursor returns newest older page in order'
+);
+select is(
+  (public.admin_list_ad_work_schedule_events_v1(
+    '28c00000-0000-4000-8000-000000000101', 6, 3
+  )->'page'->>'hasMore') || ':' || coalesce(
+    public.admin_list_ad_work_schedule_events_v1(
+      '28c00000-0000-4000-8000-000000000101', 6, 3
+    )->'page'->>'nextBeforeVersion', 'null'),
+  'true:3', 'schedule history page exposes the next deterministic cursor'
+);
+select is(
+  (select string_agg(value->>'version', ',' order by ordinality)
+   from jsonb_array_elements(public.admin_list_ad_work_schedule_events_v1(
+     '28c00000-0000-4000-8000-000000000101', 3, 20
+   )->'events') with ordinality),
+  '2,1', 'final schedule history page returns remaining events'
+);
+select is(
+  (public.admin_list_ad_work_schedule_events_v1(
+    '28c00000-0000-4000-8000-000000000101', 3, 20
+  )->'page'->>'hasMore') || ':' || coalesce(
+    public.admin_list_ad_work_schedule_events_v1(
+      '28c00000-0000-4000-8000-000000000101', 3, 20
+    )->'page'->>'nextBeforeVersion', 'null'),
+  'false:null', 'schedule history cursor exhausts cleanly'
+);
+select throws_ok(
+  $$select public.admin_list_ad_work_schedule_events_v1('28c00000-0000-4000-8000-000000000101', null, 101)$$,
+  '22023', 'Schedule history page size must be between 1 and 100', 'schedule history page size is bounded'
+);
+select is(
+  (select execution_status from public.admin_update_ad_work_day(
+    '28c00000-0000-4000-8000-000000000201', 'report_issue', 'Lock-order regression check'
+  )),
+  'issue_reported'::text, 'legacy admin execution behavior remains available on non-cancelled work'
+);
+select ok(
+  (select issue_note = 'Lock-order regression check' from public.ad_work_days
+   where id = '28c00000-0000-4000-8000-000000000201'),
+  'legacy execution mutation still persists its expected evidence note'
+);
+
+select * from finish();
+rollback;
+''')
+
+          static_test = Path("tests/m28-execution-lock-schedule-history-closure.test.ts")
+          static_test.write_text(r'''import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+
+const migration = readFileSync("supabase/migrations/20260822110000_m28_execution_lock_schedule_history_closure.sql", "utf8");
+const shared = readFileSync("packages/shared/src/commercialSchedule.ts", "utf8");
+const ui = readFileSync("apps/web/src/admin-commercial.tsx", "utf8");
+
+describe("M28 execution lock and schedule-history closure", () => {
+  it("serializes legacy admin execution before row locking", () => {
+    const fn = migration.slice(migration.indexOf("create or replace function public.admin_update_ad_work_day"), migration.indexOf("revoke all on function public.admin_update_ad_work_day"));
+    expect(fn.indexOf("m21-authority-global")).toBeGreaterThan(0);
+    expect(fn.indexOf("for update")).toBeGreaterThan(fn.indexOf("m21-authority-global"));
+    expect(fn).toContain("pg_catalog.pg_advisory_xact_lock");
+  });
+
+  it("bounds schedule history and exposes an admin cursor RPC", () => {
+    expect(migration).toContain("recent_schedule");
+    expect(migration).toContain("limit 20");
+    expect(migration).toContain("'scheduleEventsPage'");
+    expect(migration).toContain("admin_list_ad_work_schedule_events_v1");
+    expect(migration).toContain("Schedule history page size must be between 1 and 100");
+  });
+
+  it("validates and renders request-bound schedule-history pagination", () => {
+    expect(shared).toContain("scheduleEventsPage: CommercialEventPageMetadata");
+    expect(shared).toContain("validateScheduleHistoryPage");
+    expect(ui).toContain("scheduleHistoryEvents");
+    expect(ui).toContain("admin_list_ad_work_schedule_events_v1");
+    expect(ui).toContain("validateScheduleHistoryPage");
+    expect(ui).toContain("expectedFingerprint !== snapshotFingerprint");
+    expect(ui).toContain("adWorkId !== selectedAdWorkRef.current");
+    expect(ui).toContain("Load older schedule history");
+  });
+});
+''')
+
+          Path(".github/workflows/pr36-m28-final-closure.yml").unlink()
+          PY
+          git diff --check
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Validate TypeScript and application tests
+        run: |
+          pnpm lint
+          pnpm typecheck
+          pnpm test
+          pnpm build
+          pnpm security:scan
+          pnpm migrations:check
+          git diff --check
+      - name: Validate fresh Supabase and full pgTAP/RLS
+        run: |
+          supabase start -x studio,imgproxy,mailpit,edge-runtime,logflare,vector,supavisor
+          supabase test db
+      - name: Publish corrected product head
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Avala Parameswara Reddy"
+          git config user.email "avalaparameswarareddy@gmail.com"
+          git add -A
+          git commit -m "fix: close M28 execution lock and schedule history review family"
+          git push origin HEAD:milestone/m28-commercial-schedule-operations
