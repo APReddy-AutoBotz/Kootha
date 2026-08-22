@@ -5,10 +5,16 @@ import {
   formatMoney,
   paymentStatusLabels,
   paymentStatuses,
+  validateCommercialHistoryPage,
   validateCommercialScheduleSnapshot,
   validatePaymentDraft,
 } from "@kootha/shared";
-import type { CommercialScheduleSnapshot, PaymentStatus } from "@kootha/shared";
+import type {
+  CommercialEvent,
+  CommercialEventPageMetadata,
+  CommercialScheduleSnapshot,
+  PaymentStatus,
+} from "@kootha/shared";
 
 export type CommercialScheduleConnection = {
   url: string;
@@ -92,6 +98,8 @@ export function CommercialScheduleWorkbench({
 }) {
   const [selectedAdWorkId, setSelectedAdWorkId] = useState("");
   const [snapshot, setSnapshot] = useState<CommercialScheduleSnapshot | null>(null);
+  const [commercialHistoryEvents, setCommercialHistoryEvents] = useState<CommercialEvent[]>([]);
+  const [commercialHistoryPage, setCommercialHistoryPage] = useState<CommercialEventPageMetadata | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [customerMessage, setCustomerMessage] = useState("");
@@ -113,6 +121,8 @@ export function CommercialScheduleWorkbench({
     selectedAdWorkRef.current = selectedAdWorkId;
     requestSequence.current += 1;
     setSnapshot(null);
+    setCommercialHistoryEvents([]);
+    setCommercialHistoryPage(null);
     setError("");
     setCustomerMessage("");
     setSelectedDayId("");
@@ -129,6 +139,8 @@ export function CommercialScheduleWorkbench({
       throw new Error("The server returned an invalid commercial/schedule contract.");
     }
     setSnapshot(next);
+    setCommercialHistoryEvents(next.commercialEvents);
+    setCommercialHistoryPage(next.commercialEventsPage);
     setPaymentStatus(next.adWork.paymentStatus);
     setTotalAmount(String(next.adWork.totalAmount));
     setPaidAmount(String(next.adWork.paidAmount));
@@ -164,6 +176,40 @@ export function CommercialScheduleWorkbench({
       requestSequence.current += 1;
     };
   }, [selectedAdWorkId, connection.accessToken, connection.anonKey, connection.url]);
+
+  async function loadOlderCommercialHistory() {
+    if (!snapshot || !commercialHistoryPage?.hasMore || commercialHistoryPage.nextBeforeVersion === null) return;
+    const adWorkId = snapshot.adWork.id;
+    const expectedFingerprint = snapshotFingerprint;
+    const beforeVersion = commercialHistoryPage.nextBeforeVersion;
+    const requestId = ++requestSequence.current;
+    setBusy(true);
+    setError("");
+    try {
+      const next = await postRpc<unknown>(connection, "admin_list_ad_work_commercial_events_v1", {
+        p_ad_work_id: adWorkId,
+        p_before_version: beforeVersion,
+        p_limit: 20,
+      });
+      if (requestId !== requestSequence.current
+        || adWorkId !== selectedAdWorkRef.current
+        || expectedFingerprint !== snapshotFingerprint) return;
+      if (!validateCommercialHistoryPage(next)) {
+        throw new Error("The server returned an invalid commercial-history page.");
+      }
+      setCommercialHistoryEvents((current) => {
+        const seen = new Set(current.map((event) => event.id));
+        return [...current, ...next.events.filter((event) => !seen.has(event.id))];
+      });
+      setCommercialHistoryPage(next.page);
+    } catch (historyError) {
+      if (requestId === requestSequence.current && adWorkId === selectedAdWorkRef.current) {
+        setError(historyError instanceof Error ? historyError.message : "Could not load older commercial history.");
+      }
+    } finally {
+      if (requestId === requestSequence.current && adWorkId === selectedAdWorkRef.current) setBusy(false);
+    }
+  }
 
   async function runMutation(rpc: string, body: Record<string, unknown>) {
     if (!snapshot) return;
@@ -377,10 +423,21 @@ export function CommercialScheduleWorkbench({
 
           <section className="form-section">
             <h3>Commercial history</h3>
-            {snapshot.commercialEvents.length === 0 ? <p className="quiet-note">No commercial changes recorded yet.</p> : (
-              <div className="table-scroll"><table className="data-table"><thead><tr><th>When</th><th>Status</th><th>Total</th><th>Paid</th><th>Balance</th><th>Version</th></tr></thead><tbody>
-                {snapshot.commercialEvents.map((event) => <tr key={event.id}><td>{displayTime(event.createdAt)}</td><td>{paymentStatusLabels[event.paymentStatus]}</td><td>{formatMoney(event.totalAmount)}</td><td>{formatMoney(event.paidAmount)}</td><td>{formatMoney(event.balanceAmount)}</td><td>{event.version}</td></tr>)}
-              </tbody></table></div>
+            {commercialHistoryEvents.length === 0 ? <p className="quiet-note">No commercial changes recorded yet.</p> : (
+              <>
+                <p className="quiet-note">
+                  Showing {commercialHistoryEvents.length} commercial change{commercialHistoryEvents.length === 1 ? "" : "s"}.
+                  {commercialHistoryPage?.hasMore ? " Older entries are available." : " Complete available history is loaded."}
+                </p>
+                <div className="table-scroll"><table className="data-table"><thead><tr><th>When</th><th>Status</th><th>Total</th><th>Paid</th><th>Balance</th><th>Version</th></tr></thead><tbody>
+                  {commercialHistoryEvents.map((event) => <tr key={event.id}><td>{displayTime(event.createdAt)}</td><td>{paymentStatusLabels[event.paymentStatus]}</td><td>{formatMoney(event.totalAmount)}</td><td>{formatMoney(event.paidAmount)}</td><td>{formatMoney(event.balanceAmount)}</td><td>{event.version}</td></tr>)}
+                </tbody></table></div>
+                {commercialHistoryPage?.hasMore && (
+                  <button type="button" className="secondary-button" disabled={busy} onClick={() => void loadOlderCommercialHistory()}>
+                    Load older history
+                  </button>
+                )}
+              </>
             )}
           </section>
 

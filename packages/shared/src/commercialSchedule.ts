@@ -24,9 +24,21 @@ export type CommercialEvent = {
   totalAmount: number;
   paidAmount: number;
   balanceAmount: number;
-  note: string | null;
+  note?: string | null;
   version: number;
   createdAt: string;
+};
+
+export type CommercialEventPageMetadata = {
+  limit: number;
+  returned: number;
+  hasMore: boolean;
+  nextBeforeVersion: number | null;
+};
+
+export type CommercialHistoryPage = {
+  events: CommercialEvent[];
+  page: CommercialEventPageMetadata;
 };
 
 export type ScheduleEvent = {
@@ -67,6 +79,7 @@ export type CommercialScheduleSnapshot = {
   };
   days: CommercialScheduleDay[];
   commercialEvents: CommercialEvent[];
+  commercialEventsPage: CommercialEventPageMetadata;
   scheduleEvents: ScheduleEvent[];
 };
 
@@ -141,6 +154,39 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
+function isCommercialEvent(value: unknown): value is CommercialEvent {
+  return isRecord(value)
+    && typeof value.id === "string"
+    && isPaymentStatus(value.paymentStatus)
+    && isFiniteNumber(value.totalAmount)
+    && isFiniteNumber(value.paidAmount)
+    && isFiniteNumber(value.balanceAmount)
+    && Number.isInteger(value.version)
+    && typeof value.createdAt === "string";
+}
+
+function isCommercialEventPageMetadata(value: unknown): value is CommercialEventPageMetadata {
+  if (!isRecord(value)
+      || !Number.isInteger(value.limit)
+      || Number(value.limit) < 1
+      || Number(value.limit) > 100
+      || !Number.isInteger(value.returned)
+      || Number(value.returned) < 0
+      || Number(value.returned) > Number(value.limit)
+      || typeof value.hasMore !== "boolean") return false;
+  if (value.nextBeforeVersion !== null
+      && (!Number.isInteger(value.nextBeforeVersion) || Number(value.nextBeforeVersion) < 1)) return false;
+  if (value.hasMore && value.nextBeforeVersion === null) return false;
+  return true;
+}
+
+export function validateCommercialHistoryPage(value: unknown): value is CommercialHistoryPage {
+  if (!isRecord(value) || !Array.isArray(value.events) || !isCommercialEventPageMetadata(value.page)) return false;
+  return value.events.length === value.page.returned
+    && value.events.length <= value.page.limit
+    && value.events.every(isCommercialEvent);
+}
+
 export function validateCommercialScheduleSnapshot(value: unknown): value is CommercialScheduleSnapshot {
   if (!isRecord(value) || !isRecord(value.adWork)) return false;
   const work = value.adWork;
@@ -149,19 +195,19 @@ export function validateCommercialScheduleSnapshot(value: unknown): value is Com
   if (!isFiniteNumber(work.totalAmount) || !isFiniteNumber(work.paidAmount) || !isFiniteNumber(work.balanceAmount)) return false;
   if (!Number.isInteger(work.commercialVersion) || Number(work.commercialVersion) < 0) return false;
   if (!Number.isInteger(work.scheduleVersion) || Number(work.scheduleVersion) < 0) return false;
-  if (!Array.isArray(value.days) || !Array.isArray(value.commercialEvents) || !Array.isArray(value.scheduleEvents)) return false;
+  if (!Array.isArray(value.days)
+      || !Array.isArray(value.commercialEvents)
+      || !isCommercialEventPageMetadata(value.commercialEventsPage)
+      || !Array.isArray(value.scheduleEvents)) return false;
+  if (value.commercialEvents.length !== value.commercialEventsPage.returned
+      || value.commercialEvents.length > value.commercialEventsPage.limit) return false;
   return value.days.every((day) => isRecord(day)
       && typeof day.id === "string"
       && typeof day.workDate === "string"
+      && typeof day.status === "string"
       && typeof day.planningStatus === "string"
       && typeof day.executionStatus === "string")
-    && value.commercialEvents.every((event) => isRecord(event)
-      && typeof event.id === "string"
-      && isPaymentStatus(event.paymentStatus)
-      && isFiniteNumber(event.totalAmount)
-      && isFiniteNumber(event.paidAmount)
-      && isFiniteNumber(event.balanceAmount)
-      && Number.isInteger(event.version))
+    && value.commercialEvents.every(isCommercialEvent)
     && value.scheduleEvents.every((event) => isRecord(event)
       && typeof event.id === "string"
       && ["ad_work_rescheduled", "day_rescheduled", "ad_work_cancelled"].includes(String(event.eventType))
