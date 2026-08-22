@@ -1,0 +1,378 @@
+name: PR36 M28 systemic authority closure
+
+on:
+  pull_request:
+    types: [synchronize]
+
+permissions:
+  contents: write
+
+jobs:
+  close-authority-family:
+    if: github.event.pull_request.number == 36 && github.event.pull_request.head.ref == 'milestone/m28-commercial-schedule-operations'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: milestone/m28-commercial-schedule-operations
+          fetch-depth: 3
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Apply final systemic authority correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "4af6f96c35c5f7c678a1c924400383e1a902911a"
+          cat > supabase/migrations/20260822120000_m28_global_authority_assignment_cancellation_closure.sql <<'SQL'
+          -- M28 final authority closure: one M21 lock order for every governed mutation
+          -- and a database-level fence preventing cancelled work assignment revival.
+          set search_path = public;
+
+          create or replace function public.m28_claim_replay_v1(
+            p_actor uuid,
+            p_ad_work_id uuid,
+            p_mutation_type text,
+            p_request_key text,
+            p_request_hash text
+          )
+          returns jsonb
+          language plpgsql
+          security definer
+          set search_path = pg_catalog, public
+          as $$
+          declare
+            v_hash text;
+            v_response jsonb;
+          begin
+            if p_actor is null or p_ad_work_id is null
+               or nullif(p_mutation_type, '') is null
+               or nullif(p_request_key, '') is null
+               or p_request_hash is null
+               or p_request_hash !~ '^[0-9a-f]{32}$' then
+              raise exception 'Invalid M28 mutation replay identity' using errcode = '22023';
+            end if;
+
+            -- M21 telemetry and retained admin execution take this lock before
+            -- authority rows. Every M28 mutation must follow the same order before
+            -- replay-row, work, day, assignment, or tracking locks are acquired.
+            perform pg_catalog.pg_advisory_xact_lock(
+              pg_catalog.hashtextextended('m21-authority-global', 2100)
+            );
+
+            if not exists (select 1 from public.ad_works where id = p_ad_work_id) then
+              raise exception 'Ad Work not found' using errcode = 'P0002';
+            end if;
+
+            insert into public.m28_mutation_operations(
+              actor_id, ad_work_id, mutation_type, request_key, request_hash
+            ) values (
+              p_actor, p_ad_work_id, p_mutation_type, p_request_key, p_request_hash
+            )
+            on conflict (actor_id, ad_work_id, mutation_type, request_key) do nothing;
+
+            select request_hash, response
+            into v_hash, v_response
+            from public.m28_mutation_operations
+            where actor_id = p_actor
+              and ad_work_id = p_ad_work_id
+              and mutation_type = p_mutation_type
+              and request_key = p_request_key
+            for update;
+
+            if not found then
+              raise exception 'M28 mutation replay identity could not be claimed' using errcode = '55000';
+            end if;
+            if v_hash is distinct from p_request_hash then
+              if p_mutation_type = 'payment_update' then
+                raise exception 'Commercial record changed; refresh and retry' using errcode = '40001';
+              end if;
+              raise exception 'Schedule changed; refresh and retry' using errcode = '40001';
+            end if;
+
+            return v_response;
+          end;
+          $$;
+
+          revoke all on function public.m28_claim_replay_v1(uuid,uuid,text,text,text)
+            from public, anon, authenticated, service_role;
+
+          create or replace function public.m28_assignment_parent_cancelled_v1(p_ad_work_id uuid)
+          returns boolean
+          language sql
+          stable
+          security definer
+          set search_path = pg_catalog, public
+          as $$
+            select coalesce((
+              select
+                aw.planning_status = 'cancelled'
+                or aw.status = 'cancelled'
+                or aw.assignment_status = 'cancelled'
+                or aw.execution_release_status = 'access_revoked' and aw.closure_status = 'cancelled'
+                or aw.execution_overall_status = 'cancelled'
+                or aw.closure_status = 'cancelled'
+                or aw.cancelled_at is not null
+                or aw.cancelled_by is not null
+                or aw.cancellation_reason is not null
+              from public.ad_works aw
+              where aw.id = p_ad_work_id
+            ), false);
+          $$;
+
+          revoke all on function public.m28_assignment_parent_cancelled_v1(uuid)
+            from public, anon, authenticated, service_role;
+
+          create or replace function public.m28_guard_assignment_parent_cancellation_v1()
+          returns trigger
+          language plpgsql
+          security definer
+          set search_path = pg_catalog, public
+          as $$
+          declare
+            v_new_parent_cancelled boolean := false;
+            v_old_parent_cancelled boolean := false;
+          begin
+            v_new_parent_cancelled := public.m28_assignment_parent_cancelled_v1(new.ad_work_id);
+
+            if tg_op = 'UPDATE' then
+              v_old_parent_cancelled := public.m28_assignment_parent_cancelled_v1(old.ad_work_id);
+              if old.ad_work_id is distinct from new.ad_work_id and v_old_parent_cancelled then
+                raise exception 'Cancelled Ad Work assignments cannot be created, moved, or reactivated'
+                  using errcode = '42501';
+              end if;
+            end if;
+
+            if v_new_parent_cancelled then
+              if tg_op = 'INSERT' then
+                raise exception 'Cancelled Ad Work assignments cannot be created, moved, or reactivated'
+                  using errcode = '42501';
+              end if;
+
+              -- A cancelled child may remain cancelled and receive harmless note/
+              -- timestamp maintenance, but identity or executable-state changes are
+              -- forbidden. The governed cancellation transaction demotes the child
+              -- before it marks the parent cancelled, so that transaction remains valid.
+              if new.status <> 'cancelled'
+                 or new.ad_work_id is distinct from old.ad_work_id
+                 or new.driver_id is distinct from old.driver_id
+                 or new.vehicle_id is distinct from old.vehicle_id then
+                raise exception 'Cancelled Ad Work assignments cannot be created, moved, or reactivated'
+                  using errcode = '42501';
+              end if;
+            end if;
+
+            return new;
+          end;
+          $$;
+
+          revoke all on function public.m28_guard_assignment_parent_cancellation_v1()
+            from public, anon, authenticated, service_role;
+
+          drop trigger if exists ad_work_assignments_m28_parent_cancellation_guard
+            on public.ad_work_assignments;
+          create trigger ad_work_assignments_m28_parent_cancellation_guard
+          before insert or update on public.ad_work_assignments
+          for each row execute function public.m28_guard_assignment_parent_cancellation_v1();
+          SQL
+
+          cat > supabase/tests/m28_global_authority_assignment_cancellation_closure.test.sql <<'SQL'
+          begin;
+          create extension if not exists pgtap with schema extensions;
+          select plan(13);
+
+          select has_function(
+            'public', 'm28_claim_replay_v1', array['uuid','uuid','text','text','text'],
+            'M28 replay claim helper exists'
+          );
+
+          select ok(
+            position('pg_advisory_xact_lock' in pg_get_functiondef('public.m28_claim_replay_v1(uuid,uuid,text,text,text)'::regprocedure)) > 0
+            and position('pg_advisory_xact_lock' in pg_get_functiondef('public.m28_claim_replay_v1(uuid,uuid,text,text,text)'::regprocedure))
+              < position('if not exists' in pg_get_functiondef('public.m28_claim_replay_v1(uuid,uuid,text,text,text)'::regprocedure))
+            and position("p_mutation_type = 'cancel'" in pg_get_functiondef('public.m28_claim_replay_v1(uuid,uuid,text,text,text)'::regprocedure)) = 0,
+            'every M28 replay claim acquires M21 global authority before replay/work rows'
+          );
+
+          select ok(
+            position('m28_claim_replay_v1' in pg_get_functiondef('public.admin_update_ad_work_payment_v1(uuid,text,numeric,numeric,text,bigint)'::regprocedure)) > 0
+            and position('m28_claim_replay_v1' in pg_get_functiondef('public.admin_sync_ad_work_days_v2(uuid,date,integer,time without time zone,time without time zone,text,bigint)'::regprocedure)) > 0
+            and position('m28_claim_replay_v1' in pg_get_functiondef('public.admin_update_ad_work_days_v2(uuid,jsonb,bigint)'::regprocedure)) > 0
+            and position('m28_claim_replay_v1' in pg_get_functiondef('public.admin_reschedule_ad_work_v1(uuid,date,text,bigint)'::regprocedure)) > 0
+            and position('m28_claim_replay_v1' in pg_get_functiondef('public.admin_reschedule_ad_work_day_v1(uuid,uuid,date,text,bigint)'::regprocedure)) > 0
+            and position('m28_claim_replay_v1' in pg_get_functiondef('public.admin_cancel_ad_work_v1(uuid,text,text,bigint)'::regprocedure)) > 0,
+            'all governed M28 mutators enter the canonical replay/authority lock helper before row authority'
+          );
+
+          select has_function(
+            'public', 'm28_guard_assignment_parent_cancellation_v1', array[]::text[],
+            'M28 assignment parent-cancellation guard exists'
+          );
+          select has_trigger(
+            'public', 'ad_work_assignments', 'ad_work_assignments_m28_parent_cancellation_guard',
+            'assignment table is fenced by parent cancellation'
+          );
+
+          insert into public.user_profiles(auth_user_id, display_name, role)
+          values ('28d00000-0000-4000-8000-0000000000a1', 'M28 Final Admin', 'admin');
+          insert into public.drivers(id, name, phone, approval_status, availability_status)
+          values ('28d00000-0000-4000-8000-000000000301', 'M28 Driver', '+9100000028', 'approved', 'available');
+          insert into public.vehicles(id, driver_id, vehicle_number, vehicle_type, active)
+          values ('28d00000-0000-4000-8000-000000000401', '28d00000-0000-4000-8000-000000000301', 'M28-LOCK-01', 'other', true);
+
+          insert into public.ad_works(
+            id, title, status, planning_status, assignment_status,
+            execution_release_status, execution_overall_status, closure_status,
+            payment_status, total_amount, paid_amount, number_of_days
+          ) values
+            ('28d00000-0000-4000-8000-000000000101', 'M28 cancellable assignment', 'scheduled', 'planned', 'not_assigned',
+             'not_released', 'not_started', 'not_ready', 'not_paid', 1000, 0, 1),
+            ('28d00000-0000-4000-8000-000000000102', 'M28 already cancelled no assignment', 'cancelled', 'cancelled', 'cancelled',
+             'access_revoked', 'cancelled', 'cancelled', 'not_paid', 500, 0, 1);
+
+          set local role authenticated;
+          select set_config('request.jwt.claim.sub', '28d00000-0000-4000-8000-0000000000a1', true);
+
+          select lives_ok(
+            $$insert into public.ad_work_assignments(
+              id, ad_work_id, driver_id, vehicle_id, status
+            ) values (
+              '28d00000-0000-4000-8000-000000000501',
+              '28d00000-0000-4000-8000-000000000101',
+              '28d00000-0000-4000-8000-000000000301',
+              '28d00000-0000-4000-8000-000000000401',
+              'assigned'
+            )$$,
+            'normal direct admin assignment remains available before cancellation'
+          );
+
+          select lives_ok(
+            $$select public.admin_cancel_ad_work_v1(
+              '28d00000-0000-4000-8000-000000000101',
+              'Customer cancelled campaign', null, 0
+            )$$,
+            'governed M28 cancellation still demotes an existing assignment atomically'
+          );
+
+          select is(
+            (select status from public.ad_work_assignments where id='28d00000-0000-4000-8000-000000000501'),
+            'cancelled',
+            'governed cancellation leaves child assignment cancelled'
+          );
+
+          select is(
+            (select count(*) from public.m21_assignment_history
+             where assignment_id='28d00000-0000-4000-8000-000000000501'
+               and assignment_status in ('assigned','ready_for_execution')
+               and effective_until is null),
+            0::bigint,
+            'cancellation closes every active M21 assignment-history interval'
+          );
+
+          select throws_ok(
+            $$update public.ad_work_assignments
+              set status='ready_for_execution'
+              where id='28d00000-0000-4000-8000-000000000501'$$,
+            '42501', 'Cancelled Ad Work assignments cannot be created, moved, or reactivated',
+            'direct child update cannot revive a cancelled assignment'
+          );
+
+          select is(
+            (select status::text || ':' || closure_status::text
+             from public.ad_works where id='28d00000-0000-4000-8000-000000000101'),
+            'cancelled:cancelled',
+            'failed child revival leaves parent cancellation authoritative'
+          );
+
+          select throws_ok(
+            $$insert into public.ad_work_assignments(
+              id, ad_work_id, driver_id, vehicle_id, status
+            ) values (
+              '28d00000-0000-4000-8000-000000000502',
+              '28d00000-0000-4000-8000-000000000102',
+              '28d00000-0000-4000-8000-000000000301',
+              '28d00000-0000-4000-8000-000000000401',
+              'assigned'
+            )$$,
+            '42501', 'Cancelled Ad Work assignments cannot be created, moved, or reactivated',
+            'direct child insert cannot create active assignment authority for cancelled work'
+          );
+
+          select is(
+            (select count(*) from public.ad_work_assignments where ad_work_id='28d00000-0000-4000-8000-000000000102'),
+            0::bigint,
+            'rejected insert leaves cancelled work without a new assignment row'
+          );
+
+          select * from finish();
+          rollback;
+          SQL
+
+          cat > tests/m28-global-authority-assignment-cancellation-closure.test.ts <<'TS'
+          import { readFileSync } from "node:fs";
+          import { describe, expect, it } from "vitest";
+
+          const migration = readFileSync(
+            "supabase/migrations/20260822120000_m28_global_authority_assignment_cancellation_closure.sql",
+            "utf8",
+          );
+          const authority = readFileSync(
+            "supabase/migrations/20260822083000_m28_authority_replay_closure.sql",
+            "utf8",
+          );
+
+          describe("M28 final global authority and assignment cancellation closure", () => {
+            it("uses one unconditional M21 advisory lock before replay/work authority", () => {
+              const claim = migration.slice(
+                migration.indexOf("create or replace function public.m28_claim_replay_v1"),
+                migration.indexOf("revoke all on function public.m28_claim_replay_v1"),
+              );
+              expect(claim).toContain("m21-authority-global");
+              expect(claim).toContain("pg_advisory_xact_lock");
+              expect(claim.indexOf("pg_advisory_xact_lock")).toBeLessThan(claim.indexOf("if not exists"));
+              expect(claim).not.toContain("p_mutation_type = 'cancel'");
+              expect((authority.match(/m28_claim_replay_v1\(/g) ?? []).length).toBeGreaterThanOrEqual(6);
+            });
+
+            it("fences assignment creation, movement and executable-state revival after cancellation", () => {
+              expect(migration).toContain("m28_guard_assignment_parent_cancellation_v1");
+              expect(migration).toContain("ad_work_assignments_m28_parent_cancellation_guard");
+              expect(migration).toContain("Cancelled Ad Work assignments cannot be created, moved, or reactivated");
+              expect(migration).toContain("new.status <> 'cancelled'");
+              expect(migration).toContain("new.driver_id is distinct from old.driver_id");
+              expect(migration).toContain("new.vehicle_id is distinct from old.vehicle_id");
+            });
+          });
+          TS
+
+          rm -f .github/workflows/pr36-m28-systemic-authority-closure.yml
+          git diff --check
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Validate retained application gates
+        run: |
+          pnpm lint
+          pnpm typecheck
+          pnpm test
+          pnpm build
+          pnpm security:scan
+          pnpm migrations:check
+          git diff --check
+      - name: Validate fresh Supabase and full pgTAP/RLS
+        run: |
+          supabase start -x studio,imgproxy,mailpit,edge-runtime,logflare,vector,supavisor
+          supabase test db
+      - name: Publish corrected product head
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Avala Parameswara Reddy"
+          git config user.email "avalaparameswarareddy@gmail.com"
+          git add -A
+          git commit -m "fix: close M28 global lock and assignment cancellation authority"
+          git push origin HEAD:milestone/m28-commercial-schedule-operations
