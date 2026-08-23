@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import {
   CONFIG_SOURCES,
@@ -30,6 +30,9 @@ if (!CONFIG_SOURCES.includes(configSource)) {
 }
 
 const root = process.cwd();
+const outputPath = output ? path.resolve(output) : "";
+if (outputPath) rmSync(outputPath, { force: true });
+
 const sourceEvaluation = evaluateSourceProvenance({
   root,
   expectedSha: process.env.RELEASE_SOURCE_SHA || "",
@@ -81,9 +84,8 @@ console.log(`external-rollback: ${manifest.external.rollback}`);
 console.log(`promotion-ready: ${manifest.promotionReady ? "yes" : "no"}`);
 console.log(`promotion-decision: ${manifest.promotionDecision}`);
 
-if (output) {
-  const absolute = path.resolve(output);
-  mkdirSync(path.dirname(absolute), { recursive: true });
-  writeFileSync(absolute, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
-  console.log(`release-manifest: ${path.relative(root, absolute) || absolute}`);
+if (outputPath) {
+  mkdirSync(path.dirname(outputPath), { recursive: true });
+  writeFileSync(outputPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  console.log(`release-manifest: ${path.relative(root, outputPath) || outputPath}`);
 }
