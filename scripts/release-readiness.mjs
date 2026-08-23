@@ -366,6 +366,10 @@ export function evaluateRepository({ mode = "preview", root = process.cwd() } = 
   const unsafeNames = findUnsafePublicAuthorityNames(Object.fromEntries([...envExample.keys()].map((name) => [name, "present"])));
   if (unsafeNames.length === 0) checks.push(check("env-example", "public-authority-boundary", true, "info", "safe"));
   for (const name of unsafeNames) checks.push(check("env-example", name, false, "error", "unsafe_or_unclassified_public_name"));
+
+  const preliminary = summarizeChecks(checks);
+  if (!preliminary.ok) return preliminary;
+
   const migration = migrationProvenance(root);
   checks.push(check("migrations", "timestamp-uniqueness", true, "info", "verified"));
   checks.push(check("migrations", "fingerprint", true, "info", "computed_from_tracked_head"));
