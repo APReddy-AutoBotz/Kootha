@@ -5,7 +5,7 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["packages/**/*.test.ts", "tests/**/*.test.ts", "tests/**/*.test.tsx"],
-    fileParallelism: process.platform !== "win32"
+    ...(process.platform === "win32" ? { fileParallelism: false, maxWorkers: 1 } : {})
   },
   resolve: {
     alias: {
