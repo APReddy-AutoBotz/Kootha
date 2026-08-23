@@ -15,7 +15,7 @@
         "check:pilot-env": "node scripts/check-pilot-env.mjs",
         "check:pilot-readiness": "node scripts/check-pilot-readiness.mjs",
         "check:release-readiness": "node scripts/check-release-readiness.mjs",
-        "test:m29-release-readiness": "vitest run tests/m29-release-readiness.test.ts --reporter=verbose",
+        "test:m29-release-readiness": "vitest run tests/m29-release-readiness.test.ts tests/m29-release-determinism.test.ts --reporter=verbose",
         "security:scan": "node scripts/security-scan.mjs",
         "migrations:check": "node scripts/check-migrations.mjs",
         "evidence:m21-load": "vitest run tests/m21-load-evidence.test.ts --reporter=verbose",
