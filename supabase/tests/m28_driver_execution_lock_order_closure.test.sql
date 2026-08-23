@@ -30,7 +30,8 @@ select ok(
 
 select ok(
   has_function_privilege('anon', 'public.driver_update_work_day(text,text,uuid,text,text,text,text)', 'EXECUTE')
-  and not has_function_privilege('authenticated', 'public.driver_update_work_day(text,text,uuid,text,text,text,text)', 'EXECUTE'),
+  and not has_function_privilege('authenticated', 'public.driver_update_work_day(text,text,uuid,text,text,text,text)', 'EXECUTE')
+  and not has_function_privilege('service_role', 'public.driver_update_work_day(text,text,uuid,text,text,text,text)', 'EXECUTE'),
   'Driver execution RPC remains anon-only at the API role boundary'
 );
 
