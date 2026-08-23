@@ -1,11 +1,12 @@
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import {
   buildReleaseManifest,
   evaluateEnvironment,
+  evaluateRepository,
   migrationProvenance,
   sourceProvenance,
 } from "../scripts/release-readiness.mjs";
@@ -22,6 +23,10 @@ const previewEnvironment = {
 };
 
 const privilegedMarker = "server-only-service-role-value-1234567890";
+
+function git(cwd: string, args: string[]) {
+  return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+}
 
 describe("M29 secret-free manifest closure", () => {
   it("rejects direct manifest construction for a failed evaluation", () => {
@@ -78,10 +83,13 @@ describe("M29 secret-free manifest closure", () => {
     }
   });
 
-  it("emits no manifest file or secret value when CLI environment validation fails", () => {
+  it("removes a stale manifest and emits no secret value when CLI environment validation fails", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "kootha-m29-secret-free-"));
     const output = path.join(directory, "rejected-manifest.json");
     try {
+      writeFileSync(output, "stale-success-manifest\n", "utf8");
+      expect(existsSync(output)).toBe(true);
+
       const result = spawnSync(
         process.execPath,
         [
@@ -111,6 +119,34 @@ describe("M29 secret-free manifest closure", () => {
       expect(result.stderr).toContain("configuration check failed");
     } finally {
       rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("returns preliminary repository configuration failures before migration provenance is evaluated", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "kootha-m29-repository-preflight-"));
+    try {
+      git(root, ["init"]);
+      git(root, ["config", "user.email", "m29@example.invalid"]);
+      git(root, ["config", "user.name", "M29 Test"]);
+      mkdirSync(path.join(root, "supabase", "migrations"), { recursive: true });
+      writeFileSync(path.join(root, "supabase", "migrations", "20260101000000_a.sql"), "select 1;\n", "utf8");
+      writeFileSync(path.join(root, "supabase", "migrations", "20260101000000_b.sql"), "select 2;\n", "utf8");
+      git(root, ["add", "."]);
+      git(root, ["commit", "-m", "invalid repository fixture"]);
+
+      let result: ReturnType<typeof evaluateRepository> | undefined;
+      expect(() => {
+        result = evaluateRepository({ mode: "production", root });
+      }).not.toThrow();
+      expect(result?.ok).toBe(false);
+      expect(result?.migration).toBeUndefined();
+      expect(result?.checks).toContainEqual(expect.objectContaining({
+        scope: "env-example",
+        status: "missing",
+        severity: "error",
+      }));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 });
