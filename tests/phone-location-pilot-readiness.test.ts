@@ -15,6 +15,7 @@ import {
 import type { BufferedLocationPoint } from "../apps/driver/src/locationProof";
 
 const driverAppSource = readFileSync("apps/driver/App.tsx", "utf8");
+const driverReactNativeConfigSource = readFileSync("apps/driver/react-native.config.js", "utf8");
 const driverAppConfig = JSON.parse(readFileSync("apps/driver/app.json", "utf8")) as {
   expo: {
     android?: { permissions?: string[] };
@@ -64,6 +65,11 @@ describe("phone location pilot software readiness", () => {
       cameraPermission: false,
       microphonePermission: false,
     });
+  });
+
+  it("pins the Expo Android autolinking import to the class provided by SDK 52", () => {
+    expect(driverReactNativeConfigSource).toContain("import expo.modules.ExpoModulesPackage;");
+    expect(driverReactNativeConfigSource).not.toContain("import expo.core.ExpoModulesPackage;");
   });
 
   it("allows a foreground capture only for required, running proof during running work", () => {
