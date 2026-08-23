@@ -86,7 +86,7 @@ Status values:
 
 ## Milestone M13 - Pilot Readiness and Deployment Preparation
 
-- [x] Build pilot readiness docs, deployment preparation docs, smoke checklist, operations runbook, driver consent text, customer communication text, pilot environment validation helper, and guardrail tests without adding future product features.
+- [x] Build pilot readiness docs, deployment preparation guide, smoke checklist, operations runbook, driver consent text, customer communication text, pilot environment validation helper, and guardrail tests without adding future product features.
 
 ## Milestone M14 - Controlled Pilot Dry Run
 
@@ -175,3 +175,15 @@ Status values:
   - Governed cancellation with required reason, executable-access revocation, active-tracking stop and immutable lifecycle history.
   - Customer-safe cancellation/reschedule messages remain manual copy/share only; no payment gateway or provider auto-send.
   - M18, selected-device M24 and real physical M26 remain separately gated.
+
+## Milestone M29 - Hosted Release Activation & Recovery Control
+
+- [x] Software implementation completed on the M29 branch; merge remains gated by exact-head CI and independent review.
+  - Canonical preview/production environment contract separates public values from server-only authority and never emits secret values.
+  - Deterministic `check:release-readiness` produces secret-free source/migration provenance plus honest external-check status.
+  - A separate Hosted release readiness workflow preserves the existing Quality workflow and uploads only secret-free manifests.
+  - Production configuration remains fail-closed with enquiry intake and retention deletion explicitly disabled before promotion.
+  - Exact capacity-approved activation, hosted fake-data acceptance and rollback rehearsal are documented.
+  - Live Supabase/Netlify/rollback evidence remains `blocked-not-run` until capacity exists and those checks actually run.
+  - No unrelated Supabase project may be paused/deleted to satisfy Kootha hosting.
+  - M18, selected-device M24 and real physical M26 remain separately gated; M29 does not claim physical evidence.

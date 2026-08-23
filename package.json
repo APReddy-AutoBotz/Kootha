@@ -14,6 +14,8 @@
         "build": "pnpm --recursive --if-present run build",
         "check:pilot-env": "node scripts/check-pilot-env.mjs",
         "check:pilot-readiness": "node scripts/check-pilot-readiness.mjs",
+        "check:release-readiness": "node scripts/check-release-readiness.mjs",
+        "test:m29-release-readiness": "vitest run tests/m29-release-readiness.test.ts tests/m29-release-determinism.test.ts --reporter=verbose",
         "security:scan": "node scripts/security-scan.mjs",
         "migrations:check": "node scripts/check-migrations.mjs",
         "evidence:m21-load": "vitest run tests/m21-load-evidence.test.ts --reporter=verbose",
@@ -26,9 +28,9 @@
         "test:m24f-adapter-certification": "vitest run tests/m24f-adapter-certification.test.ts --reporter=verbose",
         "evidence:m24f-adapter-certification": "vitest run tests/m24f-adapter-certification.test.ts --reporter=verbose",
         "test:m25-features": "vitest run tests/m25-statistical-intelligence.test.ts --reporter=verbose",
-    "evidence:m25-statistical-intelligence": "vitest run tests/m25-statistical-intelligence.test.ts --reporter=verbose",
-    "evidence:m25-scale": "vitest run tests/m25-scale-evidence.test.ts --reporter=verbose",
-    "test:m25-worker": "vitest run tests/m25-worker.test.ts --reporter=verbose"
+        "evidence:m25-statistical-intelligence": "vitest run tests/m25-statistical-intelligence.test.ts --reporter=verbose",
+        "evidence:m25-scale": "vitest run tests/m25-scale-evidence.test.ts --reporter=verbose",
+        "test:m25-worker": "vitest run tests/m25-worker.test.ts --reporter=verbose"
     },
     "devDependencies": {
         "@testing-library/react": "16.3.0",
