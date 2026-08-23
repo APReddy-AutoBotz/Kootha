@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { test } from "vitest";
 
 const repositoryRoot = process.cwd();
@@ -71,20 +72,13 @@ function read(path: string): string {
   return readFileSync(path, "utf8");
 }
 
-function listFiles(root: string): string[] {
-  const result: string[] = [];
-  for (const entry of readdirSync(root)) {
-    if ([".git", ".turbo", "dist", "node_modules"].includes(entry)) {
-      continue;
-    }
-    const path = join(root, entry);
-    if (statSync(path).isDirectory()) {
-      result.push(...listFiles(path));
-    } else {
-      result.push(path);
-    }
-  }
-  return result;
+function listTrackedFiles(root: string): string[] {
+  const output = execFileSync("git", ["ls-files", "-z"], {
+    cwd: root,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  return output.split("\0").filter(Boolean);
 }
 
 test("M20B implementation and concise guide exist", () => {
@@ -193,8 +187,8 @@ test("host-neutral shared modules do not import host, framework, or database run
 });
 
 test("M20B remains host-neutral while later milestones add runtime", () => {
-  const repositoryFiles = listFiles(repositoryRoot)
-    .map((path) => relative(repositoryRoot, path).replaceAll("\\", "/"))
+  const repositoryFiles = listTrackedFiles(repositoryRoot)
+    .map((path) => path.replaceAll("\\", "/"))
     .filter((path) => !path.startsWith(".git/"));
 
   assert.equal(

@@ -10,6 +10,7 @@ import {
 } from "@kootha/shared";
 
 const driverAppSource = readFileSync(path.resolve("apps/driver/App.tsx"), "utf8");
+const driverLocationProofSource = readFileSync(path.resolve("apps/driver/src/locationProof.ts"), "utf8");
 const driverPackageJson = readFileSync(path.resolve("apps/driver/package.json"), "utf8");
 const driverConfig = readFileSync(path.resolve("apps/driver/app.json"), "utf8");
 const webAdminSource = readFileSync(path.resolve("apps/web/src/admin.tsx"), "utf8");
@@ -61,9 +62,10 @@ describe("M10 mobile GPS reliability and offline buffer", () => {
 
   it("keeps buffered points scoped to active assigned work/session", () => {
     expect(driverAppSource).toContain("isPointForWork");
-    expect(driverAppSource).toContain("point.ad_work_id === work.ad_work_id");
-    expect(driverAppSource).toContain("point.assignment_id === work.assignment_id");
-    expect(driverAppSource).toContain("point.driver_id === work.driver_id");
+    expect(driverAppSource).toContain("isPointForLocationScope");
+    expect(driverLocationProofSource).toContain("point.ad_work_id === scope.adWorkId");
+    expect(driverLocationProofSource).toContain("point.assignment_id === scope.assignmentId");
+    expect(driverLocationProofSource).toContain("point.driver_id === scope.driverId");
     expect(m10Migration).toContain("v_ad_work_id <> v_ad_work.id");
     expect(m10Migration).toContain("v_assignment_id <> v_assignment.id");
     expect(m10Migration).toContain("v_driver_id <> v_assignment.driver_id");

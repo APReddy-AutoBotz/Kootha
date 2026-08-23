@@ -46,8 +46,13 @@ select ok(
     'anon',
     'public.close_flexible_ad_work_with_final_summary(uuid,text,text,text,text,boolean,boolean,boolean,text,boolean)',
     'EXECUTE'
+  )
+  and not has_function_privilege(
+    'service_role',
+    'public.close_flexible_ad_work_with_final_summary(uuid,text,text,text,text,boolean,boolean,boolean,text,boolean)',
+    'EXECUTE'
   ),
-  'anonymous role has no final-closure RPC execute authority'
+  'anonymous and service roles have no final-closure RPC execute authority'
 );
 
 select * from finish();

@@ -6,6 +6,7 @@ const replayClosureSource = readFileSync(
   "utf8",
 );
 const workbenchSource = readFileSync("apps/web/src/admin-commercial.tsx", "utf8");
+const normalizedWorkbenchSource = workbenchSource.replace(/\r\n/g, "\n");
 
 describe("M28 replay current-snapshot closure", () => {
   it("keeps replay identity and receipt semantics while rebuilding only the returned snapshot", () => {
@@ -21,23 +22,23 @@ describe("M28 replay current-snapshot closure", () => {
   });
 
   it("keeps the Admin workbench bound to the authoritative snapshot returned by a mutation", () => {
-    expect(workbenchSource).toContain("const envelope = await postRpc<MutationEnvelope>(connection, rpc, body);");
-    expect(workbenchSource).toContain("expectedFingerprint !== snapshotFingerprint");
-    expect(workbenchSource).toContain("applySnapshot(envelope.snapshot, requestId, adWorkId)");
-    expect(workbenchSource).toContain("validateCommercialScheduleSnapshot(next)");
+    expect(normalizedWorkbenchSource).toContain("const envelope = await postRpc<MutationEnvelope>(connection, rpc, body);");
+    expect(normalizedWorkbenchSource).toContain("expectedFingerprint !== snapshotFingerprint");
+    expect(normalizedWorkbenchSource).toContain("applySnapshot(envelope.snapshot, requestId, adWorkId)");
+    expect(normalizedWorkbenchSource).toContain("validateCommercialScheduleSnapshot(next)");
   });
 
   it("preserves mutation inputs until a validated authoritative response succeeds", () => {
-    expect(workbenchSource).toContain("async function runMutation(rpc: string, body: Record<string, unknown>): Promise<boolean>");
-    expect(workbenchSource).toContain("if (!snapshot) return false;");
-    expect(workbenchSource).toContain("expectedFingerprint !== snapshotFingerprint) return false;");
-    expect(workbenchSource).toContain("if (!applySnapshot(envelope.snapshot, requestId, adWorkId)) return false;");
-    expect(workbenchSource).toContain("return true;");
-    expect(workbenchSource).toContain('const saved = await runMutation("admin_reschedule_ad_work_v1"');
-    expect(workbenchSource).toContain('if (saved) setRescheduleReason("");');
-    expect(workbenchSource).toContain('const saved = await runMutation("admin_reschedule_ad_work_day_v1"');
-    expect(workbenchSource).toContain('if (saved) {\n      setDayReason("");\n      setNewDayDate("");');
-    expect(workbenchSource).toContain('const saved = await runMutation("admin_cancel_ad_work_v1"');
-    expect(workbenchSource).toContain('if (saved) {\n      setCancellationReason("");\n      setCancellationInternalNote("");');
+    expect(normalizedWorkbenchSource).toContain("async function runMutation(rpc: string, body: Record<string, unknown>): Promise<boolean>");
+    expect(normalizedWorkbenchSource).toContain("if (!snapshot) return false;");
+    expect(normalizedWorkbenchSource).toContain("expectedFingerprint !== snapshotFingerprint) return false;");
+    expect(normalizedWorkbenchSource).toContain("if (!applySnapshot(envelope.snapshot, requestId, adWorkId)) return false;");
+    expect(normalizedWorkbenchSource).toContain("return true;");
+    expect(normalizedWorkbenchSource).toContain('const saved = await runMutation("admin_reschedule_ad_work_v1"');
+    expect(normalizedWorkbenchSource).toContain('if (saved) setRescheduleReason("");');
+    expect(normalizedWorkbenchSource).toContain('const saved = await runMutation("admin_reschedule_ad_work_day_v1"');
+    expect(normalizedWorkbenchSource).toContain('if (saved) {\n      setDayReason("");\n      setNewDayDate("");');
+    expect(normalizedWorkbenchSource).toContain('const saved = await runMutation("admin_cancel_ad_work_v1"');
+    expect(normalizedWorkbenchSource).toContain('if (saved) {\n      setCancellationReason("");\n      setCancellationInternalNote("");');
   });
 });

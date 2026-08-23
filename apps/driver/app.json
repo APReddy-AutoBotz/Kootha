@@ -27,6 +27,13 @@
                                "productName":  "Kootha"
                            },
                  "plugins":  [
+                                 [
+                                     "expo-image-picker",
+                                     {
+                                         "cameraPermission":  false,
+                                         "microphonePermission":  false
+                                     }
+                                 ],
                                  "@sentry/react-native/expo"
                              ]
              }

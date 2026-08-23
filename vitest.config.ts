@@ -4,7 +4,8 @@ import path from "node:path";
 export default defineConfig({
   test: {
     environment: "node",
-    include: ["packages/**/*.test.ts", "tests/**/*.test.ts", "tests/**/*.test.tsx"]
+    include: ["packages/**/*.test.ts", "tests/**/*.test.ts", "tests/**/*.test.tsx"],
+    ...(process.platform === "win32" ? { fileParallelism: false, maxWorkers: 1 } : {})
   },
   resolve: {
     alias: {
