@@ -407,6 +407,7 @@ export function buildReleaseManifest({
   source,
   env = process.env,
 } = {}) {
+  if (evaluation?.ok !== true) throw new Error("Release manifest requires a successful release-readiness evaluation.");
   if (!source?.sha || source.cleanWorktree !== true) throw new Error("Release manifest requires a clean non-ignored Git worktree.");
   if (source.expectedShaMatches === false) throw new Error("Release manifest source SHA does not match the evaluated checkout.");
   if (typeof source.commitTimestamp !== "string" || !Number.isFinite(Date.parse(source.commitTimestamp))
@@ -414,7 +415,7 @@ export function buildReleaseManifest({
     throw new Error("Release manifest requires valid source timestamp provenance.");
   }
   const generatedAt = releaseTimestamp(env, source.commitTimestamp);
-  const releaseId = String(env.VITE_APP_RELEASE || env.EXPO_PUBLIC_APP_RELEASE || "unversioned").trim() || "unversioned";
+  const releaseId = `source-${source.sha}`;
   const external = {
     supabase: EXTERNAL_ATTESTATION_REQUIRED,
     netlifyPreview: EXTERNAL_ATTESTATION_REQUIRED,
