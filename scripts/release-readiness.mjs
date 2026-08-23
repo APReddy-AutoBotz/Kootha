@@ -315,10 +315,13 @@ export function migrationProvenance(root = process.cwd()) {
 
 export function sourceProvenance({ root = process.cwd(), expectedSha = "" } = {}) {
   const sha = gitText(root, ["rev-parse", "HEAD"]);
+  const commitEpoch = gitText(root, ["show", "-s", "--format=%ct", "HEAD"]);
+  const commitTimestamp = timestampFromEpoch(commitEpoch, "Evaluated Git commit timestamp");
   const worktreeStatus = gitText(root, ["status", "--porcelain", "--untracked-files=all"]);
   const expected = String(expectedSha ?? "").trim();
   return {
     sha,
+    commitTimestamp,
     cleanWorktree: worktreeStatus.length === 0,
     expectedShaMatches: expected.length === 0 || expected === sha,
   };
@@ -375,10 +378,25 @@ export function summarizeChecks(checks) {
   return { ok: errors === 0, errors, warnings, checks };
 }
 
-export function releaseTimestamp(env = process.env) {
-  const raw = env.SOURCE_DATE_EPOCH;
-  if (raw !== undefined && /^\d+$/.test(String(raw))) return new Date(Number(raw) * 1000).toISOString();
-  return new Date().toISOString();
+const MAX_DATE_EPOCH_SECONDS = 8_640_000_000_000n;
+
+function timestampFromEpoch(raw, label) {
+  const value = String(raw);
+  if (!/^\d+$/.test(value)) throw new Error(`${label} must be a non-negative integral Unix epoch.`);
+  const seconds = BigInt(value);
+  if (seconds > MAX_DATE_EPOCH_SECONDS) throw new Error(`${label} is outside the supported date range.`);
+  return new Date(Number(seconds) * 1000).toISOString();
+}
+
+export function releaseTimestamp(env = process.env, sourceTimestamp) {
+  if (Object.hasOwn(env, "SOURCE_DATE_EPOCH")) {
+    return timestampFromEpoch(env.SOURCE_DATE_EPOCH, "SOURCE_DATE_EPOCH");
+  }
+  if (typeof sourceTimestamp !== "string" || !Number.isFinite(Date.parse(sourceTimestamp))
+    || new Date(sourceTimestamp).toISOString() !== sourceTimestamp) {
+    throw new Error("Release timestamp requires valid evaluated source provenance.");
+  }
+  return new Date(sourceTimestamp).toISOString();
 }
 
 export function buildReleaseManifest({
@@ -388,10 +406,14 @@ export function buildReleaseManifest({
   migration,
   source,
   env = process.env,
-  timestamp = releaseTimestamp(env),
 } = {}) {
   if (!source?.sha || source.cleanWorktree !== true) throw new Error("Release manifest requires a clean non-ignored Git worktree.");
   if (source.expectedShaMatches === false) throw new Error("Release manifest source SHA does not match the evaluated checkout.");
+  if (typeof source.commitTimestamp !== "string" || !Number.isFinite(Date.parse(source.commitTimestamp))
+    || new Date(source.commitTimestamp).toISOString() !== source.commitTimestamp) {
+    throw new Error("Release manifest requires valid source timestamp provenance.");
+  }
+  const generatedAt = releaseTimestamp(env, source.commitTimestamp);
   const releaseId = String(env.VITE_APP_RELEASE || env.EXPO_PUBLIC_APP_RELEASE || "unversioned").trim() || "unversioned";
   const external = {
     supabase: EXTERNAL_ATTESTATION_REQUIRED,
@@ -409,6 +431,6 @@ export function buildReleaseManifest({
     external,
     promotionReady: false,
     promotionDecision: "external-attestation-required",
-    timestamp,
+    timestamp: generatedAt,
   };
 }
