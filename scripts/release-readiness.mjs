@@ -326,8 +326,7 @@ export function findRuntimeEnvironmentNames(root = process.cwd()) {
     .filter((relative) => /\.(?:js|mjs|cjs|ts|tsx|jsx)$/.test(relative))
     .filter((relative) => !/\.(?:test|spec)\./.test(relative));
   const names = new Set();
-  for (const relative of files) {
-    const source = readHeadText(root, relative);
+  for (const source of readHeadTexts(root, files)) {
     for (const match of source.matchAll(/process\.env\.([A-Z][A-Z0-9_]*)/g)) names.add(match[1]);
     for (const match of source.matchAll(/import\.meta\.env\.([A-Z][A-Z0-9_]*)/g)) names.add(match[1]);
   }
