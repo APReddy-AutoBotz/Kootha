@@ -53,11 +53,17 @@ const evaluation = summarizeChecks([
   ...sourceEvaluation.checks,
   ...configurationEvaluation.checks,
 ]);
-const migration = configurationEvaluation.migration ?? migrationProvenance(root);
 
 for (const item of configurationEvaluation.checks) {
   console.log(`${item.scope}:${item.name}: ${item.status} (${item.severity})`);
 }
+
+if (!configurationEvaluation.ok || !evaluation.ok) {
+  console.error("release-readiness: configuration check failed; no release manifest was emitted");
+  process.exit(1);
+}
+
+const migration = configurationEvaluation.migration ?? migrationProvenance(root);
 console.log(`migration-count: ${migration.count}`);
 console.log(`migration-fingerprint: ${migration.fingerprint}`);
 
@@ -81,5 +87,3 @@ if (output) {
   writeFileSync(absolute, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
   console.log(`release-manifest: ${path.relative(root, absolute) || absolute}`);
 }
-
-if (!evaluation.ok) process.exit(1);
