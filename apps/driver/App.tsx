@@ -61,6 +61,7 @@ import {
   getForegroundLocationDecision,
   isPointForLocationScope,
   markLocationPointsFailed,
+  maxLocationSyncRetries,
   mergeBufferedLocationPoint,
   parseBufferedLocationPoints,
   removeAcceptedLocationPoints,
