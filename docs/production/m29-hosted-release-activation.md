@@ -22,7 +22,7 @@ RELEASE_SOURCE_SHA="$(git rev-parse HEAD)" \
 pnpm check:release-readiness -- --mode production --config-source repository --output output/m29-production-release-manifest.json
 ```
 
-The CLI derives the evaluated SHA from Git itself, rejects tracked dirty state, and rejects a supplied `RELEASE_SOURCE_SHA` that does not match the checkout. Repository mode proves contract coverage, public/server authority separation, `.env.example` safety, migration timestamp uniqueness and deterministic migration fingerprinting.
+The CLI derives the evaluated SHA and default manifest timestamp from the checked-out Git commit, rejects tracked dirty state, and rejects a supplied `RELEASE_SOURCE_SHA` that does not match the checkout. `SOURCE_DATE_EPOCH` is an optional reproducible override and is validated as a non-negative, integral, in-range Unix epoch; without it, repeated evaluation of the same commit remains byte-stable. Repository mode proves contract coverage, public/server authority separation, `.env.example` safety, migration timestamp uniqueness and deterministic migration fingerprinting.
 
 The local CLI has **no trusted external attestation channel**. It therefore never sets `promotionReady=true`, and its Supabase, Netlify preview and rollback fields remain `external-attestation-required` even if a caller tries to provide plain environment strings claiming those checks passed. Actual hosted evidence must be verified by the release controller through the real systems before promotion.
 
