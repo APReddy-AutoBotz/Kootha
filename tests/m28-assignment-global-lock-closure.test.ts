@@ -4,11 +4,11 @@ import { describe, expect, it } from "vitest";
 const migrationSource = readFileSync(
   "supabase/migrations/20260822113000_m28_assignment_global_lock_closure.sql",
   "utf8",
-);
+).replace(/\r\n/g, "\n");
 const legacyAssignmentClosureSource = readFileSync(
   "supabase/migrations/20260822114500_m28_legacy_assignment_authority_closure.sql",
   "utf8",
-);
+).replace(/\r\n/g, "\n");
 
 describe("M28 assignment and global authority-lock closure", () => {
   it("uses the canonical M21 authority lock for every M28 replay claim before authority rows", () => {

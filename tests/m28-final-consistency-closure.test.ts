@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-const commercialWorkbench = readFileSync("apps/web/src/admin-commercial.tsx", "utf8");
+const commercialWorkbench = readFileSync("apps/web/src/admin-commercial.tsx", "utf8").replace(/\r\n/g, "\n");
 const legacyAdmin = readFileSync("apps/web/src/admin.tsx", "utf8");
 const webIndex = readFileSync("apps/web/index.html", "utf8");
 const legacyScheduleClosureCss = readFileSync(

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentProps } from "react";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -56,6 +56,18 @@ import {
   TextInput,
   View
 } from "react-native";
+import {
+  DriverApiError,
+  getForegroundLocationDecision,
+  isPointForLocationScope,
+  markLocationPointsFailed,
+  mergeBufferedLocationPoint,
+  parseBufferedLocationPoints,
+  removeAcceptedLocationPoints,
+  selectLocationPointsForSync,
+  shouldBufferLocationFailure,
+} from "./src/locationProof";
+import type { BufferedLocationPoint } from "./src/locationProof";
 
 const productName = resolveProductName({
   productName: process.env.EXPO_PUBLIC_PRODUCT_NAME
@@ -63,7 +75,6 @@ const productName = resolveProductName({
 const driverLabels = businessLabels.driver;
 const publicKeyHeader = ["api", "key"].join("");
 const locationBufferStorageKey = "kootha-driver-location-buffer-v1";
-const maxLocationSyncRetries = 5;
 
 type DriverScreen = "work" | "register";
 type WorkPanel = "work" | "proof" | "help";
@@ -127,26 +138,6 @@ type MobileSyncResult = {
   tracking_health_status: TrackingHealthStatus;
   last_successful_sync_at: string | null;
   result_message: string;
-};
-
-type BufferedLocationPoint = {
-  local_id: string;
-  client_point_id: string;
-  tracking_session_id: string;
-  ad_work_id: string;
-  ad_work_day_id: string;
-  assignment_id: string;
-  driver_id: string;
-  vehicle_id: string | null;
-  latitude: number;
-  longitude: number;
-  accuracy: number | null;
-  speed: number | null;
-  heading: number | null;
-  captured_at: string;
-  sync_status: "pending" | "sync_failed";
-  retry_count: number;
-  last_sync_attempt_at: string | null;
 };
 
 function getDriverSupabaseConfig() {
@@ -224,7 +215,7 @@ async function loadAssignedWork(mobileNumber: string, workCode: string): Promise
   });
 
   if (!response.ok) {
-    throw new Error("Could not open assigned work. Check mobile number and Work Code.");
+    throw new DriverApiError("Could not open assigned work. Check mobile number and Work Code.", response.status);
   }
 
   return await response.json() as DriverWorkRow[];
@@ -359,7 +350,7 @@ async function recordMobileLocationPoint(input: {
   });
 
   if (!response.ok) {
-    throw new Error("Could not save location update.");
+    throw new DriverApiError("Could not save location update.", response.status);
   }
 
   const rows = await response.json() as MobileTrackingResult[];
@@ -392,7 +383,7 @@ async function syncMobileLocationPoints(input: {
   });
 
   if (!response.ok) {
-    throw new Error("Could not sync Location Proof.");
+    throw new DriverApiError("Could not sync Location Proof.", response.status);
   }
 
   const rows = await response.json() as MobileSyncResult[];
@@ -646,49 +637,8 @@ function createClientPointId() {
   return "phone-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
 }
 
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value);
-}
-
-function parseBufferedLocationPoints(value: string | null): BufferedLocationPoint[] {
-  if (!value) {
-    return [];
-  }
-
-  try {
-    const parsed = JSON.parse(value) as unknown;
-
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-
-    return parsed.filter((point): point is BufferedLocationPoint => {
-      if (!point || typeof point !== "object") {
-        return false;
-      }
-
-      const candidate = point as Partial<BufferedLocationPoint>;
-      return typeof candidate.local_id === "string"
-        && typeof candidate.client_point_id === "string"
-        && typeof candidate.tracking_session_id === "string"
-        && typeof candidate.ad_work_id === "string"
-        && typeof candidate.ad_work_day_id === "string"
-        && typeof candidate.assignment_id === "string"
-        && typeof candidate.driver_id === "string"
-        && (candidate.vehicle_id === null || typeof candidate.vehicle_id === "string")
-        && isFiniteNumber(candidate.latitude)
-        && isFiniteNumber(candidate.longitude)
-        && (candidate.accuracy === null || isFiniteNumber(candidate.accuracy))
-        && (candidate.speed === null || isFiniteNumber(candidate.speed))
-        && (candidate.heading === null || isFiniteNumber(candidate.heading))
-        && typeof candidate.captured_at === "string"
-        && (candidate.sync_status === "pending" || candidate.sync_status === "sync_failed")
-        && isFiniteNumber(candidate.retry_count)
-        && (candidate.last_sync_attempt_at === null || typeof candidate.last_sync_attempt_at === "string");
-    });
-  } catch {
-    return [];
-  }
+function toFiniteLocationValue(value: number | null): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 async function readBufferedLocationPoints() {
@@ -705,35 +655,28 @@ async function writeBufferedLocationPoints(points: BufferedLocationPoint[]) {
 }
 
 function isPointForWork(point: BufferedLocationPoint, work: DriverWorkRow, trackingSessionId: string) {
-  return point.tracking_session_id === trackingSessionId
-    && point.ad_work_id === work.ad_work_id
-    && point.ad_work_day_id === work.ad_work_day_id
-    && point.assignment_id === work.assignment_id
-    && point.driver_id === work.driver_id
-    && point.vehicle_id === work.vehicle_id;
+  return isPointForLocationScope(point, {
+    trackingSessionId,
+    adWorkId: work.ad_work_id,
+    adWorkDayId: work.ad_work_day_id,
+    assignmentId: work.assignment_id,
+    driverId: work.driver_id,
+    vehicleId: work.vehicle_id,
+  });
 }
 
 async function saveBufferedLocationPoint(point: BufferedLocationPoint) {
   const current = await readBufferedLocationPoints();
-  await writeBufferedLocationPoints([
-    ...current.filter((existing) => existing.client_point_id !== point.client_point_id),
-    point
-  ]);
+  await writeBufferedLocationPoints(mergeBufferedLocationPoint(current, point));
 }
 
 async function markBufferedLocationPointsFailed(points: BufferedLocationPoint[]) {
-  const failedClientIds = new Set(points.map((point) => point.client_point_id));
   const attemptedAt = new Date().toISOString();
   const current = await readBufferedLocationPoints();
-
-  await writeBufferedLocationPoints(current.map((point) => failedClientIds.has(point.client_point_id)
-    ? {
-        ...point,
-        sync_status: "sync_failed",
-        retry_count: point.retry_count + 1,
-        last_sync_attempt_at: attemptedAt
-      }
-    : point
+  await writeBufferedLocationPoints(markLocationPointsFailed(
+    current,
+    points.map((point) => point.client_point_id),
+    attemptedAt,
   ));
 }
 
@@ -742,9 +685,8 @@ async function removeAcceptedBufferedLocationPoints(acceptedClientPointIds: stri
     return;
   }
 
-  const accepted = new Set(acceptedClientPointIds);
   const current = await readBufferedLocationPoints();
-  await writeBufferedLocationPoints(current.filter((point) => !accepted.has(point.client_point_id)));
+  await writeBufferedLocationPoints(removeAcceptedLocationPoints(current, acceptedClientPointIds));
 }
 
 async function pruneBufferedLocationPointsForWork(work: DriverWorkRow, trackingSessionId: string) {
@@ -785,6 +727,9 @@ export function App() {
   const [locationMessage, setLocationMessage] = useState("");
   const [isLocationBusy, setIsLocationBusy] = useState(false);
   const [isLocationSyncing, setIsLocationSyncing] = useState(false);
+  const locationCaptureInFlight = useRef(false);
+  const locationSyncInFlight = useRef(false);
+  const workActionInFlight = useRef(false);
   const configured = useMemo(() => Boolean(getDriverSupabaseConfig()), []);
   const today = new Date().toISOString().slice(0, 10);
   const currentWork = workRows.find((row) => row.planned_date === today)
@@ -800,7 +745,6 @@ export function App() {
     dayStatus: currentStatus,
     closureStatus: null
   }) : false;
-  const canSaveLocationUpdate = Boolean(locationSessionId) && locationStatus === "running" && currentStatus === "running";
 
   useEffect(() => {
     setLocationSessionId(currentWork?.mobile_tracking_session_id ?? null);
@@ -824,10 +768,11 @@ export function App() {
     }
 
     const timer = setInterval(() => {
-      void recordCurrentLocationPoint(locationSessionId, false);
-      if (currentWork) {
-        void syncBufferedLocationPointsForWork(currentWork, locationSessionId, false);
-      }
+      void recordCurrentLocationPoint(locationSessionId, false).then(async () => {
+        if (currentWork) {
+          await syncBufferedLocationPointsForWork(currentWork, locationSessionId, false);
+        }
+      });
     }, 60000);
 
     return () => clearInterval(timer);
@@ -841,6 +786,7 @@ export function App() {
     const rows = await loadAssignedWork(mobileNumber, workCode);
     setWorkRows(rows);
     setWorkMessage(rows.length === 0 ? "No assigned work found for this Work Code." : "Assigned Work opened.");
+    return rows;
   }
 
   async function handleOpenWork() {
@@ -878,45 +824,58 @@ export function App() {
   }
 
   async function syncBufferedLocationPointsForWork(work: DriverWorkRow, trackingSessionId: string, force: boolean) {
-    const buffered = await pruneBufferedLocationPointsForWork(work, trackingSessionId);
-    const retryable = buffered.filter((point) => force || point.retry_count < maxLocationSyncRetries);
-    setPendingOfflineCount(buffered.length);
-
-    if (retryable.length === 0) {
-      if (buffered.length > 0) {
-        setLocationHealthStatus("sync_failed");
-      }
+    if (locationSyncInFlight.current) {
       return;
     }
 
+    locationSyncInFlight.current = true;
+
     try {
-      setIsLocationSyncing(true);
-      const result = await syncMobileLocationPoints({
-        mobileNumber,
-        workCode,
-        trackingSessionId,
-        points: retryable,
-        clientPendingCount: buffered.length
-      });
-      await removeAcceptedBufferedLocationPoints(result.accepted_client_point_ids ?? []);
-      const remaining = await pruneBufferedLocationPointsForWork(work, trackingSessionId);
-      setPendingOfflineCount(remaining.length);
-      setLocationPointCount(result.point_count ?? locationPointCount);
-      setLocationHealthStatus(result.tracking_health_status ?? (remaining.length > 0 ? "sync_pending" : "healthy"));
-      setLastSyncTime(result.last_successful_sync_at ?? new Date().toISOString());
-      if (force || retryable.length > 0) {
-        setLocationMessage(result.result_message || driverLabels.locationSynced + ".");
+      const buffered = await pruneBufferedLocationPointsForWork(work, trackingSessionId);
+      const retryable = selectLocationPointsForSync(buffered, force);
+      setPendingOfflineCount(buffered.length);
+
+      if (retryable.length === 0) {
+        if (buffered.length > 0) {
+          setLocationHealthStatus("sync_failed");
+        }
+        return;
       }
-    } catch {
-      await markBufferedLocationPointsFailed(retryable);
-      const failed = await pruneBufferedLocationPointsForWork(work, trackingSessionId);
-      setPendingOfflineCount(failed.length);
-      setLocationHealthStatus("sync_failed");
-      if (force) {
-        setLocationMessage(driverLabels.syncFailed + ". " + driverLabels.trySyncAgain + ".");
+
+      setIsLocationSyncing(true);
+      try {
+        const result = await syncMobileLocationPoints({
+          mobileNumber,
+          workCode,
+          trackingSessionId,
+          points: retryable,
+          clientPendingCount: buffered.length
+        });
+        await removeAcceptedBufferedLocationPoints(result.accepted_client_point_ids ?? []);
+        const remaining = await pruneBufferedLocationPointsForWork(work, trackingSessionId);
+        setPendingOfflineCount(remaining.length);
+        setLocationPointCount(result.point_count ?? locationPointCount);
+        setLocationHealthStatus(result.tracking_health_status ?? (remaining.length > 0 ? "sync_pending" : "healthy"));
+        setLastSyncTime(result.last_successful_sync_at ?? new Date().toISOString());
+        if (force || retryable.length > 0) {
+          setLocationMessage(result.result_message || driverLabels.locationSynced + ".");
+        }
+      } catch (error) {
+        if (shouldBufferLocationFailure(error)) {
+          await markBufferedLocationPointsFailed(retryable);
+        } else {
+          setLocationStatus("stopped");
+        }
+        const failed = await pruneBufferedLocationPointsForWork(work, trackingSessionId);
+        setPendingOfflineCount(failed.length);
+        setLocationHealthStatus("sync_failed");
+        if (force) {
+          setLocationMessage(driverLabels.syncFailed + ". " + driverLabels.trySyncAgain + ".");
+        }
       }
     } finally {
       setIsLocationSyncing(false);
+      locationSyncInFlight.current = false;
     }
   }
 
@@ -929,15 +888,124 @@ export function App() {
     await syncBufferedLocationPointsForWork(currentWork, locationSessionId, true);
   }
 
-  async function recordCurrentLocationPoint(trackingSessionId: string, showMessage = true) {
-    if (!currentWork) {
+  async function markLocationPermissionMissingOnDevice(work: DriverWorkRow) {
+    setLocationStatus("permission_missing");
+    setLocationHealthStatus("permission_missing");
+    setLocationMessage(driverLabels.locationPermissionNeeded + ". Location Proof stopped on this phone.");
+
+    try {
+      const missing = await markMobileLocationPermissionMissing({
+        mobileNumber,
+        workCode,
+        dayId: work.ad_work_day_id,
+      });
+      setLocationSessionId(missing?.tracking_session_id ?? null);
+    } catch {
+      setLocationMessage(driverLabels.locationPermissionNeeded + ". Location Proof stopped on this phone; reopen the work when online.");
+    }
+  }
+
+  async function refreshActiveLocationAuthorization(
+    work: DriverWorkRow,
+    trackingSessionId: string,
+    trackingStatus: TrackingSessionStatus,
+  ): Promise<DriverWorkRow | null> {
+    try {
+      const rows = await loadAssignedWork(mobileNumber, workCode);
+      setWorkRows(rows);
+      const refreshed = rows.find((row) => row.ad_work_day_id === work.ad_work_day_id) ?? null;
+      const decision = getForegroundLocationDecision({
+        locationProofRequired: Boolean(refreshed?.mobile_location_proof_required),
+        trackingSessionId: refreshed?.mobile_tracking_session_id === trackingSessionId ? trackingSessionId : null,
+        trackingStatus: refreshed?.mobile_tracking_status ?? "stopped",
+        executionStatus: refreshed?.execution_status ?? "planned",
+      }, true);
+
+      if (!refreshed || decision !== "capture") {
+        setLocationStatus(refreshed?.mobile_tracking_status ?? "stopped");
+        setLocationHealthStatus(refreshed?.mobile_tracking_health_status ?? "stopped");
+        setLocationMessage("Location Proof stopped because active work authorization changed.");
+        return null;
+      }
+
+      return refreshed;
+    } catch (error) {
+      if (shouldBufferLocationFailure(error)) {
+        const offlineDecision = getForegroundLocationDecision({
+          locationProofRequired: work.mobile_location_proof_required,
+          trackingSessionId,
+          trackingStatus,
+          executionStatus: work.execution_status,
+        }, true);
+        return offlineDecision === "capture" ? work : null;
+      }
+
+      setLocationStatus("stopped");
+      setLocationHealthStatus("stopped");
+      setLocationMessage("Location Proof stopped because active work authorization changed.");
+      return null;
+    }
+  }
+
+  async function recordCurrentLocationPoint(
+    trackingSessionId: string,
+    showMessage = true,
+    trackingStatusOverride: TrackingSessionStatus = locationStatus,
+  ) {
+    if (!currentWork || workActionInFlight.current || locationCaptureInFlight.current) {
       return;
     }
 
+    const localDecision = getForegroundLocationDecision({
+      locationProofRequired: currentWork.mobile_location_proof_required,
+      trackingSessionId,
+      trackingStatus: trackingStatusOverride,
+      executionStatus: currentWork.execution_status,
+    }, true);
+
+    if (localDecision !== "capture") {
+      return;
+    }
+
+    locationCaptureInFlight.current = true;
+    let activeWork = currentWork;
     let bufferedPoint: BufferedLocationPoint | null = null;
 
     try {
-      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const authorizedWork = await refreshActiveLocationAuthorization(activeWork, trackingSessionId, trackingStatusOverride);
+      if (!authorizedWork) {
+        return;
+      }
+      activeWork = authorizedWork;
+
+      const permission = await Location.getForegroundPermissionsAsync();
+      const permissionDecision = getForegroundLocationDecision({
+        locationProofRequired: activeWork.mobile_location_proof_required,
+        trackingSessionId,
+        trackingStatus: activeWork.mobile_tracking_status,
+        executionStatus: activeWork.execution_status,
+      }, permission.granted);
+
+      if (permissionDecision === "permission_missing") {
+        await markLocationPermissionMissingOnDevice(activeWork);
+        return;
+      }
+      if (permissionDecision !== "capture") {
+        return;
+      }
+
+      let position: Location.LocationObject;
+      try {
+        position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      } catch (error) {
+        const permissionAfterFailure = await Location.getForegroundPermissionsAsync().catch(() => null);
+        if (permissionAfterFailure && !permissionAfterFailure.granted) {
+          await markLocationPermissionMissingOnDevice(activeWork);
+          return;
+        }
+        throw error;
+      }
+
       const capturedAt = new Date(position.timestamp).toISOString();
       const clientPointId = createClientPointId();
       const localQuality = getLocationQualityFromAccuracy(position.coords.accuracy);
@@ -946,16 +1014,16 @@ export function App() {
         local_id: clientPointId,
         client_point_id: clientPointId,
         tracking_session_id: trackingSessionId,
-        ad_work_id: currentWork.ad_work_id,
-        ad_work_day_id: currentWork.ad_work_day_id,
-        assignment_id: currentWork.assignment_id,
-        driver_id: currentWork.driver_id,
-        vehicle_id: currentWork.vehicle_id,
+        ad_work_id: activeWork.ad_work_id,
+        ad_work_day_id: activeWork.ad_work_day_id,
+        assignment_id: activeWork.assignment_id,
+        driver_id: activeWork.driver_id,
+        vehicle_id: activeWork.vehicle_id,
         latitude: position.coords.latitude,
         longitude: position.coords.longitude,
-        accuracy: isFiniteNumber(position.coords.accuracy) ? position.coords.accuracy : null,
-        speed: isFiniteNumber(position.coords.speed) ? position.coords.speed : null,
-        heading: isFiniteNumber(position.coords.heading) ? position.coords.heading : null,
+        accuracy: toFiniteLocationValue(position.coords.accuracy),
+        speed: toFiniteLocationValue(position.coords.speed),
+        heading: toFiniteLocationValue(position.coords.heading),
         captured_at: capturedAt,
         sync_status: "pending",
         retry_count: 0,
@@ -980,14 +1048,14 @@ export function App() {
       setLastSyncTime(new Date().toISOString());
       setLocationHealthStatus(result?.tracking_health_status ?? "healthy");
       setLocationStatus("running");
-      await syncBufferedLocationPointsForWork(currentWork, trackingSessionId, false);
+      await syncBufferedLocationPointsForWork(activeWork, trackingSessionId, false);
       if (showMessage) {
         setLocationMessage("Location update saved (" + localQuality + ").");
       }
     } catch (error) {
-      if (bufferedPoint) {
+      if (bufferedPoint && shouldBufferLocationFailure(error)) {
         await saveBufferedLocationPoint(bufferedPoint);
-        await refreshBufferedLocationSummary(currentWork, trackingSessionId);
+        await refreshBufferedLocationSummary(activeWork, trackingSessionId);
         setLastSavedLocationTime(bufferedPoint.captured_at);
         setLocationHealthStatus("offline_saving");
         if (showMessage) {
@@ -996,9 +1064,18 @@ export function App() {
         return;
       }
 
+      if (error instanceof DriverApiError && !error.retryable) {
+        setLocationStatus("stopped");
+        setLocationHealthStatus("stopped");
+        setLocationMessage("Location Proof stopped because active work authorization changed.");
+        return;
+      }
+
       if (showMessage) {
         setLocationMessage(error instanceof Error ? error.message : "Could not save location update.");
       }
+    } finally {
+      locationCaptureInFlight.current = false;
     }
   }
 
@@ -1023,11 +1100,7 @@ export function App() {
       const permission = await Location.requestForegroundPermissionsAsync();
 
       if (!permission.granted) {
-        const missing = await markMobileLocationPermissionMissing({ mobileNumber, workCode, dayId: currentWork.ad_work_day_id });
-        setLocationSessionId(missing?.tracking_session_id ?? null);
-        setLocationStatus("permission_missing");
-        setLocationHealthStatus("permission_missing");
-        setLocationMessage(driverLabels.locationPermissionNeeded + ".");
+        await markLocationPermissionMissingOnDevice(currentWork);
         return;
       }
 
@@ -1041,7 +1114,7 @@ export function App() {
       setLocationStatus(result.status);
       setLocationHealthStatus(result.tracking_health_status ?? "healthy");
       setLocationPointCount(result.point_count ?? 0);
-      await recordCurrentLocationPoint(result.tracking_session_id, false);
+      await recordCurrentLocationPoint(result.tracking_session_id, false, result.status);
       setLocationMessage(driverLabels.locationProofRunning + ".");
     } catch (error) {
       setLocationMessage(error instanceof Error ? error.message : "Could not start Location Proof.");
@@ -1086,7 +1159,12 @@ export function App() {
       return;
     }
 
+    if (workActionInFlight.current) {
+      return;
+    }
+
     try {
+      workActionInFlight.current = true;
       setIsWorkLoading(true);
       await saveWorkAction({
         mobileNumber,
@@ -1121,6 +1199,7 @@ export function App() {
     } catch (error) {
       setWorkMessage(error instanceof Error ? error.message : "Could not save work update.");
     } finally {
+      workActionInFlight.current = false;
       setIsWorkLoading(false);
     }
   }

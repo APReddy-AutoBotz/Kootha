@@ -17,7 +17,7 @@ if (!migrationName) {
   throw new Error("M28 generated migration is missing");
 }
 
-const migrationSource = readFileSync(`supabase/migrations/${migrationName}`, "utf8");
+const migrationSource = readFileSync(`supabase/migrations/${migrationName}`, "utf8").replace(/\r\n/g, "\n");
 
 describe("M28 commercial and schedule contract", () => {
   it("enforces coherent payment states", () => {
