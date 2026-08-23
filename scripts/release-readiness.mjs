@@ -184,6 +184,46 @@ function readHeadText(root, relativePath) {
   });
 }
 
+function readHeadTexts(root, relativePaths) {
+  if (relativePaths.length === 0) return [];
+  if (relativePaths.some((relativePath) => /[\r\n]/.test(relativePath))) {
+    throw new Error("Git batch paths must not contain line breaks.");
+  }
+
+  const requests = relativePaths.map((relativePath) => `HEAD:${relativePath}\n`).join("");
+  const output = execFileSync("git", ["cat-file", "--batch"], {
+    cwd: root,
+    input: requests,
+    maxBuffer: 50 * 1024 * 1024,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  const texts = [];
+  let offset = 0;
+
+  for (const relativePath of relativePaths) {
+    const headerEnd = output.indexOf(0x0a, offset);
+    if (headerEnd < 0) throw new Error(`Missing Git batch header for ${relativePath}.`);
+    const header = output.subarray(offset, headerEnd).toString("utf8").trim();
+    const match = header.match(/^[0-9a-f]+ blob (\d+)$/);
+    if (!match) throw new Error(`Invalid Git batch response for ${relativePath}.`);
+
+    const size = Number(match[1]);
+    const contentStart = headerEnd + 1;
+    const contentEnd = contentStart + size;
+    if (!Number.isSafeInteger(size) || size < 0 || contentEnd >= output.length) {
+      throw new Error(`Invalid Git blob size for ${relativePath}.`);
+    }
+    texts.push(output.subarray(contentStart, contentEnd).toString("utf8"));
+    if (output[contentEnd] !== 0x0a) {
+      throw new Error(`Missing Git batch delimiter for ${relativePath}.`);
+    }
+    offset = contentEnd + 1;
+  }
+
+  if (offset !== output.length) throw new Error("Unexpected trailing Git batch output.");
+  return texts;
+}
+
 function tryReadHeadText(root, relativePath) {
   try {
     return readHeadText(root, relativePath);
@@ -304,10 +344,11 @@ export function migrationProvenance(root = process.cwd()) {
   const timestamps = files.map((relative) => path.basename(relative).split("_")[0]);
   if (new Set(timestamps).size !== timestamps.length) throw new Error("Duplicate migration timestamp detected.");
   const hash = createHash("sha256");
-  for (const relative of files) {
+  const contents = readHeadTexts(root, files);
+  for (const [index, relative] of files.entries()) {
     hash.update(relative);
     hash.update("\0");
-    hash.update(readHeadText(root, relative));
+    hash.update(contents[index]);
     hash.update("\0");
   }
   return { count: files.length, fingerprint: `sha256:${hash.digest("hex")}` };

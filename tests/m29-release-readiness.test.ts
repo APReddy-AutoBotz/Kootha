@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -330,6 +331,39 @@ describe("M29 hosted release readiness", () => {
     expect(first.count).toBeGreaterThan(0);
     expect(first).toEqual(migrationProvenance());
     expect(first.fingerprint).toMatch(/^sha256:[0-9a-f]{64}$/);
+  });
+
+  it("batch-reads tracked migration blobs without changing the canonical fingerprint", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "kootha-m29-migration-batch-"));
+    const migrations = [
+      ["supabase/migrations/20260101000000_first.sql", "select 'first';\n"],
+      ["supabase/migrations/20260102000000_second.sql", "select 'second';\n"],
+    ] as const;
+    try {
+      git(root, ["init"]);
+      git(root, ["config", "user.email", "m29@example.invalid"]);
+      git(root, ["config", "user.name", "M29 Test"]);
+      mkdirSync(path.join(root, "supabase", "migrations"), { recursive: true });
+      for (const [relative, contents] of migrations) {
+        writeFileSync(path.join(root, relative), contents, "utf8");
+      }
+      git(root, ["add", "supabase/migrations"]);
+      git(root, ["commit", "-m", "fake migrations"]);
+
+      const hash = createHash("sha256");
+      for (const [relative, contents] of migrations) {
+        hash.update(relative);
+        hash.update("\0");
+        hash.update(contents);
+        hash.update("\0");
+      }
+      expect(migrationProvenance(root)).toEqual({
+        count: migrations.length,
+        fingerprint: `sha256:${hash.digest("hex")}`,
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("binds source provenance to Git HEAD and rejects a mismatched expected SHA", () => {
