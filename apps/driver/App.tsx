@@ -1226,11 +1226,16 @@ export function App() {
       return;
     }
 
+    locationCaptureGeneration.current += 1;
+    const startGeneration = locationCaptureGeneration.current;
+
     try {
       setIsLocationBusy(true);
       setLocationMessage("");
-      locationCaptureGeneration.current += 1;
-      const rows = await refreshAssignedWork();
+      const rows = await loadAssignedWork(mobileNumber, workCode);
+      if (startGeneration !== locationCaptureGeneration.current) {
+        return;
+      }
       const authorizedWork = rows.find((row) => row.ad_work_day_id === currentWork.ad_work_day_id) ?? null;
 
       if (!authorizedWork || !canStartMobileLocationProof({
@@ -1240,6 +1245,8 @@ export function App() {
         dayStatus: authorizedWork.execution_status,
         closureStatus: null,
       })) {
+        setWorkRows(rows);
+        setWorkMessage(rows.length === 0 ? "No assigned work found for this Work Code." : "Assigned Work opened.");
         setLocationStatus(authorizedWork?.mobile_tracking_status ?? "stopped");
         setLocationHealthStatus(authorizedWork?.mobile_tracking_health_status ?? "stopped");
         setLocationMessage("Location Proof stopped because active work authorization changed.");
@@ -1247,6 +1254,9 @@ export function App() {
       }
 
       const permission = await Location.requestForegroundPermissionsAsync();
+      if (startGeneration !== locationCaptureGeneration.current) {
+        return;
+      }
 
       if (!permission.granted) {
         await markLocationPermissionMissingOnDevice(authorizedWork);
@@ -1259,13 +1269,24 @@ export function App() {
         dayId: authorizedWork.ad_work_day_id,
         driverConsent: true
       });
+      if (startGeneration !== locationCaptureGeneration.current) {
+        return;
+      }
       setLocationSessionId(result.tracking_session_id);
       setLocationStatus(result.status);
       setLocationHealthStatus(result.tracking_health_status ?? "healthy");
       setLocationPointCount(result.point_count ?? 0);
-      await recordCurrentLocationPoint(result.tracking_session_id, false, result.status);
-      setLocationMessage(driverLabels.locationProofRunning + ".");
+      const captureRemainsActive = await recordCurrentLocationPoint(result.tracking_session_id, false, result.status);
+      if (startGeneration !== locationCaptureGeneration.current) {
+        return;
+      }
+      if (captureRemainsActive) {
+        setLocationMessage(driverLabels.locationProofRunning + ".");
+      }
     } catch (error) {
+      if (startGeneration !== locationCaptureGeneration.current) {
+        return;
+      }
       if (error instanceof DriverApiError && !error.retryable) {
         setWorkRows([]);
         setWorkMessage("No assigned work found for this Work Code.");
@@ -1554,6 +1575,7 @@ export function App() {
   }
 
   function handleChangeWorkCode() {
+    locationCaptureGeneration.current += 1;
     setWorkRows([]);
     setWorkPanel("work");
     setWorkMessage("");

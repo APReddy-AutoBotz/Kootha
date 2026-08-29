@@ -138,9 +138,12 @@ describe("phone location pilot software readiness", () => {
       driverAppSource.indexOf("async function handleStopLocationProof"),
     );
 
-    expect(startHandler.indexOf("await refreshAssignedWork()")).toBeGreaterThan(-1);
-    expect(startHandler.indexOf("await refreshAssignedWork()")).toBeLessThan(
+    expect(startHandler.indexOf("await loadAssignedWork(mobileNumber, workCode)")).toBeGreaterThan(-1);
+    expect(startHandler.indexOf("await loadAssignedWork(mobileNumber, workCode)")).toBeLessThan(
       startHandler.indexOf("Location.requestForegroundPermissionsAsync()"),
+    );
+    expect(startHandler.indexOf("startGeneration !== locationCaptureGeneration.current")).toBeLessThan(
+      startHandler.indexOf("setWorkRows(rows)"),
     );
     expect(startHandler).toContain("authorizedWork.ad_work_day_id");
     expect(driverAppSource).toMatch(
@@ -262,6 +265,37 @@ describe("phone location pilot software readiness", () => {
     expect(captureHandler).toMatch(
       /catch \(error\) \{\s*if \(captureGeneration !== locationCaptureGeneration\.current\) \{\s*return false;/,
     );
+  });
+
+  it("ignores a delayed Location Proof start after Break, End, Issue, Stop, or work-code change", () => {
+    const startHandler = driverAppSource.slice(
+      driverAppSource.indexOf("async function handleStartLocationProof"),
+      driverAppSource.indexOf("async function handleStopLocationProof"),
+    );
+    const changeWorkCodeHandler = driverAppSource.slice(
+      driverAppSource.indexOf("function handleChangeWorkCode"),
+      driverAppSource.indexOf("return (", driverAppSource.indexOf("function handleChangeWorkCode")),
+    );
+
+    expect(startHandler).toContain("const startGeneration = locationCaptureGeneration.current");
+    expect(startHandler).toContain("const rows = await loadAssignedWork(mobileNumber, workCode)");
+    expect(startHandler).not.toContain("const rows = await refreshAssignedWork()");
+    expect(startHandler.match(/startGeneration !== locationCaptureGeneration\.current/g)).toHaveLength(5);
+    expect(startHandler.indexOf("startGeneration !== locationCaptureGeneration.current")).toBeLessThan(
+      startHandler.indexOf("setWorkRows(rows)"),
+    );
+    expect(startHandler).toMatch(
+      /const result = await startMobileTracking\([\s\S]*?if \(startGeneration !== locationCaptureGeneration\.current\) \{\s*return;\s*\}\s*setLocationSessionId\(result\.tracking_session_id\)/,
+    );
+    expect(startHandler).toMatch(
+      /const captureRemainsActive = await recordCurrentLocationPoint\([\s\S]*?if \(startGeneration !== locationCaptureGeneration\.current\) \{\s*return;\s*\}\s*if \(captureRemainsActive\) \{\s*setLocationMessage\(driverLabels\.locationProofRunning \+ "\."\)/,
+    );
+    expect(startHandler).toContain("const captureRemainsActive = await recordCurrentLocationPoint");
+    expect(startHandler).toContain("if (captureRemainsActive)");
+    expect(startHandler).toMatch(
+      /catch \(error\) \{\s*if \(startGeneration !== locationCaptureGeneration\.current\) \{\s*return;/,
+    );
+    expect(changeWorkCodeHandler).toContain("locationCaptureGeneration.current += 1");
   });
 
   it("reuses a stable request id only while the same submission is retried", () => {
