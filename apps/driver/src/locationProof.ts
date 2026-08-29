@@ -1,6 +1,12 @@
-import type { AdWorkExecutionDayStatus, TrackingSessionStatus } from "@kootha/shared";
+import type {
+  AdWorkExecutionDayStatus,
+  DriverExecutionAction,
+  TrackingHealthStatus,
+  TrackingSessionStatus,
+} from "@kootha/shared";
 
 export const maxLocationSyncRetries = 5;
+export const driverApiRequestTimeoutMs = 15_000;
 
 export type BufferedLocationPoint = {
   local_id: string;
@@ -52,6 +58,28 @@ export class DriverApiError extends Error {
   }
 }
 
+export async function withDriverApiTimeout<T>(
+  request: (signal: AbortSignal) => Promise<T>,
+  timeoutMs = driverApiRequestTimeoutMs,
+): Promise<T> {
+  const controller = new AbortController();
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new DriverApiError("Request timed out. Check connection and retry.", null));
+      controller.abort();
+    }, Math.max(1, timeoutMs));
+  });
+
+  try {
+    return await Promise.race([request(controller.signal), timeout]);
+  } finally {
+    if (timeoutId !== null) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
+
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
@@ -62,6 +90,36 @@ export function isRetryableDriverApiStatus(status: number): boolean {
 
 export function shouldBufferLocationFailure(error: unknown): boolean {
   return !(error instanceof DriverApiError) || error.retryable;
+}
+
+export function getLocationStatusAfterSuccessfulSync(input: {
+  executionStatus: AdWorkExecutionDayStatus;
+  currentTrackingStatus: TrackingSessionStatus;
+  failedCount: number;
+  acceptedCount: number;
+  trackingHealthStatus: TrackingHealthStatus;
+}): TrackingSessionStatus {
+  const serverConfirmedActive = input.executionStatus === "running"
+    && input.failedCount === 0
+    && input.acceptedCount > 0
+    && input.trackingHealthStatus !== "sync_failed";
+
+  return serverConfirmedActive ? "running" : input.currentTrackingStatus;
+}
+
+export function getLocationStatusAfterWorkAction(
+  action: DriverExecutionAction,
+  currentTrackingStatus: TrackingSessionStatus,
+): TrackingSessionStatus {
+  if (action === "take_break") {
+    return "paused";
+  }
+
+  if (action === "end" || action === "issue") {
+    return "stopped";
+  }
+
+  return currentTrackingStatus;
 }
 
 export function getForegroundLocationDecision(

@@ -59,6 +59,8 @@ import {
 import {
   DriverApiError,
   getForegroundLocationDecision,
+  getLocationStatusAfterSuccessfulSync,
+  getLocationStatusAfterWorkAction,
   isPointForLocationScope,
   markLocationPointsFailed,
   maxLocationSyncRetries,
@@ -67,6 +69,7 @@ import {
   removeAcceptedLocationPoints,
   selectLocationPointsForSync,
   shouldBufferLocationFailure,
+  withDriverApiTimeout,
 } from "./src/locationProof";
 import type { BufferedLocationPoint } from "./src/locationProof";
 
@@ -76,6 +79,7 @@ const productName = resolveProductName({
 const driverLabels = businessLabels.driver;
 const publicKeyHeader = ["api", "key"].join("");
 const locationBufferStorageKey = "kootha-driver-location-buffer-v1";
+const proofUploadRequestTimeoutMs = 60_000;
 
 type DriverScreen = "work" | "register";
 type WorkPanel = "work" | "proof" | "help";
@@ -163,6 +167,13 @@ function createPublicHeaders(config: { anonKey: string }, json = false) {
   };
 }
 
+function fetchDriverApi(url: string, init: RequestInit, timeoutMs?: number) {
+  return withDriverApiTimeout(
+    (signal) => fetch(url, { ...init, signal }),
+    timeoutMs,
+  );
+}
+
 async function submitDriverApplication(input: DriverApplicationInput) {
   const config = getDriverSupabaseConfig();
 
@@ -170,7 +181,7 @@ async function submitDriverApplication(input: DriverApplicationInput) {
     throw new Error("Driver registration is not configured in this environment.");
   }
 
-  const response = await fetch(config.url + "/rest/v1/driver_applications", {
+  const response = await fetchDriverApi(config.url + "/rest/v1/driver_applications", {
     method: "POST",
     headers: {
       ...createPublicHeaders(config, true),
@@ -206,7 +217,7 @@ async function loadAssignedWork(mobileNumber: string, workCode: string): Promise
     throw new Error("Driver work access is not configured in this environment.");
   }
 
-  const response = await fetch(config.url + "/rest/v1/rpc/driver_get_assigned_work", {
+  const response = await fetchDriverApi(config.url + "/rest/v1/rpc/driver_get_assigned_work", {
     method: "POST",
     headers: createPublicHeaders(config, true),
     body: JSON.stringify({
@@ -237,7 +248,7 @@ async function saveWorkAction(input: {
     throw new Error("Driver work access is not configured in this environment.");
   }
 
-  const response = await fetch(config.url + "/rest/v1/rpc/driver_update_work_day", {
+  const response = await fetchDriverApi(config.url + "/rest/v1/rpc/driver_update_work_day", {
     method: "POST",
     headers: createPublicHeaders(config, true),
     body: JSON.stringify({
@@ -267,7 +278,7 @@ async function startMobileTracking(input: {
     throw new Error("Driver work access is not configured in this environment.");
   }
 
-  const response = await fetch(config.url + "/rest/v1/rpc/driver_start_mobile_tracking", {
+  const response = await fetchDriverApi(config.url + "/rest/v1/rpc/driver_start_mobile_tracking", {
     method: "POST",
     headers: createPublicHeaders(config, true),
     body: JSON.stringify({
@@ -297,7 +308,7 @@ async function markMobileLocationPermissionMissing(input: {
     throw new Error("Driver work access is not configured in this environment.");
   }
 
-  const response = await fetch(config.url + "/rest/v1/rpc/driver_mark_mobile_location_permission_missing", {
+  const response = await fetchDriverApi(config.url + "/rest/v1/rpc/driver_mark_mobile_location_permission_missing", {
     method: "POST",
     headers: createPublicHeaders(config, true),
     body: JSON.stringify({
@@ -333,7 +344,7 @@ async function recordMobileLocationPoint(input: {
     throw new Error("Driver work access is not configured in this environment.");
   }
 
-  const response = await fetch(config.url + "/rest/v1/rpc/driver_record_mobile_location_point", {
+  const response = await fetchDriverApi(config.url + "/rest/v1/rpc/driver_record_mobile_location_point", {
     method: "POST",
     headers: createPublicHeaders(config, true),
     body: JSON.stringify({
@@ -371,7 +382,7 @@ async function syncMobileLocationPoints(input: {
     throw new Error("Driver work access is not configured in this environment.");
   }
 
-  const response = await fetch(config.url + "/rest/v1/rpc/driver_sync_mobile_location_points", {
+  const response = await fetchDriverApi(config.url + "/rest/v1/rpc/driver_sync_mobile_location_points", {
     method: "POST",
     headers: createPublicHeaders(config, true),
     body: JSON.stringify({
@@ -403,7 +414,7 @@ async function stopMobileTracking(input: {
     throw new Error("Driver work access is not configured in this environment.");
   }
 
-  const response = await fetch(config.url + "/rest/v1/rpc/driver_stop_mobile_tracking", {
+  const response = await fetchDriverApi(config.url + "/rest/v1/rpc/driver_stop_mobile_tracking", {
     method: "POST",
     headers: createPublicHeaders(config, true),
     body: JSON.stringify({
@@ -455,7 +466,7 @@ async function requestProofUploadSlot(input: {
     throw new Error("Driver work access is not configured in this environment.");
   }
 
-  const response = await fetch(config.url + "/rest/v1/rpc/request_driver_proof_upload", {
+  const response = await fetchDriverApi(config.url + "/rest/v1/rpc/request_driver_proof_upload", {
     method: "POST",
     headers: createPublicHeaders(config, true),
     body: JSON.stringify({
@@ -497,7 +508,7 @@ async function uploadProofPhoto(input: { slot: ProofUploadSlot; photoUri: string
   }
 
   const photoBlob = await photoResponse.blob();
-  const response = await fetch(config.url + "/storage/v1/object/" + input.slot.file_bucket + "/" + encodeStoragePath(input.slot.file_path), {
+  const response = await fetchDriverApi(config.url + "/storage/v1/object/" + input.slot.file_bucket + "/" + encodeStoragePath(input.slot.file_path), {
     method: "POST",
     headers: {
       ...createPublicHeaders(config),
@@ -505,7 +516,7 @@ async function uploadProofPhoto(input: { slot: ProofUploadSlot; photoUri: string
       "x-upsert": "false"
     },
     body: photoBlob
-  });
+  }, proofUploadRequestTimeoutMs);
 
   if (!response.ok) {
     throw new Error("Could not upload photo proof.");
@@ -519,7 +530,7 @@ async function completeProofUpload(input: { mobileNumber: string; workCode: stri
     throw new Error("Driver work access is not configured in this environment.");
   }
 
-  const response = await fetch(config.url + "/rest/v1/rpc/complete_driver_proof_upload", {
+  const response = await fetchDriverApi(config.url + "/rest/v1/rpc/complete_driver_proof_upload", {
     method: "POST",
     headers: createPublicHeaders(config, true),
     body: JSON.stringify({
@@ -856,6 +867,13 @@ export function App() {
         const remaining = await pruneBufferedLocationPointsForWork(work, trackingSessionId);
         setPendingOfflineCount(remaining.length);
         setLocationPointCount(result.point_count ?? locationPointCount);
+        setLocationStatus(getLocationStatusAfterSuccessfulSync({
+          executionStatus: work.execution_status,
+          currentTrackingStatus: locationStatus,
+          failedCount: result.failed_count ?? 0,
+          acceptedCount: result.accepted_client_point_ids?.length ?? 0,
+          trackingHealthStatus: result.tracking_health_status,
+        }));
         setLocationHealthStatus(result.tracking_health_status ?? (remaining.length > 0 ? "sync_pending" : "healthy"));
         setLastSyncTime(result.last_successful_sync_at ?? new Date().toISOString());
         if (force || retryable.length > 0) {
@@ -887,6 +905,19 @@ export function App() {
 
     setLocationMessage(driverLabels.syncingLocationProof + ".");
     await syncBufferedLocationPointsForWork(currentWork, locationSessionId, true);
+  }
+
+  async function handleSaveLocationNow() {
+    if (!locationSessionId || locationStatus !== "running" || currentStatus !== "running") {
+      return;
+    }
+
+    try {
+      setIsLocationBusy(true);
+      await recordCurrentLocationPoint(locationSessionId, true);
+    } finally {
+      setIsLocationBusy(false);
+    }
   }
 
   async function markLocationPermissionMissingOnDevice(work: DriverWorkRow) {
@@ -1176,11 +1207,13 @@ export function App() {
         areaPlaceName: action === "add_proof_note" ? proofArea : undefined,
         proofType: action === "add_proof_note" ? proofType : undefined
       });
-      if (action === "take_break" && locationSessionId) {
-        await handleStopLocationProof("break_started");
-      }
-      if (action === "end" && locationSessionId) {
-        await handleStopLocationProof("work_ended");
+      const statusAfterAction = getLocationStatusAfterWorkAction(action, locationStatus);
+      if (locationSessionId && statusAfterAction !== locationStatus) {
+        setLocationStatus(statusAfterAction);
+        setLocationHealthStatus(pendingOfflineCount > 0 ? "sync_pending" : "stopped");
+        setLocationMessage(statusAfterAction === "paused"
+          ? "Location Proof paused during break."
+          : driverLabels.locationProofStopped + ".");
       }
       if ((action === "start" || action === "resume") && currentWork.mobile_location_proof_required) {
         setLocationMessage("Allow Location Proof, then choose Start Location Proof.");
@@ -1368,7 +1401,7 @@ export function App() {
                 <View style={styles.introBlock}>
                   <View style={styles.introIcon}><MaterialCommunityIcons name="briefcase-search-outline" size={32} color="#fffaf1" /></View>
                   <View style={styles.introCopy}>
-                    <Text style={styles.title}>{locale === "te" ? "ఈరోజు పని తెరవండి" : "Open today&apos;s work"}</Text>
+                    <Text style={styles.title}>{locale === "te" ? "ఈరోజు పని తెరవండి" : "Open today's work"}</Text>
                     <Text style={styles.body}>Enter your mobile number and Work Code given by the Kootha admin.</Text>
                   </View>
                 </View>
@@ -1508,6 +1541,7 @@ export function App() {
                           <Text style={styles.locationStatusText}>{pendingOfflineCount > 0 ? `${pendingOfflineCount} waiting to sync` : "Synced"}</Text>
                         </View>
                         <PrimaryButton label={driverLabels.startLocationProof} icon="crosshairs-gps" disabled={!canStartLocationProof || isLocationBusy} onPress={() => void handleStartLocationProof()} />
+                        {locationSessionId && locationStatus === "running" && currentStatus === "running" ? <SecondaryButton label={locale === "te" ? "ఇప్పుడే లొకేషన్ సేవ్ చేయండి" : "Save Location Now"} icon="map-marker-plus-outline" disabled={isLocationBusy || isLocationSyncing} onPress={() => void handleSaveLocationNow()} /> : null}
                         {pendingOfflineCount > 0 ? <SecondaryButton label={isLocationSyncing ? driverLabels.syncingLocationProof : (locale === "te" ? "ఇప్పుడే సింక్ చేయండి" : "Sync Now")} icon="sync" disabled={!locationSessionId || isLocationSyncing} onPress={() => void handleSyncNow()} /> : null}
                         {locationSessionId && locationStatus !== "stopped" ? <SecondaryButton label={driverLabels.stopLocationProof} icon="stop-circle-outline" disabled={isLocationBusy} onPress={() => void handleStopLocationProof("other")} /> : null}
                         {locationMessage ? <Text style={styles.notice}>{locationMessage}</Text> : null}

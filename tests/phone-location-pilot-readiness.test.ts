@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   DriverApiError,
   getForegroundLocationDecision,
+  getLocationStatusAfterSuccessfulSync,
+  getLocationStatusAfterWorkAction,
   isPointForLocationScope,
   markLocationPointsFailed,
   maxLocationSyncRetries,
@@ -11,6 +13,7 @@ import {
   removeAcceptedLocationPoints,
   selectLocationPointsForSync,
   shouldBufferLocationFailure,
+  withDriverApiTimeout,
 } from "../apps/driver/src/locationProof";
 import type { BufferedLocationPoint } from "../apps/driver/src/locationProof";
 
@@ -117,6 +120,58 @@ describe("phone location pilot software readiness", () => {
     }
     expect(shouldBufferLocationFailure(new DriverApiError("offline", null))).toBe(true);
     expect(shouldBufferLocationFailure(new TypeError("network unavailable"))).toBe(true);
+  });
+
+  it("bounds stalled API requests and keeps timeouts retryable for offline buffering", async () => {
+    const stalledRequest = withDriverApiTimeout(
+      (signal) => new Promise<never>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+      }),
+      5,
+    );
+
+    await expect(stalledRequest).rejects.toMatchObject({
+      name: "DriverApiError",
+      message: "Request timed out. Check connection and retry.",
+      status: null,
+      retryable: true,
+    });
+    expect(driverAppSource).toContain("fetchDriverApi");
+    expect(driverAppSource).not.toContain("await fetch(config.url");
+  });
+
+  it("restores running UI state only after the server accepts a sync for active work", () => {
+    const successfulSync = {
+      executionStatus: "running" as const,
+      currentTrackingStatus: "stopped" as const,
+      failedCount: 0,
+      acceptedCount: 1,
+      trackingHealthStatus: "healthy" as const,
+    };
+
+    expect(getLocationStatusAfterSuccessfulSync(successfulSync)).toBe("running");
+    expect(getLocationStatusAfterSuccessfulSync({ ...successfulSync, executionStatus: "completed" })).toBe("stopped");
+    expect(getLocationStatusAfterSuccessfulSync({ ...successfulSync, failedCount: 1 })).toBe("stopped");
+    expect(getLocationStatusAfterSuccessfulSync({ ...successfulSync, acceptedCount: 0 })).toBe("stopped");
+    expect(getLocationStatusAfterSuccessfulSync({ ...successfulSync, trackingHealthStatus: "sync_failed" })).toBe("stopped");
+  });
+
+  it("stops the local capture loop immediately after authoritative break, end, or issue actions", () => {
+    expect(getLocationStatusAfterWorkAction("take_break", "running")).toBe("paused");
+    expect(getLocationStatusAfterWorkAction("end", "running")).toBe("stopped");
+    expect(getLocationStatusAfterWorkAction("issue", "running")).toBe("stopped");
+    expect(getLocationStatusAfterWorkAction("add_proof_note", "running")).toBe("running");
+    expect(getLocationStatusAfterWorkAction("resume", "paused")).toBe("paused");
+
+    expect(driverAppSource).not.toContain('await handleStopLocationProof("work_ended")');
+    expect(driverAppSource).not.toContain('await handleStopLocationProof("break_started")');
+  });
+
+  it("offers manual capture only while both work and Location Proof are running", () => {
+    expect(driverAppSource).toContain('async function handleSaveLocationNow()');
+    expect(driverAppSource).toContain('if (!locationSessionId || locationStatus !== "running" || currentStatus !== "running")');
+    expect(driverAppSource).toContain('locationSessionId && locationStatus === "running" && currentStatus === "running" ? <SecondaryButton');
+    expect(driverAppSource).toContain('onPress={() => void handleSaveLocationNow()}');
   });
 
   it("keeps offline points scoped to the exact fake work, day, assignment, driver, vehicle, and session", () => {
