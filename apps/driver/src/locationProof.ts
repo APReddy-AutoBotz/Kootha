@@ -263,11 +263,20 @@ export function removeAcceptedLocationPoints(
   return points.filter((point) => !accepted.has(point.client_point_id));
 }
 
+export function getUnacceptedLocationPoints(
+  points: BufferedLocationPoint[],
+  acceptedClientPointIds: Iterable<string>,
+): BufferedLocationPoint[] {
+  const accepted = new Set(acceptedClientPointIds);
+  return points.filter((point) => !accepted.has(point.client_point_id));
+}
+
 export function selectLocationPointsForSync(
   points: BufferedLocationPoint[],
   force: boolean,
 ): BufferedLocationPoint[] {
   return points
     .filter((point) => force || point.retry_count < maxLocationSyncRetries)
+    .sort((left, right) => left.retry_count - right.retry_count)
     .slice(0, maxLocationSyncBatchSize);
 }

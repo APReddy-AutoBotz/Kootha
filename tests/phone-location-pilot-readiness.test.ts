@@ -7,6 +7,7 @@ import {
   getIdempotencyAttempt,
   getLocationStatusAfterSuccessfulSync,
   getLocationStatusAfterWorkAction,
+  getUnacceptedLocationPoints,
   isPointForLocationScope,
   markLocationPointsFailed,
   maxLocationSyncBatchSize,
@@ -217,6 +218,23 @@ describe("phone location pilot software readiness", () => {
     expect(workActionHandler).toContain("await reconcileAssignedWorkAfterMutationFailure(currentWork.ad_work_day_id)");
   });
 
+  it("stops device capture immediately and reconciles an ambiguous Location Proof stop", () => {
+    const stopHandler = driverAppSource.slice(
+      driverAppSource.indexOf("async function handleStopLocationProof"),
+      driverAppSource.indexOf("async function handleWorkAction"),
+    );
+
+    expect(driverAppSource).toContain(
+      'throw new DriverApiError("Could not stop Location Proof.", response.status);',
+    );
+    expect(stopHandler.indexOf("setLocationStatus(localStopStatus)")).toBeLessThan(
+      stopHandler.indexOf("await stopMobileTracking"),
+    );
+    expect(stopHandler).toContain("shouldReconcileWorkMutationFailure(error)");
+    expect(stopHandler).toContain("await reconcileAssignedWorkAfterMutationFailure(currentWork.ad_work_day_id)");
+    expect(stopHandler).toContain('setLocationStatus((status) => status === "running" ? localStopStatus : status)');
+  });
+
   it("reuses a stable request id only while the same submission is retried", () => {
     let sequence = 0;
     const createRequestId = () => `fake-request-${++sequence}`;
@@ -360,6 +378,18 @@ describe("phone location pilot software readiness", () => {
       (_, index) => fakePoint(`point-fake-${index + 1}`),
     );
     expect(selectLocationPointsForSync(oversizedQueue, true)).toHaveLength(maxLocationSyncBatchSize);
+
+    const firstBatch = selectLocationPointsForSync(oversizedQueue, true);
+    const unaccepted = getUnacceptedLocationPoints(firstBatch, []);
+    const afterRejectedBatch = markLocationPointsFailed(
+      oversizedQueue,
+      unaccepted.map((point) => point.client_point_id),
+      "2026-08-23T00:01:00.000Z",
+    );
+    expect(selectLocationPointsForSync(afterRejectedBatch, true)[0]?.client_point_id).toBe(
+      `point-fake-${maxLocationSyncBatchSize + 1}`,
+    );
+    expect(driverAppSource).toContain("markBufferedLocationPointsFailed(unacceptedPoints)");
     expect(permissionClosureMigrationSource).toContain(
       "jsonb_array_length(coalesce(p_points, '[]'::jsonb)) > 100",
     );

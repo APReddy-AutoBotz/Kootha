@@ -63,6 +63,7 @@ import {
   getIdempotencyAttempt,
   getLocationStatusAfterSuccessfulSync,
   getLocationStatusAfterWorkAction,
+  getUnacceptedLocationPoints,
   isPointForLocationScope,
   markLocationPointsFailed,
   maxLocationSyncRetries,
@@ -426,7 +427,7 @@ async function stopMobileTracking(input: {
   });
 
   if (!response.ok) {
-    throw new Error("Could not stop Location Proof.");
+    throw new DriverApiError("Could not stop Location Proof.", response.status);
   }
 
   const rows = await response.json() as MobileTrackingResult[];
@@ -892,7 +893,12 @@ export function App() {
           points: retryable,
           clientPendingCount: buffered.length
         });
-        await removeAcceptedBufferedLocationPoints(result.accepted_client_point_ids ?? []);
+        const acceptedClientPointIds = result.accepted_client_point_ids ?? [];
+        const unacceptedPoints = getUnacceptedLocationPoints(retryable, acceptedClientPointIds);
+        await removeAcceptedBufferedLocationPoints(acceptedClientPointIds);
+        if (unacceptedPoints.length > 0) {
+          await markBufferedLocationPointsFailed(unacceptedPoints);
+        }
         const remaining = await pruneBufferedLocationPointsForWork(work, trackingSessionId);
         setPendingOfflineCount(remaining.length);
         setLocationPointCount(result.point_count ?? locationPointCount);
@@ -1217,13 +1223,25 @@ export function App() {
       return;
     }
 
+    const localStopStatus: TrackingSessionStatus = stopReason === "break_started" ? "paused" : "stopped";
+
     try {
       setIsLocationBusy(true);
+      setLocationStatus(localStopStatus);
+      setLocationHealthStatus(pendingOfflineCount > 0 ? "sync_pending" : "stopped");
       const result = await stopMobileTracking({ mobileNumber, workCode, trackingSessionId: locationSessionId, stopReason });
       setLocationStatus(result.status);
       setLocationHealthStatus(result.status === "paused" || pendingOfflineCount > 0 ? "sync_pending" : "stopped");
       setLocationMessage(result.result_message || driverLabels.locationProofStopped + ".");
     } catch (error) {
+      if (currentWork && shouldReconcileWorkMutationFailure(error)) {
+        try {
+          await reconcileAssignedWorkAfterMutationFailure(currentWork.ad_work_day_id);
+        } catch {
+          // The local stop above remains authoritative for device capture while offline.
+        }
+      }
+      setLocationStatus((status) => status === "running" ? localStopStatus : status);
       setLocationMessage(error instanceof Error ? error.message : "Could not stop Location Proof.");
     } finally {
       setIsLocationBusy(false);
