@@ -977,6 +977,8 @@ export function App() {
         return offlineDecision === "capture" ? work : null;
       }
 
+      setWorkRows([]);
+      setWorkMessage("No assigned work found for this Work Code.");
       setLocationStatus("stopped");
       setLocationHealthStatus("stopped");
       setLocationMessage("Location Proof stopped because active work authorization changed.");
@@ -1134,17 +1136,33 @@ export function App() {
     try {
       setIsLocationBusy(true);
       setLocationMessage("");
+      const rows = await refreshAssignedWork();
+      const authorizedWork = rows.find((row) => row.ad_work_day_id === currentWork.ad_work_day_id) ?? null;
+
+      if (!authorizedWork || !canStartMobileLocationProof({
+        mobileLocationProofRequired: authorizedWork.mobile_location_proof_required,
+        assignmentStatus: "ready_for_execution",
+        releaseStatus: "released_to_driver",
+        dayStatus: authorizedWork.execution_status,
+        closureStatus: null,
+      })) {
+        setLocationStatus(authorizedWork?.mobile_tracking_status ?? "stopped");
+        setLocationHealthStatus(authorizedWork?.mobile_tracking_health_status ?? "stopped");
+        setLocationMessage("Location Proof stopped because active work authorization changed.");
+        return;
+      }
+
       const permission = await Location.requestForegroundPermissionsAsync();
 
       if (!permission.granted) {
-        await markLocationPermissionMissingOnDevice(currentWork);
+        await markLocationPermissionMissingOnDevice(authorizedWork);
         return;
       }
 
       const result = await startMobileTracking({
         mobileNumber,
         workCode,
-        dayId: currentWork.ad_work_day_id,
+        dayId: authorizedWork.ad_work_day_id,
         driverConsent: true
       });
       setLocationSessionId(result.tracking_session_id);
@@ -1154,6 +1172,12 @@ export function App() {
       await recordCurrentLocationPoint(result.tracking_session_id, false, result.status);
       setLocationMessage(driverLabels.locationProofRunning + ".");
     } catch (error) {
+      if (error instanceof DriverApiError && !error.retryable) {
+        setWorkRows([]);
+        setWorkMessage("No assigned work found for this Work Code.");
+        setLocationStatus("stopped");
+        setLocationHealthStatus("stopped");
+      }
       setLocationMessage(error instanceof Error ? error.message : "Could not start Location Proof.");
     } finally {
       setIsLocationBusy(false);

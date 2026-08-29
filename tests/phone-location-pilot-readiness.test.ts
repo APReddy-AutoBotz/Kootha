@@ -121,6 +121,22 @@ describe("phone location pilot software readiness", () => {
     );
   });
 
+  it("revalidates active work before asking Android for permission and clears revoked work", () => {
+    const startHandler = driverAppSource.slice(
+      driverAppSource.indexOf("async function handleStartLocationProof()"),
+      driverAppSource.indexOf("async function handleStopLocationProof"),
+    );
+
+    expect(startHandler.indexOf("await refreshAssignedWork()")).toBeGreaterThan(-1);
+    expect(startHandler.indexOf("await refreshAssignedWork()")).toBeLessThan(
+      startHandler.indexOf("Location.requestForegroundPermissionsAsync()"),
+    );
+    expect(startHandler).toContain("authorizedWork.ad_work_day_id");
+    expect(driverAppSource).toMatch(
+      /setWorkRows\(\[\]\);\s*setWorkMessage\("No assigned work found for this Work Code\."\);\s*setLocationStatus\("stopped"\);/,
+    );
+  });
+
   it("persists permission-missing tracking health for denied and revoked devices", () => {
     expect(permissionClosureMigrationSource).toMatch(
       /set status = 'permission_missing',[\s\S]{0,160}tracking_health_status = 'permission_missing'/,
