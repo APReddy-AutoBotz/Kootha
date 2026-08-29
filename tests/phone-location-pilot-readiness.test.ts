@@ -178,6 +178,7 @@ describe("phone location pilot software readiness", () => {
   it("restores running UI state only after the server accepts a sync for active work", () => {
     const successfulSync = {
       executionStatus: "running" as const,
+      requestTrackingStatus: "stopped" as const,
       currentTrackingStatus: "stopped" as const,
       failedCount: 0,
       acceptedCount: 1,
@@ -189,6 +190,21 @@ describe("phone location pilot software readiness", () => {
     expect(getLocationStatusAfterSuccessfulSync({ ...successfulSync, failedCount: 1 })).toBe("stopped");
     expect(getLocationStatusAfterSuccessfulSync({ ...successfulSync, acceptedCount: 0 })).toBe("stopped");
     expect(getLocationStatusAfterSuccessfulSync({ ...successfulSync, trackingHealthStatus: "sync_failed" })).toBe("stopped");
+
+    expect(getLocationStatusAfterSuccessfulSync({
+      ...successfulSync,
+      requestTrackingStatus: "running",
+      currentTrackingStatus: "permission_missing",
+    })).toBe("permission_missing");
+    expect(getLocationStatusAfterSuccessfulSync({
+      ...successfulSync,
+      requestTrackingStatus: "running",
+      currentTrackingStatus: "stopped",
+    })).toBe("stopped");
+
+    expect(driverAppSource).toContain("setLocationStatus((currentTrackingStatus) => getLocationStatusAfterSuccessfulSync({");
+    expect(driverAppSource).toContain("requestTrackingStatus: locationStatus");
+    expect(driverAppSource).toContain("if (captureRemainsActive && currentWork)");
   });
 
   it("stops the local capture loop immediately after authoritative break, end, or issue actions", () => {

@@ -1,6 +1,6 @@
 begin;
 
-select plan(34);
+select plan(35);
 
 select ok(
   position(
@@ -316,6 +316,18 @@ select is(
   ),
   'running',
   'Foreground start leaves the tracking session running'
+);
+
+select is(
+  (
+    select session_row.tracking_health_status
+    from public.tracking_sessions as session_row
+    where session_row.ad_work_day_id = '36100000-0000-4000-8000-000000000301'
+    order by session_row.created_at desc
+    limit 1
+  ),
+  'no_recent_update',
+  'Foreground restart clears stale permission-missing health before the first new point'
 );
 
 set local role anon;

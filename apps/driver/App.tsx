@@ -785,8 +785,8 @@ export function App() {
     }
 
     const timer = setInterval(() => {
-      void recordCurrentLocationPoint(locationSessionId, false).then(async () => {
-        if (currentWork) {
+      void recordCurrentLocationPoint(locationSessionId, false).then(async (captureRemainsActive) => {
+        if (captureRemainsActive && currentWork) {
           await syncBufferedLocationPointsForWork(currentWork, locationSessionId, false);
         }
       });
@@ -872,9 +872,10 @@ export function App() {
         const remaining = await pruneBufferedLocationPointsForWork(work, trackingSessionId);
         setPendingOfflineCount(remaining.length);
         setLocationPointCount(result.point_count ?? locationPointCount);
-        setLocationStatus(getLocationStatusAfterSuccessfulSync({
+        setLocationStatus((currentTrackingStatus) => getLocationStatusAfterSuccessfulSync({
           executionStatus: work.execution_status,
-          currentTrackingStatus: locationStatus,
+          requestTrackingStatus: locationStatus,
+          currentTrackingStatus,
           failedCount: result.failed_count ?? 0,
           acceptedCount: result.accepted_client_point_ids?.length ?? 0,
           trackingHealthStatus: result.tracking_health_status,
@@ -990,9 +991,9 @@ export function App() {
     trackingSessionId: string,
     showMessage = true,
     trackingStatusOverride: TrackingSessionStatus = locationStatus,
-  ) {
+  ): Promise<boolean> {
     if (!currentWork || workActionInFlight.current || locationCaptureInFlight.current) {
-      return;
+      return false;
     }
 
     const localDecision = getForegroundLocationDecision({
@@ -1003,7 +1004,7 @@ export function App() {
     }, true);
 
     if (localDecision !== "capture") {
-      return;
+      return false;
     }
 
     locationCaptureInFlight.current = true;
@@ -1013,7 +1014,7 @@ export function App() {
     try {
       const authorizedWork = await refreshActiveLocationAuthorization(activeWork, trackingSessionId, trackingStatusOverride);
       if (!authorizedWork) {
-        return;
+        return false;
       }
       activeWork = authorizedWork;
 
@@ -1027,10 +1028,10 @@ export function App() {
 
       if (permissionDecision === "permission_missing") {
         await markLocationPermissionMissingOnDevice(activeWork);
-        return;
+        return false;
       }
       if (permissionDecision !== "capture") {
-        return;
+        return false;
       }
 
       let position: Location.LocationObject;
@@ -1040,7 +1041,7 @@ export function App() {
         const permissionAfterFailure = await Location.getForegroundPermissionsAsync().catch(() => null);
         if (permissionAfterFailure && !permissionAfterFailure.granted) {
           await markLocationPermissionMissingOnDevice(activeWork);
-          return;
+          return false;
         }
         throw error;
       }
@@ -1100,22 +1101,25 @@ export function App() {
         if (showMessage) {
           setLocationMessage(driverLabels.locationSavedOffline + ".");
         }
-        return;
+        return true;
       }
 
       if (error instanceof DriverApiError && !error.retryable) {
         setLocationStatus("stopped");
         setLocationHealthStatus("stopped");
         setLocationMessage("Location Proof stopped because active work authorization changed.");
-        return;
+        return false;
       }
 
       if (showMessage) {
         setLocationMessage(error instanceof Error ? error.message : "Could not save location update.");
       }
+      return true;
     } finally {
       locationCaptureInFlight.current = false;
     }
+
+    return true;
   }
 
   async function handleStartLocationProof() {

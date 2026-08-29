@@ -97,6 +97,12 @@ begin
         ended_at = null,
         stopped_by = null,
         stop_reason = null,
+        tracking_health_status = public.m10_tracking_health_status(
+          'running'::public.tracking_session_status,
+          session_row.client_pending_point_count,
+          session_row.last_update_at,
+          session_row.sync_failure_count
+        ),
         quality_status = case
           when session_row.point_count > 0 then session_row.quality_status
           else 'unknown'::public.location_quality
@@ -114,6 +120,7 @@ begin
       source_type,
       tracking_mode,
       status,
+      tracking_health_status,
       started_at,
       point_count,
       quality_status,
@@ -127,6 +134,7 @@ begin
       'mobile',
       'phone_location',
       'running',
+      'no_recent_update',
       now(),
       0,
       'unknown',

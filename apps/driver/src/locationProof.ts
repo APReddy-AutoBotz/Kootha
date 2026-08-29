@@ -94,11 +94,16 @@ export function shouldBufferLocationFailure(error: unknown): boolean {
 
 export function getLocationStatusAfterSuccessfulSync(input: {
   executionStatus: AdWorkExecutionDayStatus;
+  requestTrackingStatus: TrackingSessionStatus;
   currentTrackingStatus: TrackingSessionStatus;
   failedCount: number;
   acceptedCount: number;
   trackingHealthStatus: TrackingHealthStatus;
 }): TrackingSessionStatus {
+  if (input.currentTrackingStatus !== input.requestTrackingStatus) {
+    return input.currentTrackingStatus;
+  }
+
   const serverConfirmedActive = input.executionStatus === "running"
     && input.failedCount === 0
     && input.acceptedCount > 0
