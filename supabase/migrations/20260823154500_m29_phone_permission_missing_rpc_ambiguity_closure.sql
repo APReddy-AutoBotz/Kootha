@@ -385,6 +385,7 @@ begin
       source_type,
       tracking_mode,
       status,
+      tracking_health_status,
       stopped_by,
       stop_reason,
       quality_status,
@@ -399,6 +400,7 @@ begin
       'mobile',
       'phone_location',
       'permission_missing',
+      'permission_missing',
       'driver',
       'permission_removed',
       'unknown',
@@ -409,6 +411,7 @@ begin
   else
     update public.tracking_sessions as session_row
     set status = 'permission_missing',
+        tracking_health_status = 'permission_missing',
         stopped_by = 'driver',
         stop_reason = 'permission_removed',
         ended_at = now(),

@@ -19,6 +19,10 @@ import type { BufferedLocationPoint } from "../apps/driver/src/locationProof";
 
 const driverAppSource = readFileSync("apps/driver/App.tsx", "utf8");
 const driverReactNativeConfigSource = readFileSync("apps/driver/react-native.config.js", "utf8");
+const permissionClosureMigrationSource = readFileSync(
+  "supabase/migrations/20260823154500_m29_phone_permission_missing_rpc_ambiguity_closure.sql",
+  "utf8",
+);
 const driverAppConfig = JSON.parse(readFileSync("apps/driver/app.json", "utf8")) as {
   expo: {
     android?: { permissions?: string[] };
@@ -109,6 +113,15 @@ describe("phone location pilot software readiness", () => {
     expect(driverAppSource).toContain("Location.getForegroundPermissionsAsync()");
     expect(driverAppSource).toContain("markLocationPermissionMissingOnDevice");
     expect(driverAppSource).toContain("refreshActiveLocationAuthorization");
+  });
+
+  it("persists permission-missing tracking health for denied and revoked devices", () => {
+    expect(permissionClosureMigrationSource).toMatch(
+      /set status = 'permission_missing',[\s\S]{0,160}tracking_health_status = 'permission_missing'/,
+    );
+    expect(permissionClosureMigrationSource).toMatch(
+      /status,\s+tracking_health_status,\s+stopped_by[\s\S]{0,500}'permission_missing',\s+'permission_missing',\s+'driver'/,
+    );
   });
 
   it("buffers only network and transient HTTP failures, not authoritative rejections", () => {
