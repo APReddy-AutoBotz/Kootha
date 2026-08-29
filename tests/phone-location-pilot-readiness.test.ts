@@ -13,6 +13,7 @@ import {
   removeAcceptedLocationPoints,
   selectLocationPointsForSync,
   shouldBufferLocationFailure,
+  shouldReconcileWorkMutationFailure,
   withDriverApiTimeout,
 } from "../apps/driver/src/locationProof";
 import type { BufferedLocationPoint } from "../apps/driver/src/locationProof";
@@ -173,6 +174,40 @@ describe("phone location pilot software readiness", () => {
     });
     expect(driverAppSource).toContain("fetchDriverApi");
     expect(driverAppSource).not.toContain("await fetch(config.url");
+  });
+
+  it("preserves HTTP status for rejected tracking starts so revoked work is cleared", () => {
+    const startRequest = driverAppSource.slice(
+      driverAppSource.indexOf("async function startMobileTracking"),
+      driverAppSource.indexOf("async function markMobileLocationPermissionMissing"),
+    );
+
+    expect(startRequest).toContain(
+      'throw new DriverApiError("Could not start Location Proof.", response.status);',
+    );
+  });
+
+  it("reconciles assigned work and tracking state after ambiguous work mutations", () => {
+    expect(shouldReconcileWorkMutationFailure(new DriverApiError("timeout", null))).toBe(true);
+    expect(shouldReconcileWorkMutationFailure(new DriverApiError("server", 503))).toBe(true);
+    expect(shouldReconcileWorkMutationFailure(new TypeError("network unavailable"))).toBe(true);
+    expect(shouldReconcileWorkMutationFailure(new DriverApiError("revoked", 403))).toBe(true);
+    expect(shouldReconcileWorkMutationFailure(new DriverApiError("conflict", 409))).toBe(true);
+    expect(shouldReconcileWorkMutationFailure(new Error("not configured"))).toBe(false);
+
+    const reconciliation = driverAppSource.slice(
+      driverAppSource.indexOf("async function reconcileAssignedWorkAfterMutationFailure"),
+      driverAppSource.indexOf("async function handleOpenWork"),
+    );
+    const workActionHandler = driverAppSource.slice(
+      driverAppSource.indexOf("async function handleWorkAction"),
+      driverAppSource.indexOf("async function handleChooseProofPhoto"),
+    );
+
+    expect(reconciliation).toContain("await refreshAssignedWork()");
+    expect(reconciliation).toContain('setLocationStatus(refreshedWork?.mobile_tracking_status ?? "stopped")');
+    expect(workActionHandler).toContain("shouldReconcileWorkMutationFailure(error)");
+    expect(workActionHandler).toContain("await reconcileAssignedWorkAfterMutationFailure(currentWork.ad_work_day_id)");
   });
 
   it("restores running UI state only after the server accepts a sync for active work", () => {

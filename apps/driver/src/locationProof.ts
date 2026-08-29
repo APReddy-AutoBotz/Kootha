@@ -92,6 +92,10 @@ export function shouldBufferLocationFailure(error: unknown): boolean {
   return !(error instanceof DriverApiError) || error.retryable;
 }
 
+export function shouldReconcileWorkMutationFailure(error: unknown): boolean {
+  return error instanceof DriverApiError || error instanceof TypeError;
+}
+
 export function getLocationStatusAfterSuccessfulSync(input: {
   executionStatus: AdWorkExecutionDayStatus;
   requestTrackingStatus: TrackingSessionStatus;

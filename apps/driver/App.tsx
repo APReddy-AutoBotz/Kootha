@@ -69,6 +69,7 @@ import {
   removeAcceptedLocationPoints,
   selectLocationPointsForSync,
   shouldBufferLocationFailure,
+  shouldReconcileWorkMutationFailure,
   withDriverApiTimeout,
 } from "./src/locationProof";
 import type { BufferedLocationPoint } from "./src/locationProof";
@@ -263,7 +264,7 @@ async function saveWorkAction(input: {
   });
 
   if (!response.ok) {
-    throw new Error("Could not save work update.");
+    throw new DriverApiError("Could not save work update.", response.status);
   }
 }
 async function startMobileTracking(input: {
@@ -290,7 +291,7 @@ async function startMobileTracking(input: {
   });
 
   if (!response.ok) {
-    throw new Error("Could not start Location Proof.");
+    throw new DriverApiError("Could not start Location Proof.", response.status);
   }
 
   const rows = await response.json() as MobileTrackingResult[];
@@ -806,6 +807,26 @@ export function App() {
     return rows;
   }
 
+  async function reconcileAssignedWorkAfterMutationFailure(workDayId: string) {
+    const rows = await refreshAssignedWork();
+    const refreshedWork = rows.find((row) => row.ad_work_day_id === workDayId) ?? null;
+
+    setLocationSessionId(refreshedWork?.mobile_tracking_session_id ?? null);
+    setLocationStatus(refreshedWork?.mobile_tracking_status ?? "stopped");
+    setLocationPointCount(refreshedWork?.mobile_location_point_count ?? 0);
+    setLastLocationUpdate(refreshedWork?.mobile_last_location_update_at ?? null);
+    setLocationHealthStatus(refreshedWork?.mobile_tracking_health_status ?? "stopped");
+    setPendingOfflineCount(refreshedWork?.mobile_pending_point_count ?? 0);
+    setLastSyncTime(refreshedWork?.mobile_last_successful_sync_at ?? null);
+    setLastSavedLocationTime(refreshedWork?.mobile_last_capture_at ?? refreshedWork?.mobile_last_location_update_at ?? null);
+
+    if (!refreshedWork || refreshedWork.mobile_tracking_status !== "running") {
+      setLocationMessage(refreshedWork?.mobile_tracking_status === "paused"
+        ? "Location Proof paused during break."
+        : "Location Proof stopped because active work authorization changed.");
+    }
+  }
+
   async function handleOpenWork() {
     setWorkMessage("");
 
@@ -1264,6 +1285,13 @@ export function App() {
         setProofArea("");
       }
     } catch (error) {
+      if (shouldReconcileWorkMutationFailure(error)) {
+        try {
+          await reconcileAssignedWorkAfterMutationFailure(currentWork.ad_work_day_id);
+        } catch {
+          // Preserve the original mutation error when the reconciliation read is also unavailable.
+        }
+      }
       setWorkMessage(error instanceof Error ? error.message : "Could not save work update.");
     } finally {
       workActionInFlight.current = false;
