@@ -775,6 +775,11 @@ export function App() {
   }, [currentWork?.ad_work_day_id, currentWork?.mobile_tracking_session_id, currentWork?.mobile_tracking_status, currentWork?.mobile_location_point_count, currentWork?.mobile_last_location_update_at, currentWork?.mobile_tracking_health_status, currentWork?.mobile_pending_point_count, currentWork?.mobile_last_successful_sync_at, currentWork?.mobile_last_capture_at]);
 
   useEffect(() => {
+    setLocationUnderstanding(false);
+    setLocationAgreement(false);
+  }, [currentWork?.ad_work_day_id]);
+
+  useEffect(() => {
     if (!locationSessionId || locationStatus !== "running" || currentStatus !== "running") {
       return undefined;
     }

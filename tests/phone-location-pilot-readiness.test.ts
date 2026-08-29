@@ -115,6 +115,12 @@ describe("phone location pilot software readiness", () => {
     expect(driverAppSource).toContain("refreshActiveLocationAuthorization");
   });
 
+  it("requires fresh Location Proof consent whenever the assigned work changes", () => {
+    expect(driverAppSource).toMatch(
+      /useEffect\(\(\) => \{\s*setLocationUnderstanding\(false\);\s*setLocationAgreement\(false\);\s*\}, \[currentWork\?\.ad_work_day_id\]\);/,
+    );
+  });
+
   it("persists permission-missing tracking health for denied and revoked devices", () => {
     expect(permissionClosureMigrationSource).toMatch(
       /set status = 'permission_missing',[\s\S]{0,160}tracking_health_status = 'permission_missing'/,
