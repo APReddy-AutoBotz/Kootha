@@ -59,6 +59,7 @@ import {
 import {
   DriverApiError,
   createClientRequestId,
+  createSubmissionFingerprint,
   getForegroundLocationDecision,
   getIdempotencyAttempt,
   getLocationStatusAfterSuccessfulSync,
@@ -69,6 +70,7 @@ import {
   maxLocationSyncRetries,
   mergeBufferedLocationPoint,
   parseBufferedLocationPoints,
+  parseIdempotencyAttempt,
   removeAcceptedLocationPoints,
   selectLocationPointsForSync,
   shouldBufferLocationFailure,
@@ -83,6 +85,8 @@ const productName = resolveProductName({
 const driverLabels = businessLabels.driver;
 const publicKeyHeader = ["api", "key"].join("");
 const locationBufferStorageKey = "kootha-driver-location-buffer-v1";
+const applicationSubmissionAttemptStorageKey = "kootha-driver-application-attempt-v1";
+const proofSubmissionAttemptStorageKey = "kootha-driver-proof-attempt-v1";
 const proofUploadRequestTimeoutMs = 60_000;
 
 type DriverScreen = "work" | "register";
@@ -669,6 +673,22 @@ async function writeBufferedLocationPoints(points: BufferedLocationPoint[]) {
   await AsyncStorage.setItem(locationBufferStorageKey, JSON.stringify(points));
 }
 
+async function getPersistedIdempotencyAttempt(
+  storageKey: string,
+  current: IdempotencyAttempt | null,
+  fingerprint: string,
+  prefix: string,
+) {
+  const persisted = current ?? parseIdempotencyAttempt(await AsyncStorage.getItem(storageKey));
+  const attempt = getIdempotencyAttempt(
+    persisted,
+    fingerprint,
+    () => createClientRequestId(prefix),
+  );
+  await AsyncStorage.setItem(storageKey, JSON.stringify(attempt));
+  return attempt;
+}
+
 function isPointForWork(point: BufferedLocationPoint, work: DriverWorkRow, trackingSessionId: string) {
   return isPointForLocationScope(point, {
     trackingSessionId,
@@ -743,6 +763,7 @@ export function App() {
   const [isLocationBusy, setIsLocationBusy] = useState(false);
   const [isLocationSyncing, setIsLocationSyncing] = useState(false);
   const locationCaptureInFlight = useRef(false);
+  const locationCaptureGeneration = useRef(0);
   const locationSyncInFlight = useRef(false);
   const workActionInFlight = useRef(false);
   const applicationSubmissionAttempt = useRef<IdempotencyAttempt | null>(null);
@@ -764,6 +785,9 @@ export function App() {
   }) : false;
 
   useEffect(() => {
+    if (currentWork?.mobile_tracking_status !== "running") {
+      locationCaptureGeneration.current += 1;
+    }
     setLocationSessionId(currentWork?.mobile_tracking_session_id ?? null);
     setLocationStatus(currentWork?.mobile_tracking_status ?? "not_started");
     setLocationPointCount(currentWork?.mobile_location_point_count ?? 0);
@@ -825,6 +849,7 @@ export function App() {
     setLastSavedLocationTime(refreshedWork?.mobile_last_capture_at ?? refreshedWork?.mobile_last_location_update_at ?? null);
 
     if (!refreshedWork || refreshedWork.mobile_tracking_status !== "running") {
+      locationCaptureGeneration.current += 1;
       setLocationMessage(refreshedWork?.mobile_tracking_status === "paused"
         ? "Location Proof paused during break."
         : "Location Proof stopped because active work authorization changed.");
@@ -977,10 +1002,13 @@ export function App() {
     work: DriverWorkRow,
     trackingSessionId: string,
     trackingStatus: TrackingSessionStatus,
+    captureGeneration: number,
   ): Promise<DriverWorkRow | null> {
     try {
       const rows = await loadAssignedWork(mobileNumber, workCode);
-      setWorkRows(rows);
+      if (captureGeneration !== locationCaptureGeneration.current) {
+        return null;
+      }
       const refreshed = rows.find((row) => row.ad_work_day_id === work.ad_work_day_id) ?? null;
       const decision = getForegroundLocationDecision({
         locationProofRequired: Boolean(refreshed?.mobile_location_proof_required),
@@ -990,6 +1018,8 @@ export function App() {
       }, true);
 
       if (!refreshed || decision !== "capture") {
+        setWorkRows(rows);
+        locationCaptureGeneration.current += 1;
         setLocationStatus(refreshed?.mobile_tracking_status ?? "stopped");
         setLocationHealthStatus(refreshed?.mobile_tracking_health_status ?? "stopped");
         setLocationMessage("Location Proof stopped because active work authorization changed.");
@@ -998,6 +1028,9 @@ export function App() {
 
       return refreshed;
     } catch (error) {
+      if (captureGeneration !== locationCaptureGeneration.current) {
+        return null;
+      }
       if (shouldBufferLocationFailure(error)) {
         const offlineDecision = getForegroundLocationDecision({
           locationProofRequired: work.mobile_location_proof_required,
@@ -1010,6 +1043,7 @@ export function App() {
 
       setWorkRows([]);
       setWorkMessage("No assigned work found for this Work Code.");
+      locationCaptureGeneration.current += 1;
       setLocationStatus("stopped");
       setLocationHealthStatus("stopped");
       setLocationMessage("Location Proof stopped because active work authorization changed.");
@@ -1038,17 +1072,26 @@ export function App() {
     }
 
     locationCaptureInFlight.current = true;
+    const captureGeneration = locationCaptureGeneration.current;
     let activeWork = currentWork;
     let bufferedPoint: BufferedLocationPoint | null = null;
 
     try {
-      const authorizedWork = await refreshActiveLocationAuthorization(activeWork, trackingSessionId, trackingStatusOverride);
-      if (!authorizedWork) {
+      const authorizedWork = await refreshActiveLocationAuthorization(
+        activeWork,
+        trackingSessionId,
+        trackingStatusOverride,
+        captureGeneration,
+      );
+      if (!authorizedWork || captureGeneration !== locationCaptureGeneration.current) {
         return false;
       }
       activeWork = authorizedWork;
 
       const permission = await Location.getForegroundPermissionsAsync();
+      if (captureGeneration !== locationCaptureGeneration.current) {
+        return false;
+      }
       const permissionDecision = getForegroundLocationDecision({
         locationProofRequired: activeWork.mobile_location_proof_required,
         trackingSessionId,
@@ -1067,8 +1110,14 @@ export function App() {
       let position: Location.LocationObject;
       try {
         position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        if (captureGeneration !== locationCaptureGeneration.current) {
+          return false;
+        }
       } catch (error) {
         const permissionAfterFailure = await Location.getForegroundPermissionsAsync().catch(() => null);
+        if (captureGeneration !== locationCaptureGeneration.current) {
+          return false;
+        }
         if (permissionAfterFailure && !permissionAfterFailure.granted) {
           await markLocationPermissionMissingOnDevice(activeWork);
           return false;
@@ -1100,6 +1149,10 @@ export function App() {
         last_sync_attempt_at: null
       };
 
+      if (captureGeneration !== locationCaptureGeneration.current) {
+        return false;
+      }
+
       const result = await recordMobileLocationPoint({
         mobileNumber,
         workCode,
@@ -1112,6 +1165,9 @@ export function App() {
         capturedAt,
         clientPointId
       });
+      if (captureGeneration !== locationCaptureGeneration.current) {
+        return false;
+      }
       setLocationPointCount(result?.point_count ?? locationPointCount + 1);
       setLastLocationUpdate(new Date().toISOString());
       setLastSavedLocationTime(capturedAt);
@@ -1123,6 +1179,9 @@ export function App() {
         setLocationMessage("Location update saved (" + localQuality + ").");
       }
     } catch (error) {
+      if (captureGeneration !== locationCaptureGeneration.current) {
+        return false;
+      }
       if (bufferedPoint && shouldBufferLocationFailure(error)) {
         await saveBufferedLocationPoint(bufferedPoint);
         await refreshBufferedLocationSummary(activeWork, trackingSessionId);
@@ -1170,6 +1229,7 @@ export function App() {
     try {
       setIsLocationBusy(true);
       setLocationMessage("");
+      locationCaptureGeneration.current += 1;
       const rows = await refreshAssignedWork();
       const authorizedWork = rows.find((row) => row.ad_work_day_id === currentWork.ad_work_day_id) ?? null;
 
@@ -1227,6 +1287,7 @@ export function App() {
 
     try {
       setIsLocationBusy(true);
+      locationCaptureGeneration.current += 1;
       setLocationStatus(localStopStatus);
       setLocationHealthStatus(pendingOfflineCount > 0 ? "sync_pending" : "stopped");
       const result = await stopMobileTracking({ mobileNumber, workCode, trackingSessionId: locationSessionId, stopReason });
@@ -1273,6 +1334,9 @@ export function App() {
     try {
       workActionInFlight.current = true;
       setIsWorkLoading(true);
+      if (action === "take_break" || action === "end" || action === "issue") {
+        locationCaptureGeneration.current += 1;
+      }
       await saveWorkAction({
         mobileNumber,
         workCode,
@@ -1370,19 +1434,22 @@ export function App() {
 
     try {
       setIsProofSubmitting(true);
-      const fingerprint = JSON.stringify([
+      const fingerprint = createSubmissionFingerprint(JSON.stringify([
         currentWork.ad_work_day_id,
-        proofPhoto.uri,
+        proofPhoto.assetId ?? proofPhoto.fileName ?? proofPhoto.uri,
+        proofPhoto.width,
+        proofPhoto.height,
         proofType,
         proofArea.trim(),
         proofNote.trim(),
         mimeType,
         fileSize,
-      ]);
-      const attempt = getIdempotencyAttempt(
+      ]));
+      const attempt = await getPersistedIdempotencyAttempt(
+        proofSubmissionAttemptStorageKey,
         proofSubmissionAttempt.current,
         fingerprint,
-        () => createClientRequestId("proof"),
+        "proof",
       );
       proofSubmissionAttempt.current = attempt;
       const slot = await requestProofUploadSlot({
@@ -1402,6 +1469,7 @@ export function App() {
         throw new Error("Could not continue photo proof upload.");
       }
       await completeProofUpload({ mobileNumber, workCode, proofUploadId: slot.proof_upload_id });
+      await AsyncStorage.removeItem(proofSubmissionAttemptStorageKey);
       proofSubmissionAttempt.current = null;
       setProofPhoto(null);
       setProofNote("");
@@ -1433,7 +1501,7 @@ export function App() {
     try {
       setErrors([]);
       setIsSubmitting(true);
-      const fingerprint = JSON.stringify([
+      const fingerprint = createSubmissionFingerprint(JSON.stringify([
         form.driverName.trim(),
         form.mobileNumber.trim(),
         form.cityTown.trim(),
@@ -1447,14 +1515,16 @@ export function App() {
         form.notes.trim(),
         form.consentToContact,
         form.companyWebsite?.trim() ?? "",
-      ]);
-      const attempt = getIdempotencyAttempt(
+      ]));
+      const attempt = await getPersistedIdempotencyAttempt(
+        applicationSubmissionAttemptStorageKey,
         applicationSubmissionAttempt.current,
         fingerprint,
-        () => createClientRequestId("application"),
+        "application",
       );
       applicationSubmissionAttempt.current = attempt;
       await submitDriverApplication(form, attempt.requestId);
+      await AsyncStorage.removeItem(applicationSubmissionAttemptStorageKey);
       applicationSubmissionAttempt.current = null;
       setForm(initialDriverApplication);
       setStatusMessage(driverLabels.applicationSent + ". " + driverLabels.waitingForApproval + ".");

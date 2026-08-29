@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   DriverApiError,
   createClientRequestId,
+  createSubmissionFingerprint,
   getForegroundLocationDecision,
   getIdempotencyAttempt,
   getLocationStatusAfterSuccessfulSync,
@@ -14,6 +15,7 @@ import {
   maxLocationSyncRetries,
   mergeBufferedLocationPoint,
   parseBufferedLocationPoints,
+  parseIdempotencyAttempt,
   removeAcceptedLocationPoints,
   selectLocationPointsForSync,
   shouldBufferLocationFailure,
@@ -230,9 +232,36 @@ describe("phone location pilot software readiness", () => {
     expect(stopHandler.indexOf("setLocationStatus(localStopStatus)")).toBeLessThan(
       stopHandler.indexOf("await stopMobileTracking"),
     );
+    expect(stopHandler.indexOf("locationCaptureGeneration.current += 1")).toBeLessThan(
+      stopHandler.indexOf("await stopMobileTracking"),
+    );
     expect(stopHandler).toContain("shouldReconcileWorkMutationFailure(error)");
     expect(stopHandler).toContain("await reconcileAssignedWorkAfterMutationFailure(currentWork.ad_work_day_id)");
     expect(stopHandler).toContain('setLocationStatus((status) => status === "running" ? localStopStatus : status)');
+  });
+
+  it("invalidates an in-flight capture before it can restore running state after Stop", () => {
+    const authorizationRefresh = driverAppSource.slice(
+      driverAppSource.indexOf("async function refreshActiveLocationAuthorization"),
+      driverAppSource.indexOf("async function recordCurrentLocationPoint"),
+    );
+    const captureHandler = driverAppSource.slice(
+      driverAppSource.indexOf("async function recordCurrentLocationPoint"),
+      driverAppSource.indexOf("async function handleStartLocationProof"),
+    );
+
+    expect(authorizationRefresh).toContain("captureGeneration: number");
+    expect(authorizationRefresh.indexOf("captureGeneration !== locationCaptureGeneration.current")).toBeLessThan(
+      authorizationRefresh.indexOf("setWorkRows(rows)"),
+    );
+    expect(captureHandler).toContain("const captureGeneration = locationCaptureGeneration.current");
+    expect(captureHandler).toContain("captureGeneration !== locationCaptureGeneration.current");
+    expect(captureHandler.indexOf("captureGeneration !== locationCaptureGeneration.current")).toBeLessThan(
+      captureHandler.indexOf('setLocationStatus("running")'),
+    );
+    expect(captureHandler).toMatch(
+      /catch \(error\) \{\s*if \(captureGeneration !== locationCaptureGeneration\.current\) \{\s*return false;/,
+    );
   });
 
   it("reuses a stable request id only while the same submission is retried", () => {
@@ -246,6 +275,24 @@ describe("phone location pilot software readiness", () => {
     expect(changed.requestId).not.toBe(first.requestId);
     expect(sequence).toBe(2);
     expect(createClientRequestId("proof")).toMatch(/^proof-[a-z0-9]+-[a-z0-9]{10}$/);
+  });
+
+  it("persists only a hashed submission fingerprint and request id across app restarts", () => {
+    const fingerprint = createSubmissionFingerprint("fake driver details");
+    const attempt = { fingerprint, requestId: "application-fake-request-1" };
+
+    expect(fingerprint).toMatch(/^[a-f0-9]{16}$/);
+    expect(fingerprint).not.toContain("fake driver details");
+    expect(parseIdempotencyAttempt(JSON.stringify(attempt))).toEqual(attempt);
+    expect(parseIdempotencyAttempt("not-json")).toBeNull();
+    expect(parseIdempotencyAttempt(JSON.stringify({ ...attempt, requestId: "bad id" }))).toBeNull();
+
+    expect(driverAppSource).toContain("kootha-driver-application-attempt-v1");
+    expect(driverAppSource).toContain("kootha-driver-proof-attempt-v1");
+    expect(driverAppSource).toContain("parseIdempotencyAttempt(await AsyncStorage.getItem(storageKey))");
+    expect(driverAppSource).toContain("await AsyncStorage.setItem(storageKey, JSON.stringify(attempt))");
+    expect(driverAppSource).toContain("await AsyncStorage.removeItem(proofSubmissionAttemptStorageKey)");
+    expect(driverAppSource).toContain("await AsyncStorage.removeItem(applicationSubmissionAttemptStorageKey)");
   });
 
   it("makes timed-out driver registration retries idempotent", () => {

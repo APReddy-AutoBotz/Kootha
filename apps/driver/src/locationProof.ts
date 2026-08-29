@@ -110,6 +110,45 @@ export function createClientRequestId(prefix: string): string {
     + Math.random().toString(36).slice(2, 12).padEnd(10, "0");
 }
 
+export function createSubmissionFingerprint(value: string): string {
+  let first = 0x811c9dc5;
+  let second = 0x9e3779b9;
+
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    first = Math.imul(first ^ codeUnit, 0x01000193);
+    second = Math.imul(second ^ codeUnit ^ (first >>> 16), 0x85ebca6b);
+  }
+
+  return (first >>> 0).toString(16).padStart(8, "0")
+    + (second >>> 0).toString(16).padStart(8, "0");
+}
+
+export function parseIdempotencyAttempt(value: string | null): IdempotencyAttempt | null {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(value) as Partial<IdempotencyAttempt>;
+    if (typeof parsed.fingerprint !== "string"
+      || !/^[a-f0-9]{16}$/.test(parsed.fingerprint)
+      || typeof parsed.requestId !== "string"
+      || parsed.requestId.length < 16
+      || parsed.requestId.length > 96
+      || !/^[a-z0-9-]+$/.test(parsed.requestId)) {
+      return null;
+    }
+
+    return {
+      fingerprint: parsed.fingerprint,
+      requestId: parsed.requestId,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function getIdempotencyAttempt(
   current: IdempotencyAttempt | null,
   fingerprint: string,
