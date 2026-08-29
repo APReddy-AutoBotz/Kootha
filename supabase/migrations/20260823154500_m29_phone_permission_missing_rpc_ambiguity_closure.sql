@@ -240,6 +240,18 @@ begin
     raise exception 'Location points are saved only while work is running' using errcode = '22000';
   end if;
 
+  if v_client_point_id is null or length(v_client_point_id) > 96 then
+    raise exception 'Location point request id is invalid' using errcode = '22000';
+  end if;
+
+  if coalesce(p_captured_at, now()) > now() + interval '5 minutes'
+    or (
+      v_day.execution_started_at is not null
+      and coalesce(p_captured_at, now()) < v_day.execution_started_at
+    ) then
+    raise exception 'Location point is outside the active work time' using errcode = '22000';
+  end if;
+
   if coalesce(v_ad_work.closure_status, 'not_ready') in ('closed', 'closed_with_issues', 'cancelled') then
     raise exception 'Location points are not saved after work is closed' using errcode = '22000';
   end if;
@@ -497,6 +509,10 @@ begin
     raise exception 'Location points payload must be an array' using errcode = '22000';
   end if;
 
+  if jsonb_array_length(coalesce(p_points, '[]'::jsonb)) > 100 then
+    raise exception 'Location sync batch must contain at most 100 points' using errcode = '22000';
+  end if;
+
   select session_row.* into v_session
   from public.tracking_sessions as session_row
   where session_row.id = p_tracking_session_id
@@ -558,6 +574,7 @@ begin
       v_captured_at := coalesce(nullif(v_point->>'captured_at', '')::timestamptz, now());
 
       if v_client_point_id is null
+        or length(v_client_point_id) > 96
         or v_ad_work_id <> v_ad_work.id
         or v_day_id <> v_day.id
         or v_assignment_id <> v_assignment.id
@@ -568,7 +585,12 @@ begin
         or v_lat < -90
         or v_lat > 90
         or v_lng < -180
-        or v_lng > 180 then
+        or v_lng > 180
+        or v_captured_at > now() + interval '5 minutes'
+        or (
+          v_day.execution_started_at is not null
+          and v_captured_at < v_day.execution_started_at
+        ) then
         v_failed_count := v_failed_count + 1;
         continue;
       end if;

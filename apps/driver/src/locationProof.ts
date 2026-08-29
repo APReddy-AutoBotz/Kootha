@@ -6,6 +6,7 @@ import type {
 } from "@kootha/shared";
 
 export const maxLocationSyncRetries = 5;
+export const maxLocationSyncBatchSize = 100;
 export const driverApiRequestTimeoutMs = 15_000;
 
 export type BufferedLocationPoint = {
@@ -45,6 +46,11 @@ export type ForegroundLocationContext = {
 };
 
 export type ForegroundLocationDecision = "capture" | "inactive" | "permission_missing";
+
+export type IdempotencyAttempt = {
+  fingerprint: string;
+  requestId: string;
+};
 
 export class DriverApiError extends Error {
   readonly status: number | null;
@@ -94,6 +100,29 @@ export function shouldBufferLocationFailure(error: unknown): boolean {
 
 export function shouldReconcileWorkMutationFailure(error: unknown): boolean {
   return error instanceof DriverApiError || error instanceof TypeError;
+}
+
+export function createClientRequestId(prefix: string): string {
+  return prefix
+    + "-"
+    + Date.now().toString(36)
+    + "-"
+    + Math.random().toString(36).slice(2, 12).padEnd(10, "0");
+}
+
+export function getIdempotencyAttempt(
+  current: IdempotencyAttempt | null,
+  fingerprint: string,
+  createRequestId: () => string,
+): IdempotencyAttempt {
+  if (current?.fingerprint === fingerprint) {
+    return current;
+  }
+
+  return {
+    fingerprint,
+    requestId: createRequestId(),
+  };
 }
 
 export function getLocationStatusAfterSuccessfulSync(input: {
@@ -238,5 +267,7 @@ export function selectLocationPointsForSync(
   points: BufferedLocationPoint[],
   force: boolean,
 ): BufferedLocationPoint[] {
-  return points.filter((point) => force || point.retry_count < maxLocationSyncRetries);
+  return points
+    .filter((point) => force || point.retry_count < maxLocationSyncRetries)
+    .slice(0, maxLocationSyncBatchSize);
 }

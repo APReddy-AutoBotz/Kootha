@@ -58,7 +58,9 @@ import {
 } from "react-native";
 import {
   DriverApiError,
+  createClientRequestId,
   getForegroundLocationDecision,
+  getIdempotencyAttempt,
   getLocationStatusAfterSuccessfulSync,
   getLocationStatusAfterWorkAction,
   isPointForLocationScope,
@@ -72,7 +74,7 @@ import {
   shouldReconcileWorkMutationFailure,
   withDriverApiTimeout,
 } from "./src/locationProof";
-import type { BufferedLocationPoint } from "./src/locationProof";
+import type { BufferedLocationPoint, IdempotencyAttempt } from "./src/locationProof";
 
 const productName = resolveProductName({
   productName: process.env.EXPO_PUBLIC_PRODUCT_NAME
@@ -175,34 +177,31 @@ function fetchDriverApi(url: string, init: RequestInit, timeoutMs?: number) {
   );
 }
 
-async function submitDriverApplication(input: DriverApplicationInput) {
+async function submitDriverApplication(input: DriverApplicationInput, clientSubmissionId: string) {
   const config = getDriverSupabaseConfig();
 
   if (!config) {
     throw new Error("Driver registration is not configured in this environment.");
   }
 
-  const response = await fetchDriverApi(config.url + "/rest/v1/driver_applications", {
+  const response = await fetchDriverApi(config.url + "/rest/v1/rpc/submit_driver_application", {
     method: "POST",
-    headers: {
-      ...createPublicHeaders(config, true),
-      Prefer: "return=minimal"
-    },
+    headers: createPublicHeaders(config, true),
     body: JSON.stringify({
-      driver_name: input.driverName.trim(),
-      phone: input.mobileNumber.trim(),
-      city: input.cityTown.trim(),
-      service_areas: input.serviceAreas.trim() || null,
-      vehicle_ownership: input.vehicleOwnership,
-      vehicle_type: input.vehicleType,
-      vehicle_number: input.vehicleNumber.trim() || null,
-      mic_system_available: input.micSystemAvailable,
-      gps_device_available: input.gpsDeviceAvailable,
-      preferred_working_cities: input.preferredWorkingCities.trim() || null,
-      notes: input.notes.trim() || null,
-      contact_consent: input.consentToContact,
-      status: "new",
-      company_website: input.companyWebsite?.trim() || null
+      p_client_submission_id: clientSubmissionId,
+      p_driver_name: input.driverName.trim(),
+      p_phone: input.mobileNumber.trim(),
+      p_city: input.cityTown.trim(),
+      p_service_areas: input.serviceAreas.trim() || null,
+      p_vehicle_ownership: input.vehicleOwnership,
+      p_vehicle_type: input.vehicleType,
+      p_vehicle_number: input.vehicleNumber.trim() || null,
+      p_mic_system_available: input.micSystemAvailable,
+      p_gps_device_available: input.gpsDeviceAvailable,
+      p_preferred_working_cities: input.preferredWorkingCities.trim() || null,
+      p_notes: input.notes.trim() || null,
+      p_contact_consent: input.consentToContact,
+      p_company_website: input.companyWebsite?.trim() || null
     })
   });
 
@@ -460,6 +459,7 @@ async function requestProofUploadSlot(input: {
   note: string;
   mimeType: string;
   fileSize: number;
+  clientRequestId: string;
 }): Promise<ProofUploadSlot> {
   const config = getDriverSupabaseConfig();
 
@@ -478,7 +478,8 @@ async function requestProofUploadSlot(input: {
       p_area_place_name: input.areaPlaceName.trim(),
       p_note_text: input.note.trim(),
       p_file_mime_type: input.mimeType,
-      p_file_size_bytes: input.fileSize
+      p_file_size_bytes: input.fileSize,
+      p_client_request_id: input.clientRequestId
     })
   });
 
@@ -519,7 +520,7 @@ async function uploadProofPhoto(input: { slot: ProofUploadSlot; photoUri: string
     body: photoBlob
   }, proofUploadRequestTimeoutMs);
 
-  if (!response.ok) {
+  if (!response.ok && response.status !== 409) {
     throw new Error("Could not upload photo proof.");
   }
 }
@@ -743,6 +744,8 @@ export function App() {
   const locationCaptureInFlight = useRef(false);
   const locationSyncInFlight = useRef(false);
   const workActionInFlight = useRef(false);
+  const applicationSubmissionAttempt = useRef<IdempotencyAttempt | null>(null);
+  const proofSubmissionAttempt = useRef<IdempotencyAttempt | null>(null);
   const configured = useMemo(() => Boolean(getDriverSupabaseConfig()), []);
   const today = new Date().toISOString().slice(0, 10);
   const currentWork = workRows.find((row) => row.planned_date === today)
@@ -1349,6 +1352,21 @@ export function App() {
 
     try {
       setIsProofSubmitting(true);
+      const fingerprint = JSON.stringify([
+        currentWork.ad_work_day_id,
+        proofPhoto.uri,
+        proofType,
+        proofArea.trim(),
+        proofNote.trim(),
+        mimeType,
+        fileSize,
+      ]);
+      const attempt = getIdempotencyAttempt(
+        proofSubmissionAttempt.current,
+        fingerprint,
+        () => createClientRequestId("proof"),
+      );
+      proofSubmissionAttempt.current = attempt;
       const slot = await requestProofUploadSlot({
         mobileNumber,
         workCode,
@@ -1357,10 +1375,16 @@ export function App() {
         areaPlaceName: proofArea,
         note: proofNote,
         mimeType,
-        fileSize
+        fileSize,
+        clientRequestId: attempt.requestId,
       });
-      await uploadProofPhoto({ slot, photoUri: proofPhoto.uri, mimeType });
+      if (slot.upload_status === "pending_upload") {
+        await uploadProofPhoto({ slot, photoUri: proofPhoto.uri, mimeType });
+      } else if (slot.upload_status !== "uploaded") {
+        throw new Error("Could not continue photo proof upload.");
+      }
       await completeProofUpload({ mobileNumber, workCode, proofUploadId: slot.proof_upload_id });
+      proofSubmissionAttempt.current = null;
       setProofPhoto(null);
       setProofNote("");
       setProofArea("");
@@ -1391,7 +1415,29 @@ export function App() {
     try {
       setErrors([]);
       setIsSubmitting(true);
-      await submitDriverApplication(form);
+      const fingerprint = JSON.stringify([
+        form.driverName.trim(),
+        form.mobileNumber.trim(),
+        form.cityTown.trim(),
+        form.serviceAreas.trim(),
+        form.vehicleOwnership,
+        form.vehicleType,
+        form.vehicleNumber.trim(),
+        form.micSystemAvailable,
+        form.gpsDeviceAvailable,
+        form.preferredWorkingCities.trim(),
+        form.notes.trim(),
+        form.consentToContact,
+        form.companyWebsite?.trim() ?? "",
+      ]);
+      const attempt = getIdempotencyAttempt(
+        applicationSubmissionAttempt.current,
+        fingerprint,
+        () => createClientRequestId("application"),
+      );
+      applicationSubmissionAttempt.current = attempt;
+      await submitDriverApplication(form, attempt.requestId);
+      applicationSubmissionAttempt.current = null;
       setForm(initialDriverApplication);
       setStatusMessage(driverLabels.applicationSent + ". " + driverLabels.waitingForApproval + ".");
     } catch (error) {

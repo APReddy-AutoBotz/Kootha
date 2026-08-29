@@ -1,6 +1,6 @@
 begin;
 
-select plan(35);
+select plan(36);
 
 select ok(
   position(
@@ -189,6 +189,23 @@ select ok(
   ),
   'Service role is excluded from the phone sync RPC'
 );
+
+set local role anon;
+
+select throws_ok(
+  $$select * from public.driver_sync_mobile_location_points(
+      '9000000000',
+      'FAKE00',
+      '00000000-0000-4000-8000-000000000000',
+      (select jsonb_agg('{}'::jsonb) from generate_series(1, 101)),
+      101
+    )$$,
+  '22000',
+  'Location sync batch must contain at most 100 points',
+  'Offline sync rejects oversized batches before any session or point processing'
+);
+
+reset role;
 
 insert into public.drivers (
   id, name, phone, approval_status, onboarding_status

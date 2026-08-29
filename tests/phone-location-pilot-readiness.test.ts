@@ -2,11 +2,14 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   DriverApiError,
+  createClientRequestId,
   getForegroundLocationDecision,
+  getIdempotencyAttempt,
   getLocationStatusAfterSuccessfulSync,
   getLocationStatusAfterWorkAction,
   isPointForLocationScope,
   markLocationPointsFailed,
+  maxLocationSyncBatchSize,
   maxLocationSyncRetries,
   mergeBufferedLocationPoint,
   parseBufferedLocationPoints,
@@ -22,6 +25,10 @@ const driverAppSource = readFileSync("apps/driver/App.tsx", "utf8");
 const driverReactNativeConfigSource = readFileSync("apps/driver/react-native.config.js", "utf8");
 const permissionClosureMigrationSource = readFileSync(
   "supabase/migrations/20260823154500_m29_phone_permission_missing_rpc_ambiguity_closure.sql",
+  "utf8",
+);
+const submissionIdempotencyMigrationSource = readFileSync(
+  "supabase/migrations/20260829160000_m29_driver_submission_proof_idempotency.sql",
   "utf8",
 );
 const driverAppConfig = JSON.parse(readFileSync("apps/driver/app.json", "utf8")) as {
@@ -210,6 +217,51 @@ describe("phone location pilot software readiness", () => {
     expect(workActionHandler).toContain("await reconcileAssignedWorkAfterMutationFailure(currentWork.ad_work_day_id)");
   });
 
+  it("reuses a stable request id only while the same submission is retried", () => {
+    let sequence = 0;
+    const createRequestId = () => `fake-request-${++sequence}`;
+    const first = getIdempotencyAttempt(null, "same-details", createRequestId);
+    const retry = getIdempotencyAttempt(first, "same-details", createRequestId);
+    const changed = getIdempotencyAttempt(retry, "changed-details", createRequestId);
+
+    expect(retry).toBe(first);
+    expect(changed.requestId).not.toBe(first.requestId);
+    expect(sequence).toBe(2);
+    expect(createClientRequestId("proof")).toMatch(/^proof-[a-z0-9]+-[a-z0-9]{10}$/);
+  });
+
+  it("makes timed-out driver registration retries idempotent", () => {
+    expect(driverAppSource).toContain("/rest/v1/rpc/submit_driver_application");
+    expect(driverAppSource).toContain("p_client_submission_id: clientSubmissionId");
+    expect(driverAppSource).toContain("applicationSubmissionAttempt.current = attempt");
+    expect(submissionIdempotencyMigrationSource).toContain("driver_applications_client_submission_id_unique");
+    expect(submissionIdempotencyMigrationSource).toContain("create or replace function public.submit_driver_application");
+    expect(submissionIdempotencyMigrationSource).toContain("revoke all on public.driver_applications from anon");
+    expect(submissionIdempotencyMigrationSource).toContain(
+      "on conflict (client_submission_id) where client_submission_id is not null do nothing",
+    );
+  });
+
+  it("reuses proof slots and makes completion safe after a lost response", () => {
+    const proofHandler = driverAppSource.slice(
+      driverAppSource.indexOf("async function handleSubmitPhotoProof"),
+      driverAppSource.indexOf("async function handleSubmit()"),
+    );
+
+    expect(driverAppSource).toContain("p_client_request_id: input.clientRequestId");
+    expect(driverAppSource).toContain("!response.ok && response.status !== 409");
+    expect(proofHandler).toContain('slot.upload_status === "pending_upload"');
+    expect(proofHandler).toContain('slot.upload_status !== "uploaded"');
+    expect(proofHandler).toContain("proofSubmissionAttempt.current = attempt");
+    expect(submissionIdempotencyMigrationSource).toContain("proof_uploads_client_request_id_unique");
+    expect(submissionIdempotencyMigrationSource).toMatch(
+      /if v_proof\.upload_status = 'uploaded' then[\s\S]*Proof upload already completed/,
+    );
+    expect(submissionIdempotencyMigrationSource).toContain(
+      "on conflict (client_request_id) where client_request_id is not null do nothing",
+    );
+  });
+
   it("restores running UI state only after the server accepts a sync for active work", () => {
     const successfulSync = {
       executionStatus: "running" as const,
@@ -302,6 +354,15 @@ describe("phone location pilot software readiness", () => {
       ["point-fake-1"],
     );
     expect(afterServerDuplicateAcknowledgement).toEqual([]);
+
+    const oversizedQueue = Array.from(
+      { length: maxLocationSyncBatchSize + 1 },
+      (_, index) => fakePoint(`point-fake-${index + 1}`),
+    );
+    expect(selectLocationPointsForSync(oversizedQueue, true)).toHaveLength(maxLocationSyncBatchSize);
+    expect(permissionClosureMigrationSource).toContain(
+      "jsonb_array_length(coalesce(p_points, '[]'::jsonb)) > 100",
+    );
   });
 
   it("drops malformed buffer entries instead of retrying untrusted local data", () => {
