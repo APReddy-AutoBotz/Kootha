@@ -1,6 +1,13 @@
-import type { AdWorkExecutionDayStatus, TrackingSessionStatus } from "@kootha/shared";
+import type {
+  AdWorkExecutionDayStatus,
+  DriverExecutionAction,
+  TrackingHealthStatus,
+  TrackingSessionStatus,
+} from "@kootha/shared";
 
 export const maxLocationSyncRetries = 5;
+export const maxLocationSyncBatchSize = 100;
+export const driverApiRequestTimeoutMs = 15_000;
 
 export type BufferedLocationPoint = {
   local_id: string;
@@ -40,6 +47,11 @@ export type ForegroundLocationContext = {
 
 export type ForegroundLocationDecision = "capture" | "inactive" | "permission_missing";
 
+export type IdempotencyAttempt = {
+  fingerprint: string;
+  requestId: string;
+};
+
 export class DriverApiError extends Error {
   readonly status: number | null;
   readonly retryable: boolean;
@@ -49,6 +61,28 @@ export class DriverApiError extends Error {
     this.name = "DriverApiError";
     this.status = status;
     this.retryable = status === null || isRetryableDriverApiStatus(status);
+  }
+}
+
+export async function withDriverApiTimeout<T>(
+  request: (signal: AbortSignal) => Promise<T>,
+  timeoutMs = driverApiRequestTimeoutMs,
+): Promise<T> {
+  const controller = new AbortController();
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new DriverApiError("Request timed out. Check connection and retry.", null));
+      controller.abort();
+    }, Math.max(1, timeoutMs));
+  });
+
+  try {
+    return await Promise.race([request(controller.signal), timeout]);
+  } finally {
+    if (timeoutId !== null) {
+      clearTimeout(timeoutId);
+    }
   }
 }
 
@@ -62,6 +96,107 @@ export function isRetryableDriverApiStatus(status: number): boolean {
 
 export function shouldBufferLocationFailure(error: unknown): boolean {
   return !(error instanceof DriverApiError) || error.retryable;
+}
+
+export function shouldReconcileWorkMutationFailure(error: unknown): boolean {
+  return error instanceof DriverApiError || error instanceof TypeError;
+}
+
+export function createClientRequestId(prefix: string): string {
+  return prefix
+    + "-"
+    + Date.now().toString(36)
+    + "-"
+    + Math.random().toString(36).slice(2, 12).padEnd(10, "0");
+}
+
+export function createSubmissionFingerprint(value: string): string {
+  let first = 0x811c9dc5;
+  let second = 0x9e3779b9;
+
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    first = Math.imul(first ^ codeUnit, 0x01000193);
+    second = Math.imul(second ^ codeUnit ^ (first >>> 16), 0x85ebca6b);
+  }
+
+  return (first >>> 0).toString(16).padStart(8, "0")
+    + (second >>> 0).toString(16).padStart(8, "0");
+}
+
+export function parseIdempotencyAttempt(value: string | null): IdempotencyAttempt | null {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(value) as Partial<IdempotencyAttempt>;
+    if (typeof parsed.fingerprint !== "string"
+      || !/^[a-f0-9]{16}$/.test(parsed.fingerprint)
+      || typeof parsed.requestId !== "string"
+      || parsed.requestId.length < 16
+      || parsed.requestId.length > 96
+      || !/^[a-z0-9-]+$/.test(parsed.requestId)) {
+      return null;
+    }
+
+    return {
+      fingerprint: parsed.fingerprint,
+      requestId: parsed.requestId,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function getIdempotencyAttempt(
+  current: IdempotencyAttempt | null,
+  fingerprint: string,
+  createRequestId: () => string,
+): IdempotencyAttempt {
+  if (current?.fingerprint === fingerprint) {
+    return current;
+  }
+
+  return {
+    fingerprint,
+    requestId: createRequestId(),
+  };
+}
+
+export function getLocationStatusAfterSuccessfulSync(input: {
+  executionStatus: AdWorkExecutionDayStatus;
+  requestTrackingStatus: TrackingSessionStatus;
+  currentTrackingStatus: TrackingSessionStatus;
+  failedCount: number;
+  acceptedCount: number;
+  trackingHealthStatus: TrackingHealthStatus;
+}): TrackingSessionStatus {
+  if (input.currentTrackingStatus !== input.requestTrackingStatus) {
+    return input.currentTrackingStatus;
+  }
+
+  const serverConfirmedActive = input.executionStatus === "running"
+    && input.failedCount === 0
+    && input.acceptedCount > 0
+    && input.trackingHealthStatus !== "sync_failed";
+
+  return serverConfirmedActive ? "running" : input.currentTrackingStatus;
+}
+
+export function getLocationStatusAfterWorkAction(
+  action: DriverExecutionAction,
+  currentTrackingStatus: TrackingSessionStatus,
+): TrackingSessionStatus {
+  if (action === "take_break") {
+    return "paused";
+  }
+
+  if (action === "end" || action === "issue") {
+    return "stopped";
+  }
+
+  return currentTrackingStatus;
 }
 
 export function getForegroundLocationDecision(
@@ -167,9 +302,20 @@ export function removeAcceptedLocationPoints(
   return points.filter((point) => !accepted.has(point.client_point_id));
 }
 
+export function getUnacceptedLocationPoints(
+  points: BufferedLocationPoint[],
+  acceptedClientPointIds: Iterable<string>,
+): BufferedLocationPoint[] {
+  const accepted = new Set(acceptedClientPointIds);
+  return points.filter((point) => !accepted.has(point.client_point_id));
+}
+
 export function selectLocationPointsForSync(
   points: BufferedLocationPoint[],
   force: boolean,
 ): BufferedLocationPoint[] {
-  return points.filter((point) => force || point.retry_count < maxLocationSyncRetries);
+  return points
+    .filter((point) => force || point.retry_count < maxLocationSyncRetries)
+    .sort((left, right) => left.retry_count - right.retry_count)
+    .slice(0, maxLocationSyncBatchSize);
 }

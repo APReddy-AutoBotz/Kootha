@@ -10,9 +10,9 @@ function scrub(value: unknown, key = ""): unknown {
   return value;
 }
 
-export function initializeDriverTelemetry() {
+export function initializeDriverTelemetry(): boolean {
   const dsn = process.env.EXPO_PUBLIC_SENTRY_DSN?.trim();
-  if (!dsn || dsn.includes("replace-with")) return;
+  if (!dsn || dsn.includes("replace-with")) return false;
   Sentry.init({
     dsn,
     environment: process.env.EXPO_PUBLIC_SENTRY_ENVIRONMENT || "development",
@@ -27,4 +27,5 @@ export function initializeDriverTelemetry() {
       return safe;
     }
   });
+  return true;
 }

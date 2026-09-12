@@ -46,11 +46,20 @@ describe("production privacy and reliability", () => {
   it("scrubs telemetry and keeps replay absent", () => {
     const web = read("apps/web/src/telemetry.ts");
     const driver = read("apps/driver/src/telemetry.ts");
+    const driverEntry = read("apps/driver/index.ts");
     for (const source of [web, driver]) {
       expect(source).toContain("beforeSend");
       expect(source).toContain("beforeBreadcrumb");
       expect(source).not.toMatch(/replay/i);
     }
+    expect(driver).toContain("return false");
+    expect(driverEntry).toContain("telemetryEnabled ? Sentry.wrap(App) : App");
+  });
+
+  it("renders the physical Android work heading without a literal HTML entity", () => {
+    const driverApp = read("apps/driver/App.tsx");
+    expect(driverApp).toContain("Open today's work");
+    expect(driverApp).not.toContain("today&apos;s");
   });
 
   it("keeps Android background location absent", () => {
