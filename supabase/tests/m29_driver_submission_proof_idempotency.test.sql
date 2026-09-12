@@ -350,17 +350,17 @@ select is(
   )), 'pending_upload', 'Legacy eight-argument named request still obtains an upload slot'
 );
 select throws_ok(
-  $select * from public.request_driver_proof_upload(
+  $$select * from public.request_driver_proof_upload(
     '9000000237', 'WRONG', '36200000-0000-4000-8000-000000000301',
     'area_covered', 'Fake Legacy Area', 'Fake legacy proof', 'image/jpeg', 1024
-  )$, '42501', 'Invalid work code or mobile number',
+  )$$, '42501', 'Invalid work code or mobile number',
   'Legacy omission does not bypass Work Code authorization'
 );
 select throws_ok(
-  $select * from public.request_driver_proof_upload(
+  $$select * from public.request_driver_proof_upload(
     '9000000237', 'PROOF37', '36200000-0000-4000-8000-000000000301',
     'area_covered', 'Fake Legacy Area', 'Fake legacy proof', 'image/jpeg', 5242881
-  )$, '22000', 'Photo must be 5 MB or smaller',
+  )$$, '22000', 'Photo must be 5 MB or smaller',
   'Legacy omission preserves upload-size validation'
 );
 reset role;
