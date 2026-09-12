@@ -1,6 +1,6 @@
 begin;
 
-select plan(24);
+select plan(32);
 
 select has_column(
   'public',
@@ -56,7 +56,7 @@ select ok(
 
 select ok(
   not has_table_privilege('anon', 'public.driver_applications', 'INSERT'),
-  'Anonymous clients cannot bypass the idempotent application RPC with direct inserts'
+  'Anonymous clients have no unrestricted table INSERT privilege'
 );
 
 select ok(
@@ -364,6 +364,59 @@ select throws_ok(
   'Legacy omission preserves upload-size validation'
 );
 reset role;
+
+-- Match the installed app's original direct-insert contract.
+set local role anon;
+select lives_ok(
+  $$insert into public.driver_applications (
+    driver_name, phone, city, service_areas, vehicle_ownership, vehicle_type,
+    vehicle_number, mic_system_available, gps_device_available,
+    preferred_working_cities, notes, contact_consent, status, company_website
+  ) values (
+    'Fake Legacy Driver', '9000000299', 'Fake City', null, 'driver_only', 'auto',
+    null, false, 'not_sure', null, null, true, 'new', null
+  )$$, 'Installed legacy app can submit its original registration fields'
+);
+select throws_ok(
+  $$insert into public.driver_applications
+    (driver_name, phone, city, vehicle_ownership, vehicle_type, gps_device_available, contact_consent, status)
+    values ('Fake', '9000000299', 'Fake', 'driver_only', 'auto', 'not_sure', true, 'approved')$$,
+  '42501', null, 'Legacy registration cannot preapprove an application'
+);
+select throws_ok(
+  $$insert into public.driver_applications
+    (driver_name, phone, city, vehicle_ownership, vehicle_type, gps_device_available, contact_consent, status)
+    values ('Fake', '9000000299', 'Fake', 'driver_only', 'auto', 'not_sure', false, 'new')$$,
+  '42501', null, 'Legacy registration requires contact consent'
+);
+select throws_ok(
+  $$insert into public.driver_applications
+    (driver_name, phone, city, vehicle_ownership, vehicle_type, gps_device_available, contact_consent, status, company_website)
+    values ('Fake', '9000000299', 'Fake', 'driver_only', 'auto', 'not_sure', true, 'new', 'honeypot.invalid')$$,
+  '42501', null, 'Legacy registration preserves the honeypot control'
+);
+select throws_ok(
+  $$insert into public.driver_applications
+    (driver_name, phone, city, vehicle_ownership, vehicle_type, gps_device_available, contact_consent, status, client_submission_id)
+    values ('Fake', '9000000299', 'Fake', 'driver_only', 'auto', 'not_sure', true, 'new', 'application-m29-idempotent-0001')$$,
+  '42501', null, 'Legacy direct insert cannot forge an RPC idempotency key'
+);
+select throws_ok(
+  $$insert into public.driver_applications
+    (driver_name, phone, city, vehicle_ownership, vehicle_type, gps_device_available, contact_consent, status)
+    values (repeat('x', 101), '9000000299', 'Fake', 'driver_only', 'auto', 'not_sure', true, 'new')$$,
+  '42501', null, 'Legacy registration enforces bounded input lengths'
+);
+reset role;
+select is(
+  (select count(*) from public.driver_applications where phone = '9000000299'), 1::bigint,
+  'Only the valid synthetic legacy registration was inserted'
+);
+select ok(
+  not has_column_privilege('anon', 'public.driver_applications', 'client_submission_id', 'INSERT')
+  and not has_column_privilege('anon', 'public.driver_applications', 'id', 'INSERT'),
+  'Legacy clients cannot choose system identifiers or client submission metadata'
+);
 
 select * from finish();
 

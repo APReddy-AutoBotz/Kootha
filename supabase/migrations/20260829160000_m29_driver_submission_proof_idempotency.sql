@@ -48,6 +48,37 @@ end $$;
 drop policy if exists "Public driver app can insert applications" on public.driver_applications;
 revoke all on public.driver_applications from anon;
 
+-- Database-first rollout: installed clients still POST the original registration
+-- fields with return=minimal. They cannot choose identifiers, review metadata,
+-- or idempotency keys; only the new RPC accepts a client submission key.
+grant insert (
+  driver_name, phone, city, service_areas, vehicle_ownership, vehicle_type,
+  vehicle_number, mic_system_available, gps_device_available,
+  preferred_working_cities, notes, contact_consent, status, company_website
+) on public.driver_applications to anon;
+
+drop policy if exists "Legacy driver app can insert bounded applications" on public.driver_applications;
+create policy "Legacy driver app can insert bounded applications"
+  on public.driver_applications for insert to anon
+  with check (
+    client_submission_id is null
+    and status = 'new'
+    and contact_consent is true
+    and length(trim(driver_name)) between 1 and 100
+    and length(trim(phone)) between 7 and 20
+    and length(trim(city)) between 1 and 80
+    and length(coalesce(service_areas, '')) <= 600
+    and length(coalesce(vehicle_number, '')) <= 40
+    and length(coalesce(preferred_working_cities, '')) <= 400
+    and length(coalesce(notes, '')) <= 800
+    and vehicle_type in ('auto', 'car', 'van', 'small_truck', 'other')
+    and vehicle_ownership in ('own_vehicle', 'hired_vehicle', 'driver_only')
+    and (vehicle_ownership = 'driver_only'
+      or nullif(trim(coalesce(vehicle_number, '')), '') is not null)
+    and gps_device_available in ('yes', 'no', 'not_sure')
+    and nullif(trim(coalesce(company_website, '')), '') is null
+  );
+
 create or replace function public.submit_driver_application(
   p_client_submission_id text,
   p_driver_name text,
