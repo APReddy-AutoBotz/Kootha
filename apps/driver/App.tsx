@@ -387,7 +387,7 @@ async function syncMobileLocationPoints(input: {
     throw new Error("Driver work access is not configured in this environment.");
   }
 
-  const response = await fetchDriverApi(config.url + "/rest/v1/rpc/driver_sync_mobile_location_points", {
+  const response = await fetchDriverApi(config.url + "/rest/v1/rpc/driver_sync_mobile_location_points_v2", {
     method: "POST",
     headers: createPublicHeaders(config, true),
     body: JSON.stringify({
@@ -875,8 +875,15 @@ export function App() {
     }
   }
 
-  async function refreshBufferedLocationSummary(work: DriverWorkRow, trackingSessionId: string) {
+  async function refreshBufferedLocationSummary(
+    work: DriverWorkRow,
+    trackingSessionId: string,
+    captureGeneration = locationCaptureGeneration.current,
+  ) {
     const buffered = await pruneBufferedLocationPointsForWork(work, trackingSessionId);
+    if (captureGeneration !== locationCaptureGeneration.current) {
+      return;
+    }
     setPendingOfflineCount(buffered.length);
     const sortedCaptures = buffered.map((point) => point.captured_at).sort();
     const latestCapture = sortedCaptures[sortedCaptures.length - 1] ?? null;
@@ -1175,6 +1182,9 @@ export function App() {
       setLocationHealthStatus(result?.tracking_health_status ?? "healthy");
       setLocationStatus("running");
       await syncBufferedLocationPointsForWork(activeWork, trackingSessionId, false);
+      if (captureGeneration !== locationCaptureGeneration.current) {
+        return false;
+      }
       if (showMessage) {
         setLocationMessage("Location update saved (" + localQuality + ").");
       }
@@ -1184,7 +1194,13 @@ export function App() {
       }
       if (bufferedPoint && shouldBufferLocationFailure(error)) {
         await saveBufferedLocationPoint(bufferedPoint);
-        await refreshBufferedLocationSummary(activeWork, trackingSessionId);
+        if (captureGeneration !== locationCaptureGeneration.current) {
+          return false;
+        }
+        await refreshBufferedLocationSummary(activeWork, trackingSessionId, captureGeneration);
+        if (captureGeneration !== locationCaptureGeneration.current) {
+          return false;
+        }
         setLastSavedLocationTime(bufferedPoint.captured_at);
         setLocationHealthStatus("offline_saving");
         if (showMessage) {

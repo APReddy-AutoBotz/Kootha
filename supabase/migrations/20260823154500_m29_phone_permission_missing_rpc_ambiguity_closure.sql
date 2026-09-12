@@ -509,10 +509,6 @@ begin
     raise exception 'Location points payload must be an array' using errcode = '22000';
   end if;
 
-  if jsonb_array_length(coalesce(p_points, '[]'::jsonb)) > 100 then
-    raise exception 'Location sync batch must contain at most 100 points' using errcode = '22000';
-  end if;
-
   select session_row.* into v_session
   from public.tracking_sessions as session_row
   where session_row.id = p_tracking_session_id
@@ -720,5 +716,55 @@ revoke all on function public.driver_sync_mobile_location_points(
 ) from public, anon, authenticated, service_role;
 
 grant execute on function public.driver_sync_mobile_location_points(
+  text, text, uuid, jsonb, integer
+) to anon;
+
+-- Keep the original RPC compatible with installed clients that send their
+-- entire queue. Updated clients use this versioned, bounded entry point.
+-- Both paths share the same work authorization and point-idempotency checks.
+create or replace function public.driver_sync_mobile_location_points_v2(
+  p_mobile text,
+  p_work_code text,
+  p_tracking_session_id uuid,
+  p_points jsonb,
+  p_client_pending_count integer default 0
+)
+returns table(
+  tracking_session_id uuid,
+  synced_count integer,
+  duplicate_count integer,
+  failed_count integer,
+  accepted_client_point_ids text[],
+  point_count integer,
+  tracking_health_status text,
+  last_successful_sync_at timestamptz,
+  result_message text
+)
+language plpgsql
+security invoker
+set search_path = pg_catalog, public
+as $$
+begin
+  if jsonb_typeof(coalesce(p_points, '[]'::jsonb)) <> 'array' then
+    raise exception 'Location points payload must be an array' using errcode = '22000';
+  end if;
+
+  if jsonb_array_length(coalesce(p_points, '[]'::jsonb)) > 100 then
+    raise exception 'Location sync batch must contain at most 100 points' using errcode = '22000';
+  end if;
+
+  return query
+  select sync_result.*
+  from public.driver_sync_mobile_location_points(
+    p_mobile, p_work_code, p_tracking_session_id, p_points, p_client_pending_count
+  ) as sync_result;
+end;
+$$;
+
+revoke all on function public.driver_sync_mobile_location_points_v2(
+  text, text, uuid, jsonb, integer
+) from public, anon, authenticated, service_role;
+
+grant execute on function public.driver_sync_mobile_location_points_v2(
   text, text, uuid, jsonb, integer
 ) to anon;

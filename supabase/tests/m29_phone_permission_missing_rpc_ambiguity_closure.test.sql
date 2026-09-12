@@ -1,6 +1,6 @@
 begin;
 
-select plan(36);
+select plan(44);
 
 select ok(
   position(
@@ -193,7 +193,7 @@ select ok(
 set local role anon;
 
 select throws_ok(
-  $$select * from public.driver_sync_mobile_location_points(
+  $$select * from public.driver_sync_mobile_location_points_v2(
       '9000000000',
       'FAKE00',
       '00000000-0000-4000-8000-000000000000',
@@ -202,7 +202,7 @@ select throws_ok(
     )$$,
   '22000',
   'Location sync batch must contain at most 100 points',
-  'Offline sync rejects oversized batches before any session or point processing'
+  'Versioned offline sync rejects oversized batches before any session or point processing'
 );
 
 reset role;
@@ -524,6 +524,59 @@ select is(
   2,
   'Duplicate offline retry does not create another persisted point'
 );
+
+-- A pre-rollout app sends its whole queue to the original endpoint. Its 101st
+-- point must still drain, and a response-loss retry must not duplicate rows.
+create temporary table legacy_queue as
+select jsonb_agg(jsonb_build_object(
+  'client_point_id', 'm29-legacy-' || n,
+  'ad_work_id', '36100000-0000-4000-8000-000000000101',
+  'ad_work_day_id', '36100000-0000-4000-8000-000000000301',
+  'assignment_id', '36100000-0000-4000-8000-000000000201',
+  'driver_id', '36100000-0000-4000-8000-000000000001',
+  'vehicle_id', '36100000-0000-4000-8000-000000000002',
+  'latitude', 0, 'longitude', 0, 'accuracy', 5, 'captured_at', clock_timestamp()
+) order by n) as points from generate_series(1, 101) as n;
+grant select on legacy_queue to anon;
+
+set local role anon;
+select is((select synced_count from public.driver_sync_mobile_location_points(
+  '9000000136', 'DENY36',
+  (select mobile_tracking_session_id from public.driver_get_assigned_work('9000000136', 'DENY36') limit 1),
+  (select points from legacy_queue), 101
+)), 101, 'Original endpoint accepts an installed legacy client queue beyond 100 points');
+
+select is((select duplicate_count from public.driver_sync_mobile_location_points(
+  '9000000136', 'DENY36',
+  (select mobile_tracking_session_id from public.driver_get_assigned_work('9000000136', 'DENY36') limit 1),
+  (select points from legacy_queue), 101
+)), 101, 'Legacy response-loss replay acknowledges every point without duplication');
+
+select is((select duplicate_count from public.driver_sync_mobile_location_points_v2(
+  '9000000136', 'DENY36',
+  (select mobile_tracking_session_id from public.driver_get_assigned_work('9000000136', 'DENY36') limit 1),
+  jsonb_build_array((select points->0 from legacy_queue)), 1
+)), 1, 'Updated client endpoint shares the original point-idempotency authority');
+
+select throws_ok($$select * from public.driver_sync_mobile_location_points_v2(
+  '9000000136', 'WRONG-CODE',
+  (select mobile_tracking_session_id from public.driver_get_assigned_work('9000000136', 'DENY36') limit 1),
+  '[]'::jsonb, 0
+)$$, '42501', 'Invalid work code or mobile number', 'Versioned sync preserves Work Code authorization');
+reset role;
+
+select is((select count(*)::integer from public.location_points
+  where ad_work_day_id='36100000-0000-4000-8000-000000000301'), 103,
+  'Both client generations preserve the same unique persisted point count');
+select ok(has_function_privilege('anon',
+  'public.driver_sync_mobile_location_points_v2(text,text,uuid,jsonb,integer)', 'EXECUTE'),
+  'Updated anonymous Work Code client can call versioned sync');
+select ok(not has_function_privilege('authenticated',
+  'public.driver_sync_mobile_location_points_v2(text,text,uuid,jsonb,integer)', 'EXECUTE'),
+  'Versioned sync excludes the authenticated role');
+select ok(not has_function_privilege('service_role',
+  'public.driver_sync_mobile_location_points_v2(text,text,uuid,jsonb,integer)', 'EXECUTE'),
+  'Versioned sync excludes service role');
 
 select * from finish();
 
