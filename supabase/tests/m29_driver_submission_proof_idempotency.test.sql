@@ -1,6 +1,6 @@
 begin;
 
-select plan(20);
+select plan(24);
 
 select has_column(
   'public',
@@ -42,7 +42,7 @@ select ok(
   to_regprocedure(
     'public.request_driver_proof_upload(text,text,uuid,text,text,text,text,integer)'
   ) is null,
-  'The non-idempotent proof-slot RPC signature is removed'
+  'One default-capable signature avoids ambiguous PostgREST overloads'
 );
 
 select ok(
@@ -51,7 +51,7 @@ select ok(
     'public.request_driver_proof_upload(text,text,uuid,text,text,text,text,integer,text)',
     'EXECUTE'
   ),
-  'Anonymous work-code flow can call only the idempotent proof-slot RPC'
+  'Anonymous work-code flow can call the compatible idempotent proof-slot RPC'
 );
 
 select ok(
@@ -331,6 +331,38 @@ select throws_ok(
   'An idempotency key cannot be reused for different proof details'
 );
 
+reset role;
+
+select is(
+  (select pronargdefaults from pg_proc
+   where oid = 'public.request_driver_proof_upload(text,text,uuid,text,text,text,text,integer,text)'::regprocedure),
+  1::smallint, 'PostgREST may omit the ninth argument for an installed legacy app'
+);
+
+set local role anon;
+select is(
+  (select upload_status from public.request_driver_proof_upload(
+    p_mobile => '9000000237', p_work_code => 'PROOF37',
+    p_ad_work_day_id => '36200000-0000-4000-8000-000000000301',
+    p_proof_type => 'area_covered', p_area_place_name => 'Fake Legacy Area',
+    p_note_text => 'Fake legacy proof', p_file_mime_type => 'image/jpeg',
+    p_file_size_bytes => 1024
+  )), 'pending_upload', 'Legacy eight-argument named request still obtains an upload slot'
+);
+select throws_ok(
+  $select * from public.request_driver_proof_upload(
+    '9000000237', 'WRONG', '36200000-0000-4000-8000-000000000301',
+    'area_covered', 'Fake Legacy Area', 'Fake legacy proof', 'image/jpeg', 1024
+  )$, '42501', 'Invalid work code or mobile number',
+  'Legacy omission does not bypass Work Code authorization'
+);
+select throws_ok(
+  $select * from public.request_driver_proof_upload(
+    '9000000237', 'PROOF37', '36200000-0000-4000-8000-000000000301',
+    'area_covered', 'Fake Legacy Area', 'Fake legacy proof', 'image/jpeg', 5242881
+  )$, '22000', 'Photo must be 5 MB or smaller',
+  'Legacy omission preserves upload-size validation'
+);
 reset role;
 
 select * from finish();

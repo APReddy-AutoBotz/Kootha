@@ -775,6 +775,8 @@ export function App() {
     ?? workRows[0]
     ?? null;
   const currentStatus = currentWork?.execution_status ?? "planned";
+  const locationWorkDay = useRef<string | null>(null);
+  locationWorkDay.current = currentWork?.ad_work_day_id ?? null;
   const mobileLocationProofRequired = Boolean(currentWork?.mobile_location_proof_required);
   const canStartLocationProof = currentWork ? canStartMobileLocationProof({
     mobileLocationProofRequired,
@@ -903,9 +905,15 @@ export function App() {
     }
 
     locationSyncInFlight.current = true;
+    const syncGeneration = locationCaptureGeneration.current;
+    const isCurrentSync = () => syncGeneration === locationCaptureGeneration.current
+      && locationWorkDay.current === work.ad_work_day_id;
 
     try {
       const buffered = await pruneBufferedLocationPointsForWork(work, trackingSessionId);
+      if (!isCurrentSync()) {
+        return;
+      }
       const retryable = selectLocationPointsForSync(buffered, force);
       setPendingOfflineCount(buffered.length);
 
@@ -927,11 +935,18 @@ export function App() {
         });
         const acceptedClientPointIds = result.accepted_client_point_ids ?? [];
         const unacceptedPoints = getUnacceptedLocationPoints(retryable, acceptedClientPointIds);
+        // Acknowledge already-accepted old points even after a local stop.
         await removeAcceptedBufferedLocationPoints(acceptedClientPointIds);
+        if (!isCurrentSync()) {
+          return;
+        }
         if (unacceptedPoints.length > 0) {
           await markBufferedLocationPointsFailed(unacceptedPoints);
         }
         const remaining = await pruneBufferedLocationPointsForWork(work, trackingSessionId);
+        if (!isCurrentSync()) {
+          return;
+        }
         setPendingOfflineCount(remaining.length);
         setLocationPointCount(result.point_count ?? locationPointCount);
         setLocationStatus((currentTrackingStatus) => getLocationStatusAfterSuccessfulSync({
@@ -948,12 +963,19 @@ export function App() {
           setLocationMessage(result.result_message || driverLabels.locationSynced + ".");
         }
       } catch (error) {
+        if (!isCurrentSync()) {
+          return;
+        }
         if (shouldBufferLocationFailure(error)) {
           await markBufferedLocationPointsFailed(retryable);
-        } else {
-          setLocationStatus("stopped");
         }
         const failed = await pruneBufferedLocationPointsForWork(work, trackingSessionId);
+        if (!isCurrentSync()) {
+          return;
+        }
+        if (!shouldBufferLocationFailure(error)) {
+          setLocationStatus("stopped");
+        }
         setPendingOfflineCount(failed.length);
         setLocationHealthStatus("sync_failed");
         if (force) {

@@ -195,7 +195,9 @@ create or replace function public.request_driver_proof_upload(
   p_note_text text,
   p_file_mime_type text,
   p_file_size_bytes integer,
-  p_client_request_id text
+  -- Preserve eight-argument calls during database-first rollout. Updated
+  -- clients supply a persisted ID; legacy calls receive a fresh server ID.
+  p_client_request_id text default pg_catalog.gen_random_uuid()::text
 )
 returns table(proof_upload_id uuid, file_bucket text, file_path text, upload_status text, result_message text)
 language plpgsql
