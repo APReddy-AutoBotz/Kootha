@@ -6391,6 +6391,14 @@ function AdminShell({
     { id: "audit", label: "Activity", icon: FileClock }
   ];
 
+  useEffect(() => {
+    // On phones the sections are one row that scrolls sideways; keep the open one in view.
+    const current = document.querySelector<HTMLElement>(".admin-nav-list [aria-current=\"page\"]");
+    if (current && typeof current.scrollIntoView === "function") {
+      current.scrollIntoView({ block: "nearest", inline: "center" });
+    }
+  }, [activeView]);
+
   return (
     <main className="admin-app-shell">
       <aside className="admin-sidebar" aria-label="Admin navigation">

@@ -153,6 +153,35 @@ async function report(page, watcher, where, { allowAlerts = false } = {}) {
   if (overflow > 2) {
     problem(where, "Page is " + overflow + "px wider than the screen and scrolls sideways.");
   }
+  const layout = await page.evaluate(() => {
+    const scrollsSideways = (element) => {
+      for (let node = element.parentElement; node; node = node.parentElement) {
+        const overflowX = getComputedStyle(node).overflowX;
+        if ((overflowX === "auto" || overflowX === "scroll") && node.scrollWidth > node.clientWidth) return true;
+      }
+      return false;
+    };
+    const clipped = [];
+    for (const element of document.querySelectorAll("header a, header button, .admin-nav-list button, .admin-sidebar-footer a, .admin-sidebar-footer button")) {
+      const rect = element.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0 || getComputedStyle(element).visibility === "hidden") continue;
+      if (scrollsSideways(element)) continue;
+      if (rect.right > window.innerWidth + 1 || rect.left < -1) {
+        clipped.push((element.textContent || element.getAttribute("aria-label") || element.tagName).trim().slice(0, 40) + " (" + Math.round(rect.left) + " to " + Math.round(rect.right) + " of " + window.innerWidth + ")");
+      }
+    }
+    const nav = document.querySelector(".admin-sidebar");
+    const main = document.querySelector(".admin-app-main");
+    let covered = 0;
+    if (nav && main && getComputedStyle(nav).position === "fixed") {
+      covered = Math.round(nav.getBoundingClientRect().height - parseFloat(getComputedStyle(main).paddingBottom));
+    }
+    return { clipped, covered };
+  });
+  for (const control of layout.clipped) problem(where, "A header or navigation control is cut off at the screen edge: " + control);
+  if (layout.covered > 2) {
+    problem(where, "The fixed navigation bar covers the last " + layout.covered + "px of the page, so content at the bottom cannot be reached.");
+  }
   await page.screenshot({ path: path.join(outDir, slug(where) + ".png"), fullPage: true });
   if (dumpNames.has(slug(where))) {
     // Lets a reviewer without access to the uploaded files see a screen from the job log.
@@ -184,13 +213,29 @@ async function publicPages(context, label) {
     await report(page, watcher, where);
     if (problems.length === before && heading) ok(where + ": \"" + heading.slice(0, 60) + "\"");
   }
-  if (label === "Desktop") {
-    await page.goto(siteUrl + "/", { waitUntil: "domcontentloaded" });
+  await page.goto(siteUrl + "/", { waitUntil: "domcontentloaded" });
+  await settle(page);
+  const formCount = await page.locator("form").count();
+  if (formCount === 0) problem(label + " home page", "The enquiry form is missing.");
+  else ok(label + " home page has the enquiry form");
+  watcher.take();
+
+  const english = (await page.locator("h1").first().innerText()).trim();
+  const languageSwitch = page.locator(".language-switch").first();
+  const switched = await languageSwitch.click({ timeout: 5000 }).then(() => true).catch(() => false);
+  if (!switched) {
+    problem(label + " home page in Telugu", "The language switch could not be clicked.");
+  } else {
     await settle(page);
-    const formCount = await page.locator("form").count();
-    if (formCount === 0) problem("Desktop home page", "The enquiry form is missing.");
-    else ok("Desktop home page has the enquiry form");
-    watcher.take();
+    const telugu = (await page.locator("h1").first().innerText()).trim();
+    const lang = await page.evaluate(() => document.documentElement.lang);
+    const before = problems.length;
+    if (lang !== "te" || telugu === english) {
+      problem(label + " home page in Telugu", "Switching language did not change the page to Telugu (lang=" + lang + ").");
+    }
+    await report(page, watcher, label + " home page in Telugu");
+    if (problems.length === before) ok(label + " home page in Telugu");
+    await page.evaluate(() => { try { localStorage.removeItem("kootha-locale"); } catch { /* storage unavailable */ } });
   }
   await page.close();
 }
@@ -307,7 +352,8 @@ function writeSummary() {
 const credentials = await seed();
 const browser = await chromium.launch({ channel: process.env.BROWSER_E2E_CHANNEL ?? "chrome", headless: true });
 try {
-  const desktop = await browser.newContext({ viewport: { width: 1366, height: 900 } });
+  // 1366x768 is the common small laptop screen.
+  const desktop = await browser.newContext({ viewport: { width: 1366, height: 768 } });
   await publicPages(desktop, "Desktop");
   await adminPages(desktop, credentials, "Desktop", { act: true });
   await desktop.close();

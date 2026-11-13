@@ -55,9 +55,17 @@
 }
 
 .admin-nav-list {
+  /* The list scrolls inside the sidebar, so the footer with Log out stays on
+     screen on short laptop displays. */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
   display: grid;
+  align-content: start;
   gap: 5px;
   padding: 18px 12px;
+  scrollbar-width: thin;
+  scrollbar-color: #6d625a transparent;
 }
 
 .admin-nav-list button,
@@ -90,6 +98,7 @@
 }
 
 .admin-sidebar-footer {
+  flex: none;
   display: grid;
   gap: 4px;
   margin-top: auto;
@@ -533,14 +542,24 @@
     display: none;
   }
 
+  /* One row that scrolls sideways. A grid of six columns wrapped the thirteen
+     sections into three rows and covered the bottom of every page. */
   .admin-nav-list {
-    display: grid;
-    grid-template-columns: repeat(6, minmax(0, 1fr));
+    display: flex;
+    overflow-x: auto;
+    overflow-y: hidden;
     gap: 2px;
-    padding: 7px;
+    padding: 7px 7px calc(7px + env(safe-area-inset-bottom, 0px));
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .admin-nav-list::-webkit-scrollbar {
+    display: none;
   }
 
   .admin-nav-list button {
+    flex: 0 0 76px;
     min-width: 0;
     min-height: 62px;
     flex-direction: column;
@@ -553,7 +572,7 @@
   }
 
   .admin-app-main {
-    padding-bottom: 82px;
+    padding-bottom: calc(82px + env(safe-area-inset-bottom, 0px));
   }
 
   .admin-mobile-header {
