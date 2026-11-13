@@ -693,7 +693,8 @@ async function main() {
     expect(typeof summary?.final_summary_id === "string", "Final Proof Summary was not created", JSON.stringify(prepared));
     note("Closure status after review: " + summary.closure_status + "; warnings: " + JSON.stringify(summary.warnings ?? []));
     expect(typeof summary.summary_text === "string" && summary.summary_text.length > 0, "Final Proof Summary text is empty");
-    expect(!/\b\d{1,2}\.\d{4,}\b/.test(summary.summary_text), "Final Proof Summary text contains a coordinate-like number", summary.summary_text);
+    // The fake points sit near 15.5, 80.05. Neither value may reach customer-facing text.
+    expect(!/\b(15\.5\d{2,}|80\.05\d{2,})/.test(summary.summary_text), "Final Proof Summary text contains the phone's coordinates", summary.summary_text);
 
     const closed = await rpc("Close Ad Work", "anon", adminToken, "close_flexible_ad_work_with_final_summary", {
       ...summaryArgs,
