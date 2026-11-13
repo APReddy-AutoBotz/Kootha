@@ -1,0 +1,35 @@
+name: End-to-end flow
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  flow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: supabase/setup-cli@v1
+        with: { version: latest }
+      - run: supabase start -x studio,imgproxy,inbucket,edge-runtime,logflare,vector,supavisor
+      - name: Run one fake job from enquiry to closure against the local stack
+        shell: bash
+        run: |
+          set -eo pipefail
+          supabase status -o env > "$RUNNER_TEMP/supabase.env"
+          set -a
+          source "$RUNNER_TEMP/supabase.env"
+          set +a
+          export FLOW_E2E_API_URL="${API_URL}"
+          export FLOW_E2E_ANON_KEY="${ANON_KEY:-${PUBLISHABLE_KEY:-}}"
+          export FLOW_E2E_SERVICE_ROLE_KEY="${SERVICE_ROLE_KEY:-${SECRET_KEY:-}}"
+          node scripts/flow-e2e.mjs
