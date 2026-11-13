@@ -304,7 +304,7 @@ async function main() {
       title: adWork.title ?? "Ad Work",
       advertisement_details: adWork.advertisement_details ?? "Fake festival offer announcement",
       package_interest: "standard",
-      live_tracking_requested: false,
+      live_tracking_requested: adWork.live_tracking_requested ?? "no",
       live_tracking_enabled: false,
       customer_live_enabled: false,
       special_instructions: "Fake instructions",
