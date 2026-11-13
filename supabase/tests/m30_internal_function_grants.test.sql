@@ -37,6 +37,11 @@ select is(
       and has_function_privilege('anon', p.oid, 'EXECUTE')
       and p.prosrc not ilike '%m6_hash_work_code%'
       and p.proname not in ('is_admin', 'is_valid_proof_upload_path', 'submit_driver_application')
+      -- Helper functions that the parallel concurrency tests create in this
+      -- database outside a transaction; they are not part of the schema.
+      and p.proname not like '%\_parallel\_%'
+      and p.proname not like '%\_test\_%'
+      and p.proname not like '%\_for\_test'
   ),
   '',
   'Every other anonymous SECURITY DEFINER function checks the Work Code'
