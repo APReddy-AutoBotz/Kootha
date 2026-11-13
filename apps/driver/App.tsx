@@ -652,6 +652,16 @@ function formatDate(value: string | null | undefined) {
   return value || "Not set";
 }
 
+// Planned work dates are calendar dates in the driver's own time zone. A UTC
+// date is a day behind between midnight and 05:30 in India.
+function getLocalDateKey(date = new Date()) {
+  return [
+    String(date.getFullYear()),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0")
+  ].join("-");
+}
+
 function createClientPointId() {
   return "phone-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
 }
@@ -769,7 +779,7 @@ export function App() {
   const applicationSubmissionAttempt = useRef<IdempotencyAttempt | null>(null);
   const proofSubmissionAttempt = useRef<IdempotencyAttempt | null>(null);
   const configured = useMemo(() => Boolean(getDriverSupabaseConfig()), []);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = getLocalDateKey();
   const currentWork = workRows.find((row) => row.planned_date === today)
     ?? workRows.find((row) => row.execution_status !== "completed")
     ?? workRows[0]
@@ -1137,8 +1147,19 @@ export function App() {
       }
 
       let position: Location.LocationObject;
+      // A phone with no GPS fix can leave this request pending forever, which
+      // would keep locationCaptureInFlight set and silently skip every later
+      // capture. Give up after 20 seconds so the next interval can try again.
+      let locationFixTimer: ReturnType<typeof setTimeout> | null = null;
       try {
-        position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        position = await Promise.race([
+          Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+          new Promise<never>((_resolve, reject) => {
+            locationFixTimer = setTimeout(() => {
+              reject(new Error("Could not get this phone's location. Move to an open place and try again."));
+            }, 20000);
+          }),
+        ]);
         if (captureGeneration !== locationCaptureGeneration.current) {
           return false;
         }
@@ -1152,6 +1173,10 @@ export function App() {
           return false;
         }
         throw error;
+      } finally {
+        if (locationFixTimer !== null) {
+          clearTimeout(locationFixTimer);
+        }
       }
 
       const capturedAt = new Date(position.timestamp).toISOString();
