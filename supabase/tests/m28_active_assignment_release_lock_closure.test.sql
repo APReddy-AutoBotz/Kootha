@@ -135,7 +135,7 @@ select is(
 select lives_ok(
   $$select * from public.release_flexible_ad_work_to_driver(
       '28e00000-0000-4000-8000-000000000101',
-      'LOCK29',
+      'LOCK2900',
       false
     )$$,
   'current UI release RPC remains usable after governed assignment'

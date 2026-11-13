@@ -231,7 +231,7 @@ insert into public.ad_works (
 ) values (
   '36100000-0000-4000-8000-000000000101',
   'Permission missing ambiguity closure',
-  current_date, current_date, 1,
+  public.m30_business_date(), public.m30_business_date(), 1,
   'scheduled', 'planned', 'ready_for_execution',
   'released_to_driver', 'running',
   'not_ready', 'driver_app', true, true,
@@ -255,7 +255,7 @@ insert into public.ad_work_days (
 ) values (
   '36100000-0000-4000-8000-000000000301',
   '36100000-0000-4000-8000-000000000101',
-  current_date, 'scheduled', 'planned', 'running',
+  public.m30_business_date(), 'scheduled', 'planned', 'running',
   '36100000-0000-4000-8000-000000000001',
   '36100000-0000-4000-8000-000000000002'
 );
