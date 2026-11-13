@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(9);
+select plan(12);
 
 insert into public.drivers (
   id, name, phone, approval_status, onboarding_status
@@ -141,6 +141,38 @@ select ok(
   not has_function_privilege('anon', 'public.close_flexible_ad_work_with_final_summary(uuid,text,text,text,text,boolean,boolean,boolean,text,boolean)', 'EXECUTE')
     and has_function_privilege('authenticated', 'public.close_flexible_ad_work_with_final_summary(uuid,text,text,text,text,boolean,boolean,boolean,text,boolean)', 'EXECUTE'),
   'Closure stays an admin-only call'
+);
+
+insert into public.user_profiles (auth_user_id, display_name, role)
+values ('30c00000-0000-4000-8000-000000000009', 'Fake M30 Closure Admin', 'admin');
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '30c00000-0000-4000-8000-000000000009', true);
+
+select throws_ok(
+  $$select * from public.release_flexible_ad_work_to_driver(
+      '30c00000-0000-4000-8000-000000000101', null, false
+    )$$,
+  '22000',
+  'This work is closed. A Work Code cannot be issued for it.',
+  'Admin cannot issue a new Work Code for closed work'
+);
+
+select throws_ok(
+  $$select * from public.release_ad_work_to_driver(
+      '30c00000-0000-4000-8000-000000000101', 'REOPEN3400', false
+    )$$,
+  '22000',
+  'This work is closed. A Work Code cannot be issued for it.',
+  'The retained M6 release function cannot reopen closed work either'
+);
+
+reset role;
+
+select is(
+  (select work_access_code_hash from public.ad_works where id = '30c00000-0000-4000-8000-000000000101'),
+  'closed:' || public.m6_hash_work_code('CLOSE3400'),
+  'A refused regeneration leaves the ended digest in place'
 );
 
 select * from finish();
