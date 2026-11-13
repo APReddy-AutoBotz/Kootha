@@ -62,7 +62,6 @@ jobs:
         env:
           BROWSER_E2E_SITE_URL: http://127.0.0.1:4173
           BROWSER_E2E_OUT: output/browser-e2e
-          BROWSER_E2E_DUMP: desktop-admin-section-activity,desktop-admin-log-out-unreachable,phone-width-home-page,phone-width-home-page-in-telugu,phone-width-admin-section-today,phone-width-admin-section-activity,desktop-home-page-in-telugu
         run: BROWSER_E2E_PLAYWRIGHT="$RUNNER_TEMP/browser-driver/node_modules/playwright-core" node scripts/browser-e2e.mjs
       - uses: actions/upload-artifact@v4
         if: always()
