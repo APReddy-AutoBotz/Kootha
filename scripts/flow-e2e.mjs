@@ -724,8 +724,10 @@ async function main() {
       p_customer_accepted: "yes",
     });
     const status = closed?.[0]?.closure_status;
-    expect(status === "closed" || status === "closed_with_issues", "Ad Work was not closed", JSON.stringify(closed));
-    note("Final closure status: " + status + "; warnings: " + JSON.stringify(closed[0].warnings ?? []));
+    note("Final closure status: " + status + "; warnings: " + JSON.stringify(closed?.[0]?.warnings ?? []));
+    // Every day is completed, the proof is approved and every update is shared.
+    // Notes about what this version does not include must not turn that into "Closed with Issues".
+    expect(status === "closed", "A job finished without problems did not close as Closed", JSON.stringify(closed));
 
     const shared = await rpc("Mark final summary shared", "anon", adminToken, "mark_final_summary_shared", {
       p_ad_work_id: adWorkId,
@@ -737,7 +739,17 @@ async function main() {
 
   await step("After closure: driver and anonymous access", async () => {
     const afterClose = await call("anon", undefined, "POST", "/rest/v1/rpc/driver_get_assigned_work", driverAuth);
-    note("Driver opening closed work with the old code: " + (afterClose.ok ? "still allowed" : "refused (HTTP " + afterClose.status + ")"));
+    expect(!afterClose.ok, "The Work Code still opens the job after closure", afterClose.text);
+    const lateNote = await call("anon", undefined, "POST", "/rest/v1/rpc/driver_update_work_day", {
+      ...driverAuth, p_ad_work_day_id: dayId, p_action: "add_proof_note",
+      p_note: "Fake late note", p_area_place_name: "Fake Market", p_proof_type: "other",
+    });
+    expect(!lateNote.ok, "The driver added a Proof Note to a closed job", lateNote.text);
+    const lateIssue = await call("anon", undefined, "POST", "/rest/v1/rpc/driver_update_work_day", {
+      ...driverAuth, p_ad_work_day_id: dayId, p_action: "issue",
+      p_note: "Fake late issue", p_area_place_name: null, p_proof_type: null,
+    });
+    expect(!lateIssue.ok, "The driver reported an issue on a closed job", lateIssue.text);
     // The summary text holds the customer's name and mobile number. Only the admin summary functions may build it.
     for (const [who, token] of [["Anonymous", undefined], ["Signed-in non-admin", outsiderToken]]) {
       const summaryText = await call("anon", token, "POST", "/rest/v1/rpc/m8_build_final_summary_text", { p_ad_work_id: adWorkId });
@@ -750,6 +762,150 @@ async function main() {
     for (const table of ["ad_works", "ad_work_days", "drivers", "vehicles", "location_points", "tracking_sessions", "proof_uploads", "customer_updates", "final_proof_summaries", "user_profiles"]) {
       await expectRefused("Anonymous read of " + table, "anon", undefined, "GET", "/rest/v1/" + table + "?select=*&limit=1");
     }
+  });
+
+  // ---------------------------------------------------- team-managed work
+  // Work the team does itself: no driver app, no Work Code. The admin starts
+  // and completes the day and adds the proof photo.
+  const teamWorkId = await step("Team-managed: plan a job that needs no driver", async () => {
+    const created = await mustCall("Insert second enquiry", "service", undefined, "POST", "/rest/v1/enquiries?select=id", {
+      customer_name: "Fake Team Customer",
+      business_name: "Fake Team Stores " + runId,
+      phone: "9000033333",
+      city: "Addanki",
+      required_areas: "Fake Bus Stand",
+      preferred_start_date: today,
+      number_of_days: 1,
+      source: "website",
+      status: "new",
+      message: "Fake poster placement",
+      package_interest: "basic",
+      live_tracking_needed: "no",
+      notes: null,
+      consent_to_contact: true,
+      locale: "te",
+      consent_notice_version: "2026-07-12",
+    }, { Prefer: "return=representation" });
+    const work = await rpc("Create team Ad Work", "anon", adminToken, "create_ad_work_from_enquiry", { p_enquiry_id: created[0].id });
+    const id = work?.[0]?.ad_work_id;
+    expect(typeof id === "string", "Team Ad Work id was not returned", JSON.stringify(work));
+    const rows = await mustCall("Read team Ad Work", "anon", adminToken, "GET", "/rest/v1/ad_works?select=" + listQueries.get("ad_works") + "&id=eq." + id);
+    const adWork = rows[0];
+    await mustCall("Save team Ad Work", "anon", adminToken, "PATCH", "/rest/v1/ad_works?id=eq." + id, {
+      customer_name: adWork.customer_name ?? "Fake Team Customer",
+      business_name: adWork.business_name ?? null,
+      customer_phone: adWork.customer_phone ?? null,
+      delivery_method: "print_placement",
+      execution_mode: "admin_managed",
+      driver_required: false,
+      vehicle_required: false,
+      speaker_required: false,
+      areas_required: true,
+      customer_updates_required: false,
+      city: adWork.city ?? "Addanki",
+      title: adWork.title ?? "Ad Work",
+      advertisement_details: adWork.advertisement_details ?? "Fake poster placement",
+      package_interest: "basic",
+      live_tracking_requested: adWork.live_tracking_requested ?? "no",
+      live_tracking_enabled: false,
+      customer_live_enabled: false,
+      special_instructions: null,
+      internal_planning_note: "Fake team plan",
+      photo_proof_needed: true,
+      audio_video_proof_needed: false,
+      area_update_needed: false,
+      final_report_needed: true,
+      customer_update_scheduled: false,
+      customer_update_started: false,
+      customer_update_in_progress: false,
+      customer_update_area_covered: false,
+      customer_update_completed: false,
+      customer_update_report_ready: false,
+      updated_at: new Date().toISOString(),
+    }, { Prefer: "return=minimal" });
+    await rpc("Sync team schedule", "anon", adminToken, "admin_sync_ad_work_days_v2", {
+      p_ad_work_id: id,
+      p_start_date: today,
+      p_number_of_days: 1,
+      p_daily_start_time: "10:00",
+      p_daily_end_time: "13:00",
+      p_areas_to_cover: "Fake Bus Stand",
+      p_expected_version: adWork.schedule_version,
+    });
+    return id;
+  });
+
+  const teamProofId = await step("Team-managed: admin starts the day, adds a proof photo and completes the day", async () => {
+    const days = await mustCall("Read team work day", "anon", adminToken, "GET", "/rest/v1/ad_work_days?select=" + listQueries.get("ad_work_days") + "&ad_work_id=eq." + teamWorkId);
+    expect(days?.length === 1, "Team job does not have exactly one day", JSON.stringify(days));
+    const teamDayId = days[0].id;
+
+    const outsider = await call("anon", outsiderToken, "POST", "/rest/v1/rpc/admin_update_ad_work_day", { p_ad_work_day_id: teamDayId, p_action: "start", p_note: null });
+    expect(!outsider.ok, "A non-admin started a team-managed day", outsider.text);
+
+    const started = await rpc("Start team day", "anon", adminToken, "admin_update_ad_work_day", { p_ad_work_day_id: teamDayId, p_action: "start", p_note: null });
+    expect(started?.[0]?.execution_status === "running", "Team day is not Running after start", JSON.stringify(started));
+
+    const photo = tinyJpeg();
+    const slots = await rpc("Request admin proof upload", "anon", adminToken, "request_admin_proof_upload", {
+      p_ad_work_day_id: teamDayId,
+      p_proof_type: "other",
+      p_area_place_name: "Fake Bus Stand",
+      p_note_text: "Fake poster placed at the bus stand",
+      p_file_mime_type: "image/jpeg",
+      p_file_size_bytes: photo.length,
+    });
+    const slot = slots?.[0];
+    expect(slot?.file_bucket === "proof-photos" && typeof slot?.file_path === "string", "Admin upload slot was not returned", JSON.stringify(slots));
+    const objectPath = "/storage/v1/object/" + slot.file_bucket + "/" + slot.file_path.split("/").map(encodeURIComponent).join("/");
+    const upload = await fetch(apiUrl + objectPath, {
+      method: "POST",
+      headers: { ...headersFor("anon", adminToken), "Content-Type": "image/jpeg", "x-upsert": "false" },
+      body: photo,
+    });
+    expect(upload.ok, "Admin photo upload failed with HTTP " + upload.status, await upload.text());
+    for (const [who, token] of [["Anonymous", undefined], ["Signed-in non-admin", outsiderToken]]) {
+      const read = await fetch(apiUrl + objectPath, { headers: headersFor("anon", token) });
+      await read.arrayBuffer();
+      expect(!read.ok, who + " caller downloaded the team's proof photo");
+    }
+    await rpc("Complete admin proof upload", "anon", adminToken, "complete_admin_proof_upload", { p_proof_upload_id: slot.proof_upload_id });
+
+    const completed = await rpc("Complete team day", "anon", adminToken, "admin_update_ad_work_day", { p_ad_work_day_id: teamDayId, p_action: "complete", p_note: "Fake team work completed" });
+    expect(completed?.[0]?.execution_status === "completed", "Team day is not Completed", JSON.stringify(completed));
+    return slot.proof_upload_id;
+  });
+
+  await step("Team-managed: closing with unreviewed proof is Closed with Issues", async () => {
+    const summaryArgs = {
+      p_ad_work_id: teamWorkId,
+      p_proof_not_required: false,
+      p_customer_updates_reviewed: true,
+      p_internal_admin_note: "Fake team closure",
+      p_include_phone_location_proof: false,
+      p_phone_location_proof_customer_note: null,
+      p_phone_location_proof_customer_safe_confirmed: false,
+    };
+    const prepared = await rpc("Prepare team summary", "anon", adminToken, "prepare_flexible_final_proof_summary", {
+      ...summaryArgs,
+      p_final_summary_reviewed: true,
+    });
+    expect(typeof prepared?.[0]?.final_summary_id === "string", "Team Final Proof Summary was not created", JSON.stringify(prepared));
+    note("Team closure status after review: " + prepared[0].closure_status + "; warnings: " + JSON.stringify(prepared[0].warnings ?? []));
+    expect((prepared[0].warnings ?? []).includes("Proof is waiting for review."), "Unreviewed proof was not reported as a warning", JSON.stringify(prepared[0].warnings));
+    for (const driverOnly of ["Ad Work is not assigned.", "Ad Work was not released to driver."]) {
+      expect(!(prepared[0].warnings ?? []).includes(driverOnly), "Team-managed work was warned: " + driverOnly, JSON.stringify(prepared[0].warnings));
+    }
+
+    const closed = await rpc("Close team Ad Work", "anon", adminToken, "close_flexible_ad_work_with_final_summary", {
+      ...summaryArgs,
+      p_closure_reason: null,
+      p_closure_note: "Fake team closure note",
+      p_customer_accepted: "not_confirmed",
+    });
+    expect(closed?.[0]?.closure_status === "closed_with_issues", "A job with unreviewed proof did not close as Closed with Issues", JSON.stringify(closed));
+    const proofs = await mustCall("Read team proof", "anon", adminToken, "GET", "/rest/v1/proof_uploads?select=" + listQueries.get("proof_uploads") + "&id=eq." + teamProofId);
+    expect(proofs?.[0]?.upload_status === "uploaded", "Team proof is not stored as uploaded", JSON.stringify(proofs));
   });
 }
 
