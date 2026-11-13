@@ -90,4 +90,7 @@ end;
 $$;
 
 revoke all on function public.update_location_proof_review(uuid, text, text) from public;
+-- Supabase grants new functions to anon by default, so revoking from public
+-- alone left this admin function callable (though refused by is_admin()).
+revoke all on function public.update_location_proof_review(uuid, text, text) from anon;
 grant execute on function public.update_location_proof_review(uuid, text, text) to authenticated;
