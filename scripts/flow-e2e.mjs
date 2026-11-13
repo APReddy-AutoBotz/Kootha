@@ -740,6 +740,10 @@ async function main() {
   await step("After closure: driver and anonymous access", async () => {
     const afterClose = await call("anon", undefined, "POST", "/rest/v1/rpc/driver_get_assigned_work", driverAuth);
     expect(!afterClose.ok, "The Work Code still opens the job after closure", afterClose.text);
+    const regenerate = await call("anon", adminToken, "POST", "/rest/v1/rpc/release_flexible_ad_work_to_driver", {
+      p_ad_work_id: adWorkId, p_plain_work_code: null, p_revoke: false,
+    });
+    expect(!regenerate.ok, "An admin issued a new Work Code for a closed job", regenerate.text);
     const lateNote = await call("anon", undefined, "POST", "/rest/v1/rpc/driver_update_work_day", {
       ...driverAuth, p_ad_work_day_id: dayId, p_action: "add_proof_note",
       p_note: "Fake late note", p_area_place_name: "Fake Market", p_proof_type: "other",

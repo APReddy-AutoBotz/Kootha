@@ -5846,7 +5846,7 @@ function AdminExecutionPanel({
       </div>
 
       <div className="admin-action-row">
-        <button className="primary-button" type="button" onClick={() => void handleRelease(false)} disabled={isSaving || !readiness.ready}>
+        <button className="primary-button" type="button" onClick={() => void handleRelease(false)} disabled={isSaving || !readiness.ready || ["closed", "closed_with_issues", "cancelled"].includes(adWork.closure_status ?? "")}>
           {isSaving ? "Saving..." : adWork.execution_release_status === "released_to_driver" ? "Regenerate Work Code" : "Release to Driver"}
         </button>
         <button className="secondary-button" type="button" onClick={() => void handleRelease(true)} disabled={isSaving || adWork.execution_release_status !== "released_to_driver"}>
