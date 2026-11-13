@@ -2357,6 +2357,27 @@ function toVehicleDraft(vehicle: VehicleRecord): VehicleDraft {
   };
 }
 
+// Planned work dates are calendar dates in the admin's own time zone. A UTC
+// date is a day behind between midnight and 05:30 in India.
+function getLocalDateKey(date = new Date()) {
+  return [
+    String(date.getFullYear()),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0")
+  ].join("-");
+}
+
+// Timestamps are stored in UTC. Compare them with "today" as a local calendar
+// date, not by their UTC text prefix.
+function isOnLocalDate(value: string | null | undefined, dateKey: string) {
+  if (!value) {
+    return false;
+  }
+
+  const parsed = new Date(value);
+  return !Number.isNaN(parsed.getTime()) && getLocalDateKey(parsed) === dateKey;
+}
+
 function formatDate(value: string | null | undefined) {
   if (!value) {
     return "Not set";
@@ -2960,7 +2981,7 @@ function CheckCircle2Icon() {
   return <CheckCircle2 className="empty-check" aria-hidden="true" />;
 }
 function EnquirySummaryCards({ enquiries }: { enquiries: EnquiryRecord[] }) {
-  const todayKey = new Date().toISOString().slice(0, 10);
+  const todayKey = getLocalDateKey();
   const cards = [
     {
       label: "New enquiries",
@@ -2980,7 +3001,7 @@ function EnquirySummaryCards({ enquiries }: { enquiries: EnquiryRecord[] }) {
     },
     {
       label: "Today's enquiries",
-      value: enquiries.filter((enquiry) => enquiry.created_at.startsWith(todayKey)).length
+      value: enquiries.filter((enquiry) => isOnLocalDate(enquiry.created_at, todayKey)).length
     }
   ];
 
@@ -4134,7 +4155,7 @@ function AdWorkAssignmentPanel({
 }
 
 function M6SummaryCards({ adWorks, adWorkDays }: { adWorks: AdWorkRecord[]; adWorkDays: AdWorkDayRecord[] }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = getLocalDateKey();
   const todayRows = adWorkDays.filter((day) => day.work_date === today);
   const cards = [
     {
@@ -4201,11 +4222,11 @@ function M7SummaryCards({ config, session }: { config: SupabaseConfig; session: 
     };
   }, [config, session]);
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = getLocalDateKey();
   const cards = [
     {
       label: "Photo Proofs Today",
-      value: proofUploads.filter((proof) => proof.created_at.startsWith(today)).length
+      value: proofUploads.filter((proof) => isOnLocalDate(proof.created_at, today)).length
     },
     {
       label: "Proofs Waiting Review",
@@ -4213,7 +4234,7 @@ function M7SummaryCards({ config, session }: { config: SupabaseConfig; session: 
     },
     {
       label: "Approved Today",
-      value: proofUploads.filter((proof) => proof.review_status === "approved" && Boolean(proof.reviewed_at?.startsWith(today))).length
+      value: proofUploads.filter((proof) => proof.review_status === "approved" && isOnLocalDate(proof.reviewed_at, today)).length
     },
     {
       label: "Needs More Info",
@@ -4225,7 +4246,7 @@ function M7SummaryCards({ config, session }: { config: SupabaseConfig; session: 
     },
     {
       label: "Updates Shared Today",
-      value: customerUpdates.filter((update) => update.sharing_status === "shared_manually" && Boolean(update.shared_at?.startsWith(today))).length
+      value: customerUpdates.filter((update) => update.sharing_status === "shared_manually" && isOnLocalDate(update.shared_at, today)).length
     }
   ];
 
@@ -4261,7 +4282,7 @@ function M8SummaryCards({ config, session, adWorks }: { config: SupabaseConfig; 
     };
   }, [config, session]);
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = getLocalDateKey();
   const cards = [
     {
       label: "Ready to Close",
@@ -4269,7 +4290,7 @@ function M8SummaryCards({ config, session, adWorks }: { config: SupabaseConfig; 
     },
     {
       label: "Closed Today",
-      value: adWorks.filter((adWork) => Boolean(adWork.closure_closed_at?.startsWith(today))).length
+      value: adWorks.filter((adWork) => isOnLocalDate(adWork.closure_closed_at, today)).length
     },
     {
       label: "Closed with Issues",
@@ -4321,7 +4342,7 @@ function M9SummaryCards({ config, session, adWorks }: { config: SupabaseConfig; 
     };
   }, [config, session]);
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = getLocalDateKey();
   const cards = [
     {
       label: "Location Proof Required",
@@ -4341,7 +4362,7 @@ function M9SummaryCards({ config, session, adWorks }: { config: SupabaseConfig; 
     },
     {
       label: "Updated Today",
-      value: sessions.filter((sessionRow) => Boolean(sessionRow.last_update_at?.startsWith(today))).length
+      value: sessions.filter((sessionRow) => isOnLocalDate(sessionRow.last_update_at, today)).length
     },
     {
       label: "Stopped",
@@ -4385,7 +4406,7 @@ function M11SummaryCards({ config, session, adWorks }: { config: SupabaseConfig;
     };
   }, [config, session]);
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = getLocalDateKey();
   const reviewsByAdWork = new Map(reviews.map((review) => [review.ad_work_id, review]));
   const pointCountsByAdWork = new Map<string, number>();
   sessions.forEach((sessionRow) => {
@@ -4421,7 +4442,7 @@ function M11SummaryCards({ config, session, adWorks }: { config: SupabaseConfig;
     },
     {
       label: "Location Proof Reviewed Today",
-      value: reviews.filter((review) => Boolean(review.reviewed_at?.startsWith(today))).length
+      value: reviews.filter((review) => isOnLocalDate(review.reviewed_at, today)).length
     }
   ];
 
