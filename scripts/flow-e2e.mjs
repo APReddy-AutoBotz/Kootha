@@ -735,6 +735,11 @@ async function main() {
   await step("After closure: driver and anonymous access", async () => {
     const afterClose = await call("anon", undefined, "POST", "/rest/v1/rpc/driver_get_assigned_work", driverAuth);
     note("Driver opening closed work with the old code: " + (afterClose.ok ? "still allowed" : "refused (HTTP " + afterClose.status + ")"));
+    // The summary text holds the customer's name and mobile number. Only the admin summary functions may build it.
+    for (const [who, token] of [["Anonymous", undefined], ["Signed-in non-admin", outsiderToken]]) {
+      const summaryText = await call("anon", token, "POST", "/rest/v1/rpc/m8_build_final_summary_text", { p_ad_work_id: adWorkId });
+      expect(!summaryText.ok, who + " caller read the Final Proof Summary text directly", summaryText.text);
+    }
     const lateStart = await call("anon", undefined, "POST", "/rest/v1/rpc/driver_start_mobile_tracking", {
       ...driverAuth, p_ad_work_day_id: dayId, p_driver_consent: true,
     });
