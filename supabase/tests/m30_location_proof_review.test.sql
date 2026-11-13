@@ -2,6 +2,16 @@ begin;
 create extension if not exists pgtap with schema extensions;
 select plan(6);
 
+-- reviewed_by references auth.users, so the fake admin needs an auth row.
+insert into auth.users (id, instance_id, aud, role, email, created_at, updated_at)
+values (
+  '30b00000-0000-4000-8000-000000000001',
+  '00000000-0000-0000-0000-000000000000',
+  'authenticated', 'authenticated',
+  'fake-m30-review-admin@example.test',
+  now(), now()
+);
+
 insert into public.user_profiles (auth_user_id, display_name, role)
 values ('30b00000-0000-4000-8000-000000000001', 'Fake M30 Review Admin', 'admin');
 
