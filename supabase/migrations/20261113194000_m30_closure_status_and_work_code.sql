@@ -7,6 +7,7 @@
 --    completed, proof approved and updates shared could never be "Closed".
 --    Closure now ignores the two informational notes when choosing the status.
 --    Body otherwise unchanged from 20260822133000_m28_final_closure_lock_order_closure.sql.
+--    Team-managed work also loses two driver-only warnings (see below).
 -- 2. After closure the driver's Work Code still opened the job, and the driver
 --    could still add notes or report an issue on it. Closing a job now ends
 --    Work Code access.
@@ -124,6 +125,49 @@ begin
          v_status,
          v_prepare.warnings,
          'Ad Work closed.'::text;
+end;
+$$;
+
+-- Team-managed work was told "Ad Work is not assigned." and "Ad Work was not
+-- released to driver." on every summary, so it could never close cleanly
+-- either. Those two warnings are dropped for team-managed work.
+-- Body otherwise unchanged from 20261113191000_m30_ambiguous_column_reference_fixes.sql.
+create or replace function public.prepare_flexible_final_proof_summary(
+  p_ad_work_id uuid,
+  p_final_summary_reviewed boolean default false,
+  p_proof_not_required boolean default false,
+  p_customer_updates_reviewed boolean default false,
+  p_internal_admin_note text default null,
+  p_include_phone_location_proof boolean default false,
+  p_phone_location_proof_customer_note text default null,
+  p_phone_location_proof_customer_safe_confirmed boolean default false
+)
+returns table(ad_work_id uuid, final_summary_id uuid, closure_status text, warnings text[], summary_text text, result_message text)
+language plpgsql
+security definer
+set search_path = public
+as $$
+#variable_conflict use_column
+declare v_ad_work public.ad_works%rowtype; v_result record; v_status text;
+begin
+  if not public.is_admin() then raise exception 'Admin access required' using errcode = '42501'; end if;
+  select * into v_ad_work from public.ad_works where id = p_ad_work_id;
+  select * into v_result from public.prepare_final_proof_summary(p_ad_work_id, p_final_summary_reviewed, p_proof_not_required, p_customer_updates_reviewed, p_internal_admin_note, p_include_phone_location_proof, p_phone_location_proof_customer_note, p_phone_location_proof_customer_safe_confirmed) limit 1;
+  if v_ad_work.execution_mode = 'admin_managed' then
+    -- Team-managed work has no driver and is never released to one, so the
+    -- two driver warnings from the shared summary logic do not apply to it.
+    v_result.warnings := array(
+      select warning_row.warning_text
+      from unnest(coalesce(v_result.warnings, '{}'::text[])) with ordinality as warning_row(warning_text, position)
+      where warning_row.warning_text not in ('Ad Work is not assigned.', 'Ad Work was not released to driver.')
+      order by warning_row.position
+    );
+    v_status := case when p_final_summary_reviewed and p_customer_updates_reviewed then 'ready_to_close' else 'ready_for_review' end;
+    update public.ad_works set closure_status = v_status, final_summary_reviewed = p_final_summary_reviewed, closure_ready_at = case when v_status = 'ready_to_close' then now() else closure_ready_at end, updated_at = now() where id = p_ad_work_id;
+    update public.final_proof_summaries set closure_status = v_status, warnings = v_result.warnings, ready_at = case when v_status = 'ready_to_close' then now() else ready_at end, updated_at = now() where ad_work_id = p_ad_work_id;
+    v_result.closure_status := v_status;
+  end if;
+  return query select v_result.ad_work_id, v_result.final_summary_id, v_result.closure_status, v_result.warnings, v_result.summary_text, v_result.result_message;
 end;
 $$;
 

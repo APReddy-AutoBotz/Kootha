@@ -893,6 +893,9 @@ async function main() {
     expect(typeof prepared?.[0]?.final_summary_id === "string", "Team Final Proof Summary was not created", JSON.stringify(prepared));
     note("Team closure status after review: " + prepared[0].closure_status + "; warnings: " + JSON.stringify(prepared[0].warnings ?? []));
     expect((prepared[0].warnings ?? []).includes("Proof is waiting for review."), "Unreviewed proof was not reported as a warning", JSON.stringify(prepared[0].warnings));
+    for (const driverOnly of ["Ad Work is not assigned.", "Ad Work was not released to driver."]) {
+      expect(!(prepared[0].warnings ?? []).includes(driverOnly), "Team-managed work was warned: " + driverOnly, JSON.stringify(prepared[0].warnings));
+    }
 
     const closed = await rpc("Close team Ad Work", "anon", adminToken, "close_flexible_ad_work_with_final_summary", {
       ...summaryArgs,
