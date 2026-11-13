@@ -500,6 +500,24 @@ async function main() {
     });
     expect(recorded?.[0]?.tracking_session_id === session, "Location point was not saved", JSON.stringify(recorded));
 
+    // With the right session id and mobile number, an empty or short Work Code must still be refused.
+    for (const badCode of ["", "AB", null]) {
+      const probe = locationPoint(session);
+      const refused = await call("anon", undefined, "POST", "/rest/v1/rpc/driver_record_mobile_location_point", {
+        p_mobile: driverPhone,
+        p_work_code: badCode,
+        p_tracking_session_id: session,
+        p_lat: probe.latitude,
+        p_lng: probe.longitude,
+        p_accuracy: probe.accuracy,
+        p_speed: null,
+        p_heading: null,
+        p_captured_at: probe.captured_at,
+        p_client_point_id: probe.client_point_id,
+      });
+      expect(!refused.ok, "A location point was saved with Work Code " + JSON.stringify(badCode), refused.text);
+    }
+
     const buffered = [locationPoint(session), locationPoint(session)];
     const synced = await rpc("Sync buffered points", "anon", undefined, "driver_sync_mobile_location_points_v2", {
       ...driverAuth, p_tracking_session_id: session, p_points: buffered, p_client_pending_count: buffered.length,
