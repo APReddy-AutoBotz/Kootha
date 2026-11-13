@@ -14,7 +14,7 @@
 //
 // The script refuses to run against anything but a local address.
 
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { appendFileSync, readFileSync } from "node:fs";
 
 const apiUrl = (process.env.FLOW_E2E_API_URL ?? "").replace(/\/$/, "");
@@ -195,12 +195,30 @@ async function main() {
 
   // -------------------------------------------------------------- enquiry
   const enquiryId = await step("Website: enquiry gateway stores an enquiry with the server key", async () => {
+    // The gateway sends a 64-character HMAC of the caller's address, never the address itself.
+    const requestHash = createHash("sha256").update("flow-e2e-" + runId).digest("hex");
     const rate = await rpc("Enquiry rate limit", "service", undefined, "consume_public_enquiry_rate_limit", {
-      p_request_hash: "flow-e2e-" + runId,
+      p_request_hash: requestHash,
       p_max_requests: 5,
       p_window_seconds: 900,
     });
     expect(rate?.[0]?.allowed === true, "Enquiry rate limit did not allow the first request", JSON.stringify(rate));
+
+    const burstHash = createHash("sha256").update("flow-e2e-burst-" + runId).digest("hex");
+    const burst = [];
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const limited = await rpc("Enquiry rate limit burst", "service", undefined, "consume_public_enquiry_rate_limit", {
+        p_request_hash: burstHash,
+        p_max_requests: 2,
+        p_window_seconds: 900,
+      });
+      burst.push(limited?.[0]?.allowed);
+    }
+    expect(burst[0] === true && burst[1] === true && burst[2] === false, "Enquiry rate limit did not block the third request in a window", JSON.stringify(burst));
+    const anonLimit = await call("anon", undefined, "POST", "/rest/v1/rpc/consume_public_enquiry_rate_limit", {
+      p_request_hash: burstHash, p_max_requests: 2, p_window_seconds: 900,
+    });
+    expect(!anonLimit.ok, "An anonymous caller could run the enquiry rate limiter", anonLimit.text);
     const created = await mustCall("Insert enquiry", "service", undefined, "POST", "/rest/v1/enquiries?select=id", {
       customer_name: "Fake Flow Customer",
       business_name: "Fake Flow Stores " + runId,
