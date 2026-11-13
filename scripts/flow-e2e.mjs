@@ -858,18 +858,17 @@ async function main() {
     const slot = slots?.[0];
     expect(slot?.file_bucket === "proof-photos" && typeof slot?.file_path === "string", "Admin upload slot was not returned", JSON.stringify(slots));
     const objectPath = "/storage/v1/object/" + slot.file_bucket + "/" + slot.file_path.split("/").map(encodeURIComponent).join("/");
-    const anonUpload = await fetch(apiUrl + objectPath, {
-      method: "POST",
-      headers: { ...headersFor("anon"), "Content-Type": "image/jpeg", "x-upsert": "false" },
-      body: photo,
-    });
-    expect(!anonUpload.ok, "An anonymous caller uploaded into an admin proof slot", await anonUpload.text());
     const upload = await fetch(apiUrl + objectPath, {
       method: "POST",
       headers: { ...headersFor("anon", adminToken), "Content-Type": "image/jpeg", "x-upsert": "false" },
       body: photo,
     });
     expect(upload.ok, "Admin photo upload failed with HTTP " + upload.status, await upload.text());
+    for (const [who, token] of [["Anonymous", undefined], ["Signed-in non-admin", outsiderToken]]) {
+      const read = await fetch(apiUrl + objectPath, { headers: headersFor("anon", token) });
+      await read.arrayBuffer();
+      expect(!read.ok, who + " caller downloaded the team's proof photo");
+    }
     await rpc("Complete admin proof upload", "anon", adminToken, "complete_admin_proof_upload", { p_proof_upload_id: slot.proof_upload_id });
 
     const completed = await rpc("Complete team day", "anon", adminToken, "admin_update_ad_work_day", { p_ad_work_day_id: teamDayId, p_action: "complete", p_note: "Fake team work completed" });
