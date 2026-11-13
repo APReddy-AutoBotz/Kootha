@@ -21,6 +21,10 @@ jobs:
       - uses: supabase/setup-cli@v1
         with: { version: latest }
       - run: supabase start -x studio,imgproxy,inbucket,edge-runtime,logflare,vector,supavisor
+      - name: Static check of database functions (diagnostic)
+        continue-on-error: true
+        shell: bash
+        run: psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" -v ON_ERROR_STOP=1 -P pager=off -A -F ' | ' -f scripts/sql/plpgsql-check.sql
       - name: Run one fake job from enquiry to closure against the local stack
         shell: bash
         run: |
