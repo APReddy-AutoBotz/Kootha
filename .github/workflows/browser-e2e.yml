@@ -1,0 +1,72 @@
+name: Browser check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 9.15.4 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: supabase/setup-cli@v1
+        with: { version: latest }
+      - run: supabase --version
+      - run: supabase start -x studio,imgproxy,inbucket,edge-runtime,logflare,vector,supavisor
+      - name: Build the website and admin against the local stack
+        shell: bash
+        run: |
+          set -eo pipefail
+          supabase status -o env > "$RUNNER_TEMP/supabase.env"
+          set -a
+          source "$RUNNER_TEMP/supabase.env"
+          set +a
+          {
+            echo "BROWSER_E2E_API_URL=${API_URL}"
+            echo "BROWSER_E2E_ANON_KEY=${ANON_KEY:-${PUBLISHABLE_KEY:-}}"
+            echo "BROWSER_E2E_SERVICE_ROLE_KEY=${SERVICE_ROLE_KEY:-${SECRET_KEY:-}}"
+          } >> "$GITHUB_ENV"
+          VITE_PRODUCT_NAME=Kootha \
+          VITE_SUPABASE_URL="${API_URL}" \
+          VITE_SUPABASE_ANON_KEY="${ANON_KEY:-${PUBLISHABLE_KEY:-}}" \
+          pnpm --filter @kootha/web build
+      - name: Serve the built site
+        shell: bash
+        run: |
+          set -eo pipefail
+          nohup pnpm --filter @kootha/web exec vite preview --host 127.0.0.1 --port 4173 --strictPort > "$RUNNER_TEMP/preview.log" 2>&1 &
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4173/ > /dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/preview.log"
+          exit 1
+      - name: Install Telugu fonts so screenshots and widths match a real phone
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq fonts-noto-core
+      - name: Install the browser driver outside the workspace
+        run: npm install --prefix "$RUNNER_TEMP/browser-driver" --no-audit --no-fund playwright-core@1
+      - name: Open the public pages and every admin section in a browser
+        env:
+          BROWSER_E2E_SITE_URL: http://127.0.0.1:4173
+          BROWSER_E2E_OUT: output/browser-e2e
+        run: BROWSER_E2E_PLAYWRIGHT="$RUNNER_TEMP/browser-driver/node_modules/playwright-core" node scripts/browser-e2e.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-check-screenshots
+          path: output/browser-e2e
+          if-no-files-found: warn
+          retention-days: 14

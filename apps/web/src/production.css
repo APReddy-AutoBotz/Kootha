@@ -68,6 +68,16 @@
   .legal-page header img { width: 132px; }
 }
 
+/* Narrow phones: keep the language switch on screen beside the logo and the
+   Send enquiry link. */
+@media (max-width: 420px) {
+  .kootha-topbar { gap: 8px; padding-inline: 12px; }
+  .kootha-topbar .kootha-brand { flex: none; }
+  .kootha-topbar .kootha-brand img { width: 118px; }
+  .kootha-topbar .nav-actions { gap: 8px; min-width: 0; }
+  .kootha-topbar .nav-link { padding-inline: 10px; }
+  .language-switch { padding-inline: 8px; white-space: nowrap; }
+}
 
 .admin-audit-view { padding-top: 24px; }
 .admin-audit-view .panel-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
