@@ -28,7 +28,7 @@ select is(
 
 select is(
   (
-    select count(*)
+    select coalesce(string_agg(p.oid::regprocedure::text, ', ' order by p.oid::regprocedure::text), '')
     from pg_catalog.pg_proc p
     join pg_catalog.pg_namespace n on n.oid = p.pronamespace
     where n.nspname = 'public'
@@ -38,7 +38,7 @@ select is(
       and p.prosrc not ilike '%m6_hash_work_code%'
       and p.proname not in ('is_admin', 'is_valid_proof_upload_path', 'submit_driver_application')
   ),
-  0::bigint,
+  '',
   'Every other anonymous SECURITY DEFINER function checks the Work Code'
 );
 
