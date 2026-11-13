@@ -96,6 +96,25 @@ M29 adds deterministic, secret-free hosted release controls without changing pro
 
 Use [the M29 hosted activation and rollback runbook](docs/production/m29-hosted-release-activation.md) before any capacity-approved hosted promotion. Local/repository manifests cannot attest live Supabase, Netlify preview, or rollback success; those remain `external-attestation-required` until independently verified by the release controller. The existing Kootha Supabase project remains inactive because of the organization free-project quota; do not pause or delete unrelated projects to bypass that capacity gate. Public enquiry intake and retention deletion remain fail-closed until separately approved.
 
+## M30 Pilot Hardening And Verification
+
+M30 is the first round in which the whole flow ran against a real database. It adds no product features.
+
+- Driver Work Codes are 10 characters from an alphabet without look-alike letters, stored as a SHA-256 digest that is never NULL. Closing a job ends Work Code access.
+- Seven database functions that failed on their first call are fixed: Final Proof Summary preparation, closure, summary sharing, Location Proof Review, admin stop of Phone Location Proof, and approval of an application whose vehicle already exists.
+- The Final Proof Summary text function is no longer callable by anonymous or signed-in callers, and admin-checked functions lose their unused anonymous grant.
+- Driver day checks use the India calendar date through `public.m30_business_date()`, and the Final Proof Summary prints readable India times.
+- A job finished without problems closes as Closed. Team-managed work no longer receives driver-only warnings.
+- The admin sidebar, the admin phone navigation and the public header on narrow phones are fixed.
+
+Three checks run on every pull request in addition to the existing ones:
+
+- `scripts/flow-e2e.mjs` (workflow **End-to-end flow**) runs one driver job and one team-managed job from enquiry to closure through the same HTTP calls the apps make.
+- `scripts/sql/plpgsql-check.sql` (same workflow) fails if any database function would fail when called.
+- `scripts/browser-e2e.mjs` (workflow **Browser check**) opens the public pages and every admin section in Chrome at laptop and phone width.
+
+See [the M30 readiness evidence](docs/production/m30-readiness-evidence.md) for what is verified and what still needs a person, a phone or a hosted deploy. See [the Work Code note](docs/security/m30-work-code-hardening.md) and [the phone test sheet](docs/pilot/m30-real-device-test-sheet.md).
+
 ## Environment
 
 Copy .env.example and fill local values outside Git. Keep committed files placeholder-only.

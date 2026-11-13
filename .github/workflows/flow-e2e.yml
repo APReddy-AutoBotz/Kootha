@@ -19,7 +19,7 @@ jobs:
         with:
           node-version: 20
       - uses: supabase/setup-cli@v1
-        with: { version: latest }
+        with: { version: 3.1.0 }
       - run: supabase --version
       - run: supabase start -x studio,imgproxy,inbucket,edge-runtime,logflare,vector,supavisor
       - name: Static check of every database function

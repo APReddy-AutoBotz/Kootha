@@ -41,6 +41,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: supabase/setup-cli@v1
-        with: { version: latest }
+        with: { version: 3.1.0 }
       - run: supabase start -x studio,imgproxy,inbucket,edge-runtime,logflare,vector,supavisor
       - run: supabase test db
