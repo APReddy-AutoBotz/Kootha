@@ -17,24 +17,27 @@
 -- an admin must choose "Regenerate Work Code" for any work released earlier.
 set search_path = public;
 
+-- This function must never return NULL. Several driver RPCs reject a caller
+-- with "work_access_code_hash <> m6_hash_work_code(p_work_code)" inside an IF;
+-- a NULL digest would make that comparison NULL, the IF would not fire, and an
+-- empty Work Code would be accepted. Empty or missing input therefore still
+-- produces a digest. It cannot match a stored one, because release only stores
+-- digests of codes with at least eight letters or numbers.
 create or replace function public.m6_hash_work_code(p_work_code text)
 returns text
 language sql
 immutable
 set search_path = pg_catalog, public
 as $$
-  select case
-    when pg_catalog.length(normalized.code) < 4 then null
-    else 'v2:' || pg_catalog.encode(
-      pg_catalog.sha256(pg_catalog.convert_to(normalized.code, 'UTF8')),
-      'hex'
-    )
-  end
-  from (
-    select pg_catalog.upper(
-      pg_catalog.regexp_replace(coalesce(p_work_code, ''), '[^A-Za-z0-9]', '', 'g')
-    ) as code
-  ) as normalized;
+  select 'v2:' || pg_catalog.encode(
+    pg_catalog.sha256(pg_catalog.convert_to(
+      pg_catalog.upper(
+        pg_catalog.regexp_replace(coalesce(p_work_code, ''), '[^A-Za-z0-9]', '', 'g')
+      ),
+      'UTF8'
+    )),
+    'hex'
+  );
 $$;
 
 create or replace function public.m30_generate_work_code()

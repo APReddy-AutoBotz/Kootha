@@ -24,6 +24,10 @@ Every driver function compares the stored digest with `m6_hash_work_code(code)`.
 
 A generated code such as `K7MPQ2XW9D` can be read out or written as two groups, `K7MPQ 2XW9D` or `K7MPQ-2XW9D`. The driver may type it with or without the space or dash, in either letter case.
 
+## Empty and short codes
+
+`m6_hash_work_code` never returns NULL. Several driver functions refuse a caller with `stored_digest <> m6_hash_work_code(code)`; a NULL digest would make that comparison NULL and let an empty code through. Empty, missing and short input therefore still produce a digest, which cannot match a stored one.
+
 ## Not covered
 
 - There is no per-driver limit on wrong attempts in the database. A failed attempt raises an error, which rolls back any counter written in the same call. With about 49 bits of code space, guessing through the public API is not practical, but an attempt limit at the API edge is still planned before an open public launch.

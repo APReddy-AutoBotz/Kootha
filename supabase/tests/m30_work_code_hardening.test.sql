@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(21);
+select plan(28);
 
 select matches(
   public.m6_hash_work_code('ABCD2345EF'),
@@ -14,10 +14,11 @@ select is(
   'Work Code digests ignore spaces, dashes and letter case'
 );
 
-select is(
-  public.m6_hash_work_code('AB1'),
-  null::text,
-  'Codes shorter than four letters or numbers never produce a digest'
+select ok(
+  public.m6_hash_work_code('') is not null
+    and public.m6_hash_work_code(null) is not null
+    and public.m6_hash_work_code('AB') is not null,
+  'Empty, missing and short codes still produce a digest, so driver RPC comparisons cannot become NULL'
 );
 
 select isnt(
@@ -74,13 +75,13 @@ insert into public.ad_works (
   id, title, start_date, end_date, status, planning_status,
   assignment_status, execution_release_status, execution_overall_status,
   closure_status, execution_mode, driver_required, vehicle_required,
-  speaker_required, areas_required
+  speaker_required, areas_required, mobile_location_proof_required
 ) values (
   '30a00000-0000-4000-8000-000000000101',
   'Fake M30 hardened Work Code control',
-  current_date + 1, current_date + 1,
+  current_date, current_date,
   'scheduled', 'planned', 'not_assigned', 'not_released', 'not_started',
-  'not_ready', 'driver_app', true, false, false, false
+  'not_ready', 'driver_app', true, false, false, false, true
 );
 
 insert into public.ad_work_days (
@@ -88,7 +89,7 @@ insert into public.ad_work_days (
 ) values (
   '30a00000-0000-4000-8000-000000000201',
   '30a00000-0000-4000-8000-000000000101',
-  current_date + 1, 'scheduled', 'planned', 'planned'
+  current_date, 'scheduled', 'planned', 'planned'
 );
 
 -- Work released before this migration: its stored digest is unsalted MD5.
@@ -202,6 +203,79 @@ select is(
   ),
   1::bigint,
   'Driver can type the code in lower case with a dash and spaces'
+);
+
+-- A driver RPC that compares digests with "<>" must refuse an empty, missing
+-- or short Work Code even when the session id and mobile number are right.
+select lives_ok(
+  format(
+    $$select * from public.driver_update_work_day('9000000330', %L, '30a00000-0000-4000-8000-000000000201', 'start', null, null, null)$$,
+    current_setting('m30.code')
+  ),
+  'Driver starts work with the issued code'
+);
+
+select ok(
+  set_config(
+    'm30.session',
+    (
+      select started.tracking_session_id::text
+      from public.driver_start_mobile_tracking(
+        '9000000330', current_setting('m30.code'),
+        '30a00000-0000-4000-8000-000000000201', true
+      ) as started
+    ),
+    true
+  ) is not null,
+  'Driver starts Location Proof with the issued code'
+);
+
+select lives_ok(
+  format(
+    $$select * from public.driver_record_mobile_location_point('9000000330', %L, %L::uuid, 0, 0, 5, null, null, clock_timestamp(), 'm30-synthetic-point-1')$$,
+    current_setting('m30.code'), current_setting('m30.session')
+  ),
+  'A location point is saved with the issued code'
+);
+
+select throws_ok(
+  format(
+    $$select * from public.driver_record_mobile_location_point('9000000330', '', %L::uuid, 0, 0, 5, null, null, clock_timestamp(), 'm30-synthetic-point-2')$$,
+    current_setting('m30.session')
+  ),
+  '42501',
+  'Invalid work code or mobile number',
+  'A location point with an empty Work Code is refused'
+);
+
+select throws_ok(
+  format(
+    $$select * from public.driver_record_mobile_location_point('9000000330', null, %L::uuid, 0, 0, 5, null, null, clock_timestamp(), 'm30-synthetic-point-3')$$,
+    current_setting('m30.session')
+  ),
+  '42501',
+  'Invalid work code or mobile number',
+  'A location point with a missing Work Code is refused'
+);
+
+select throws_ok(
+  format(
+    $$select * from public.driver_sync_mobile_location_points_v2('9000000330', '', %L::uuid, '[]'::jsonb, 0)$$,
+    current_setting('m30.session')
+  ),
+  '42501',
+  'Invalid work code or mobile number',
+  'A location sync with an empty Work Code is refused'
+);
+
+select throws_ok(
+  format(
+    $$select * from public.driver_stop_mobile_tracking(%L, 'AB', %L::uuid, 'other')$$,
+    '9000000330', current_setting('m30.session')
+  ),
+  '42501',
+  'Invalid work code or mobile number',
+  'Stopping Location Proof with a short Work Code is refused'
 );
 
 select throws_ok(
