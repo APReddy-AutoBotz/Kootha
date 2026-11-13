@@ -36,4 +36,14 @@ cross join lateral extensions.plpgsql_check_function_tb(
   extra_warnings => false
 ) as finding
 where finding.level = 'error'
+  -- Two trigger functions serve several tables and read a NEW/OLD field only
+  -- inside a branch guarded by tg_table_name, so the field is never read on a
+  -- table that lacks it. A static check cannot see that guard.
+  and not (
+    finding.sqlstate = '42703'
+    and (
+      routine.signature like 'm23\_enqueue\_authority\_change() on %'
+      or routine.signature = 'm25_protect_immutable() on m25_feature_values'
+    )
+  )
 order by routine.signature, finding.lineno;

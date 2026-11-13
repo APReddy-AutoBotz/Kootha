@@ -515,6 +515,31 @@ async function main() {
     return session;
   });
 
+  await step("Admin: Stop Phone Location Proof; the driver can start it again", async () => {
+    const stopped = await rpc("Admin stop Location Proof", "anon", adminToken, "admin_stop_mobile_tracking", {
+      p_tracking_session_id: sessionId,
+    });
+    expect(stopped?.[0]?.status === "stopped", "Admin stop did not stop Location Proof", JSON.stringify(stopped));
+    const late = locationPoint(sessionId);
+    const refusedPoint = await call("anon", undefined, "POST", "/rest/v1/rpc/driver_record_mobile_location_point", {
+      ...driverAuth,
+      p_tracking_session_id: sessionId,
+      p_lat: late.latitude,
+      p_lng: late.longitude,
+      p_accuracy: late.accuracy,
+      p_speed: null,
+      p_heading: null,
+      p_captured_at: late.captured_at,
+      p_client_point_id: late.client_point_id,
+    });
+    expect(!refusedPoint.ok, "A location point was saved after the admin stopped Location Proof", refusedPoint.text);
+    const restarted = await rpc("Start Location Proof again", "anon", undefined, "driver_start_mobile_tracking", {
+      ...driverAuth, p_ad_work_day_id: dayId, p_driver_consent: true,
+    });
+    expect(typeof restarted?.[0]?.tracking_session_id === "string", "Driver could not start Location Proof again", JSON.stringify(restarted));
+    note("Session after restart is " + (restarted[0].tracking_session_id === sessionId ? "the same" : "a new") + " session; status " + restarted[0].status);
+  });
+
   await step("Driver app: add a Proof Note", async () => {
     await workAction("add_proof_note", {
       p_note: "Fake announcement done near the market",
@@ -586,10 +611,9 @@ async function main() {
       "Read tracking sessions", "anon", adminToken, "GET",
       "/rest/v1/tracking_sessions?select=" + listQueries.get("tracking_sessions") + "&ad_work_id=eq." + adWorkId,
     );
-    const session = sessions?.find((row) => row.id === sessionId);
-    expect(Boolean(session), "Admin cannot see the tracking session", JSON.stringify(sessions));
-    expect(session.status !== "running", "Location Proof is still running after End Work", JSON.stringify(session));
-    note("Tracking session status after End Work: " + session.status);
+    expect(sessions?.some((row) => row.id === sessionId), "Admin cannot see the tracking session", JSON.stringify(sessions));
+    expect(sessions.every((row) => row.status !== "running"), "Location Proof is still running after End Work", JSON.stringify(sessions.map((row) => row.status)));
+    note("Tracking session statuses after End Work: " + sessions.map((row) => row.status).join(", "));
 
     const points = await mustCall(
       "Read location points", "anon", adminToken, "GET",
