@@ -79,7 +79,7 @@ insert into public.ad_works (
 ) values (
   '30a00000-0000-4000-8000-000000000101',
   'Fake M30 hardened Work Code control',
-  current_date, current_date,
+  public.m30_business_date(), public.m30_business_date(),
   'scheduled', 'planned', 'not_assigned', 'not_released', 'not_started',
   'not_ready', 'driver_app', true, false, false, false, true
 );
@@ -89,7 +89,7 @@ insert into public.ad_work_days (
 ) values (
   '30a00000-0000-4000-8000-000000000201',
   '30a00000-0000-4000-8000-000000000101',
-  current_date, 'scheduled', 'planned', 'planned'
+  public.m30_business_date(), 'scheduled', 'planned', 'planned'
 );
 
 -- Work released before this migration: its stored digest is unsalted MD5.
@@ -102,7 +102,7 @@ insert into public.ad_works (
 ) values (
   '30a00000-0000-4000-8000-000000000102',
   'Fake M30 legacy MD5 Work Code control',
-  current_date, current_date, 1,
+  public.m30_business_date(), public.m30_business_date(), 1,
   'scheduled', 'planned', 'ready_for_execution',
   'released_to_driver', 'not_started',
   'not_ready', 'driver_app', true, true,
@@ -125,7 +125,7 @@ insert into public.ad_work_days (
 ) values (
   '30a00000-0000-4000-8000-000000000202',
   '30a00000-0000-4000-8000-000000000102',
-  current_date, 'scheduled', 'planned', 'ready',
+  public.m30_business_date(), 'scheduled', 'planned', 'ready',
   '30a00000-0000-4000-8000-000000000003',
   '30a00000-0000-4000-8000-000000000004'
 );

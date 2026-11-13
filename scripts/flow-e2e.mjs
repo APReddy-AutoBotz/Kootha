@@ -33,7 +33,8 @@ if (!["127.0.0.1", "localhost", "[::1]"].includes(apiHost)) {
 }
 
 const runId = Date.now().toString(36) + randomBytes(3).toString("hex");
-const today = new Date().toISOString().slice(0, 10);
+// Work days are calendar dates in the business time zone, not UTC dates.
+const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
 const results = [];
 let currentStep = "startup";
 
@@ -711,6 +712,8 @@ async function main() {
     expect(typeof summary?.final_summary_id === "string", "Final Proof Summary was not created", JSON.stringify(prepared));
     note("Closure status after review: " + summary.closure_status + "; warnings: " + JSON.stringify(summary.warnings ?? []));
     expect(typeof summary.summary_text === "string" && summary.summary_text.length > 0, "Final Proof Summary text is empty");
+    expect(!/\d{2}:\d{2}:\d{2}\.\d+|\+00\b/.test(summary.summary_text), "Final Proof Summary text prints raw database timestamps", summary.summary_text);
+    expect(/\d{2} [A-Z][a-z]{2} \d{4}, \d{2}:\d{2} (AM|PM)/.test(summary.summary_text), "Final Proof Summary text has no readable local time", summary.summary_text);
     // The fake points sit near 15.5, 80.05. Neither value may reach customer-facing text.
     expect(!/\b(15\.5\d{2,}|80\.05\d{2,})/.test(summary.summary_text), "Final Proof Summary text contains the phone's coordinates", summary.summary_text);
 
