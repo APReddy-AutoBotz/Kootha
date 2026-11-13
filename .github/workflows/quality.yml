@@ -26,6 +26,11 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
+      - name: Bundle Android JavaScript from the clean checkout
+        run: pnpm --filter @kootha/driver bundle:android
+        env:
+          EXPO_OFFLINE: "1"
+          EXPO_NO_TELEMETRY: "1"
       - run: pnpm security:scan
       - run: pnpm migrations:check
       - run: git diff --check
