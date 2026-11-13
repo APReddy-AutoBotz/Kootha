@@ -44,6 +44,7 @@ const businessName = "Fake Browser Stores " + runId;
 const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
 const problems = [];
 const passed = [];
+const dumpNames = new Set((process.env.BROWSER_E2E_DUMP ?? "").split(",").map((name) => name.trim()).filter(Boolean));
 
 function problem(where, what) {
   problems.push({ where, what });
@@ -153,6 +154,11 @@ async function report(page, watcher, where, { allowAlerts = false } = {}) {
     problem(where, "Page is " + overflow + "px wider than the screen and scrolls sideways.");
   }
   await page.screenshot({ path: path.join(outDir, slug(where) + ".png"), fullPage: true });
+  if (dumpNames.has(slug(where))) {
+    // Lets a reviewer without access to the uploaded files see a screen from the job log.
+    const jpeg = await page.screenshot({ type: "jpeg", quality: 38, fullPage: false });
+    console.log("::screen::" + slug(where) + "::" + jpeg.toString("base64") + "::end");
+  }
   return seen.errors.length + seen.refused.length;
 }
 
@@ -254,9 +260,31 @@ async function adminPages(context, credentials, label, { act }) {
       }
     }
 
-    const logout = page.getByRole("button", { name: "Log out" }).first();
-    if (await logout.count() > 0 && await logout.isVisible()) {
-      await logout.click();
+    const logout = page.locator(".admin-sidebar-footer").getByRole("button", { name: "Log out" });
+    const reachable = await logout.click({ timeout: 5000 }).then(() => true).catch(() => false);
+    if (!reachable) {
+      const layout = await page.evaluate(() => {
+        const box = (selector) => {
+          const element = document.querySelector(selector);
+          if (!element) return null;
+          const rect = element.getBoundingClientRect();
+          const style = getComputedStyle(element);
+          return {
+            top: Math.round(rect.top), bottom: Math.round(rect.bottom), height: Math.round(rect.height),
+            scrollHeight: element.scrollHeight, clientHeight: element.clientHeight,
+            position: style.position, overflowY: style.overflowY,
+          };
+        };
+        return {
+          window: { width: window.innerWidth, height: window.innerHeight },
+          sidebar: box(".admin-sidebar"),
+          nav: box(".admin-nav-list"),
+          footer: box(".admin-sidebar-footer"),
+        };
+      });
+      problem(where + " log out", "The Log out button in the sidebar cannot be reached on a " + layout.window.width + "x" + layout.window.height + " screen. Layout: " + JSON.stringify(layout));
+      await report(page, watcher, where + " log out unreachable", { allowAlerts: true });
+    } else {
       await settle(page);
       if (await page.locator('input[type="password"]').count() === 0) {
         problem(where + " log out", "Logging out did not return to the login form.");
