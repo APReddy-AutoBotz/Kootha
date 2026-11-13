@@ -1114,6 +1114,7 @@ export function App() {
     const captureGeneration = locationCaptureGeneration.current;
     let activeWork = currentWork;
     let bufferedPoint: BufferedLocationPoint | null = null;
+    const locationFix = { timedOut: false };
 
     try {
       const authorizedWork = await refreshActiveLocationAuthorization(
@@ -1156,6 +1157,7 @@ export function App() {
           Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
           new Promise<never>((_resolve, reject) => {
             locationFixTimer = setTimeout(() => {
+              locationFix.timedOut = true;
               reject(new Error("Could not get this phone's location. Move to an open place and try again."));
             }, 20000);
           }),
@@ -1260,6 +1262,14 @@ export function App() {
         setLocationStatus("stopped");
         setLocationHealthStatus("stopped");
         setLocationMessage("Location Proof stopped because active work authorization changed.");
+        return false;
+      }
+
+      if (locationFix.timedOut) {
+        // No point was saved. Tell the driver even during automatic capture,
+        // and report that this attempt did not keep capture active so Start
+        // does not go on to say Location Proof is running.
+        setLocationMessage(error instanceof Error ? error.message : "Could not save location update.");
         return false;
       }
 
