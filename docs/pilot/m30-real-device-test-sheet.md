@@ -43,7 +43,7 @@ One complete fake-data job on a physical Android phone, from Work Code entry to 
 
 - Location is captured only while the app is open on screen. A locked screen or another app in front stops capture until the driver returns.
 - The app does not remember the mobile number and Work Code after it is closed. The driver types both again.
-- The server decides "today" in UTC. Between midnight and 05:30 India time, Start Location Proof and Upload Photo Proof are refused for that day's work.
+- The server decides "today" by the India calendar date, so Start Location Proof and Upload Photo Proof work between midnight and 05:30 India time. If either is refused for today's work in those hours, record it as a failure.
 - If the phone cannot get a location within 20 seconds, the app shows a message and tries again on the next interval.
 
 ## Outcome

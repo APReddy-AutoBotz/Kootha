@@ -88,6 +88,17 @@ const locationBufferStorageKey = "kootha-driver-location-buffer-v1";
 const applicationSubmissionAttemptStorageKey = "kootha-driver-application-attempt-v1";
 const proofSubmissionAttemptStorageKey = "kootha-driver-proof-attempt-v1";
 const proofUploadRequestTimeoutMs = 60_000;
+const locationFixUnavailableMessage = "Could not get this phone's location. Move to an open place and try again.";
+const noInternetMessage = "No internet connection. Check mobile data or Wi-Fi and try again.";
+
+// fetch reports a dropped connection as a TypeError reading "Network request
+// failed". Show drivers a plain message instead of that text.
+function toDriverErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof TypeError && /network request failed/i.test(error.message)) {
+    return noInternetMessage;
+  }
+  return error instanceof Error ? error.message : fallback;
+}
 
 type DriverScreen = "work" | "register";
 type WorkPanel = "work" | "proof" | "help";
@@ -648,8 +659,33 @@ function SecondaryButton({
     </Pressable>
   );
 }
+const shortMonthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+// "2026-11-14" -> "14 Nov 2026". Built by hand because Hermes' Intl support
+// varies between Android versions.
 function formatDate(value: string | null | undefined) {
-  return value || "Not set";
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value ?? "");
+  const month = match ? shortMonthNames[Number(match[2]) - 1] : undefined;
+  if (!match || !month) {
+    return value || "Not set";
+  }
+  return Number(match[3]) + " " + month + " " + match[1];
+}
+
+// "09:00:00" -> "9:00 AM", "21:30:00" -> "9:30 PM".
+function formatTime(value: string | null | undefined) {
+  const match = /^(\d{1,2}):(\d{2})/.exec(value ?? "");
+  if (!match) {
+    return value || "";
+  }
+  const hours = Number(match[1]);
+  return (hours % 12 || 12) + ":" + match[2] + " " + (hours < 12 ? "AM" : "PM");
+}
+
+function formatTimeRange(start: string | null | undefined, end: string | null | undefined) {
+  const from = formatTime(start);
+  const to = formatTime(end);
+  return from && to ? from + " to " + to : from || to;
 }
 
 // Planned work dates are calendar dates in the driver's own time zone. A UTC
@@ -777,6 +813,7 @@ export function App() {
   const locationSyncInFlight = useRef(false);
   const workActionInFlight = useRef(false);
   const applicationSubmissionAttempt = useRef<IdempotencyAttempt | null>(null);
+  const screenScroll = useRef<ScrollView | null>(null);
   const proofSubmissionAttempt = useRef<IdempotencyAttempt | null>(null);
   const configured = useMemo(() => Boolean(getDriverSupabaseConfig()), []);
   const today = getLocalDateKey();
@@ -881,7 +918,7 @@ export function App() {
       await refreshAssignedWork();
     } catch (error) {
       setWorkRows([]);
-      setWorkMessage(error instanceof Error ? error.message : "Could not open assigned work.");
+      setWorkMessage(toDriverErrorMessage(error, "Could not open assigned work."));
     } finally {
       setIsWorkLoading(false);
     }
@@ -1090,6 +1127,10 @@ export function App() {
     }
   }
 
+  function clearLocationFixWarning() {
+    setLocationMessage((current) => (current === locationFixUnavailableMessage ? "" : current));
+  }
+
   async function recordCurrentLocationPoint(
     trackingSessionId: string,
     showMessage = true,
@@ -1150,16 +1191,19 @@ export function App() {
       let position: Location.LocationObject;
       // A phone with no GPS fix can leave this request pending forever, which
       // would keep locationCaptureInFlight set and silently skip every later
-      // capture. Give up after 20 seconds so the next interval can try again.
+      // capture. Give up after 30 seconds so the next interval can try again.
+      // High accuracy uses GPS. Balanced relies on network location, which
+      // needs internet, so it returned no fix at all while the phone was
+      // offline and nothing reached the offline buffer.
       let locationFixTimer: ReturnType<typeof setTimeout> | null = null;
       try {
         position = await Promise.race([
-          Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+          Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High }),
           new Promise<never>((_resolve, reject) => {
             locationFixTimer = setTimeout(() => {
               locationFix.timedOut = true;
-              reject(new Error("Could not get this phone's location. Move to an open place and try again."));
-            }, 20000);
+              reject(new Error(locationFixUnavailableMessage));
+            }, 30000);
           }),
         ]);
         if (captureGeneration !== locationCaptureGeneration.current) {
@@ -1236,6 +1280,8 @@ export function App() {
       }
       if (showMessage) {
         setLocationMessage("Location update saved (" + localQuality + ").");
+      } else {
+        clearLocationFixWarning();
       }
     } catch (error) {
       if (captureGeneration !== locationCaptureGeneration.current) {
@@ -1254,6 +1300,8 @@ export function App() {
         setLocationHealthStatus("offline_saving");
         if (showMessage) {
           setLocationMessage(driverLabels.locationSavedOffline + ".");
+        } else {
+          clearLocationFixWarning();
         }
         return true;
       }
@@ -1265,16 +1313,17 @@ export function App() {
         return false;
       }
 
-      if (locationFix.timedOut) {
-        // No point was saved. Tell the driver even during automatic capture,
-        // and report that this attempt did not keep capture active so Start
-        // does not go on to say Location Proof is running.
-        setLocationMessage(error instanceof Error ? error.message : "Could not save location update.");
+      if (locationFix.timedOut || !bufferedPoint) {
+        // The phone gave no location, so there is nothing to save or buffer.
+        // Tell the driver even during automatic capture, and report that this
+        // attempt did not keep capture active so Start does not go on to say
+        // Location Proof is running.
+        setLocationMessage(locationFixUnavailableMessage);
         return false;
       }
 
       if (showMessage) {
-        setLocationMessage(error instanceof Error ? error.message : "Could not save location update.");
+        setLocationMessage(toDriverErrorMessage(error, "Could not save location update."));
       }
       return true;
     } finally {
@@ -1366,7 +1415,7 @@ export function App() {
         setLocationStatus("stopped");
         setLocationHealthStatus("stopped");
       }
-      setLocationMessage(error instanceof Error ? error.message : "Could not start Location Proof.");
+      setLocationMessage(toDriverErrorMessage(error, "Could not start Location Proof."));
     } finally {
       setIsLocationBusy(false);
     }
@@ -1397,7 +1446,7 @@ export function App() {
         }
       }
       setLocationStatus((status) => status === "running" ? localStopStatus : status);
-      setLocationMessage(error instanceof Error ? error.message : "Could not stop Location Proof.");
+      setLocationMessage(toDriverErrorMessage(error, "Could not stop Location Proof."));
     } finally {
       setIsLocationBusy(false);
     }
@@ -1471,7 +1520,7 @@ export function App() {
           // Preserve the original mutation error when the reconciliation read is also unavailable.
         }
       }
-      setWorkMessage(error instanceof Error ? error.message : "Could not save work update.");
+      setWorkMessage(toDriverErrorMessage(error, "Could not save work update."));
     } finally {
       workActionInFlight.current = false;
       setIsWorkLoading(false);
@@ -1568,10 +1617,13 @@ export function App() {
       setProofPhoto(null);
       setProofNote("");
       setProofArea("");
+      // Refresh first: it sets its own "Assigned Work opened." message, which
+      // used to replace Proof Sent. The proof is already saved, so a failed
+      // refresh must not turn this into an error.
+      await refreshAssignedWork().catch(() => undefined);
       setWorkMessage(driverLabels.proofSent + ".");
-      await refreshAssignedWork();
     } catch (error) {
-      setWorkMessage(error instanceof Error ? error.message : "Could not send proof.");
+      setWorkMessage(toDriverErrorMessage(error, "Could not send proof."));
     } finally {
       setIsProofSubmitting(false);
     }
@@ -1622,8 +1674,11 @@ export function App() {
       applicationSubmissionAttempt.current = null;
       setForm(initialDriverApplication);
       setStatusMessage(driverLabels.applicationSent + ". " + driverLabels.waitingForApproval + ".");
+      // The form clears but the screen stays where it was; bring the
+      // confirmation beside the Submit button into view.
+      setTimeout(() => screenScroll.current?.scrollToEnd({ animated: true }), 100);
     } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Could not submit details right now.");
+      setStatusMessage(toDriverErrorMessage(error, "Could not submit details right now."));
     } finally {
       setIsSubmitting(false);
     }
@@ -1655,7 +1710,7 @@ export function App() {
   }
   return (
     <SafeAreaView style={styles.screen}>
-      <ScrollView contentContainerStyle={styles.shell} keyboardShouldPersistTaps="handled">
+      <ScrollView ref={screenScroll} contentContainerStyle={styles.shell} keyboardShouldPersistTaps="handled">
         <KoothaBrand name={productName} />
 
         <Pressable style={styles.languageButton} onPress={() => setLocale((current) => current === "en" ? "te" : "en")} accessibilityRole="button">
@@ -1753,7 +1808,7 @@ export function App() {
                 <View style={styles.workSummary}>
                   <View style={styles.summaryItem}>
                     <MaterialCommunityIcons name="calendar-outline" size={22} color="#b83f12" />
-                    <View><Text style={styles.summaryLabel}>Date and time</Text><Text style={styles.summaryValue}>{formatDate(currentWork.planned_date)} {currentWork.planned_start_time || ""} {currentWork.planned_end_time || ""}</Text></View>
+                    <View><Text style={styles.summaryLabel}>Date and time</Text><Text style={styles.summaryValue}>{[formatDate(currentWork.planned_date), formatTimeRange(currentWork.planned_start_time, currentWork.planned_end_time)].filter(Boolean).join(", ")}</Text></View>
                   </View>
                   <View style={styles.summaryItem}>
                     <MaterialCommunityIcons name="map-marker-outline" size={22} color="#b83f12" />
