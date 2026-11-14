@@ -430,6 +430,7 @@ type LocationPointRecord = {
   heading: number | null;
   quality: LocationQuality;
   client_point_id: string | null;
+  offline_synced: boolean;
   created_at: string;
 };
 
@@ -928,6 +929,7 @@ const locationPointSelectColumns = [
   "heading",
   "quality",
   "client_point_id",
+  "offline_synced",
   "created_at"
 ].join(",");
 
@@ -1367,6 +1369,19 @@ async function fetchAdminProofUploads(config: SupabaseConfig, session: AuthSessi
   }
 
   return await response.json() as ProofUploadRecord[];
+}
+
+async function fetchAdWorkIdsWithProofWaitingReview(config: SupabaseConfig, session: AuthSession): Promise<string[]> {
+  const response = await adminFetch(config, session, config.url + "/rest/v1/proof_uploads?select=ad_work_id&review_status=eq.waiting_review", {
+    headers: createHeaders(config, session.accessToken)
+  });
+
+  if (!response.ok) {
+    throw new Error("Could not load proof waiting review.");
+  }
+
+  const rows = await response.json() as { ad_work_id: string | null }[];
+  return [...new Set(rows.map((row) => row.ad_work_id).filter((id): id is string => Boolean(id)))];
 }
 
 async function fetchExecutionProofNotes(config: SupabaseConfig, session: AuthSession, adWorkId: string): Promise<ExecutionProofNoteRecord[]> {
@@ -2862,14 +2877,20 @@ function OperationsDashboard({
   enquiries,
   adWorks,
   adWorkDays,
+  adWorkIdsWithProofWaiting,
   onOpen
 }: {
   enquiries: EnquiryRecord[];
   adWorks: AdWorkRecord[];
   adWorkDays: AdWorkDayRecord[];
+  adWorkIdsWithProofWaiting: readonly string[];
   onOpen: (view: AdminView, step?: AdWorkWorkflowStep, adWorkId?: string) => void;
 }) {
   const actions = adWorks.map((adWork) => ({ adWork, next: getAdWorkNextAction(adWork, adWorkDays.filter((day) => day.ad_work_id === adWork.id)) }));
+  // A photo sent while work is still running needs review too, so count work
+  // with any photo waiting review as well as work whose next step is review.
+  const proofWaitingIds = new Set(adWorkIdsWithProofWaiting);
+  const proofReviewWork = actions.filter(({ adWork, next }) => next.action === "review_proof" || proofWaitingIds.has(adWork.id));
   const queueItems: {
     label: string;
     helper: string;
@@ -2907,11 +2928,11 @@ function OperationsDashboard({
     {
       label: "Proof to review",
       helper: "Review completed work, photos, and updates",
-      value: actions.filter(({ next }) => next.action === "review_proof").length,
+      value: proofReviewWork.length,
       icon: Megaphone,
       view: "adWorks",
       step: "proof",
-      adWorkId: actions.find(({ next }) => next.action === "review_proof")?.adWork.id
+      adWorkId: proofReviewWork[0]?.adWork.id
     },
     {
       label: "Ready to close",
@@ -5261,7 +5282,9 @@ function AdminMobileLocationProofPanel({
   const latestSession = getLatestSession(sessions);
   const activeSession = sessions.find((sessionRow) => ["running", "paused", "permission_missing", "failed", "not_started"].includes(sessionRow.status));
   const totalPointsReceived = sessions.reduce((total, sessionRow) => total + (sessionRow.point_count ?? 0), 0) || points.length;
-  const offlinePointsSynced = points.filter((point) => Boolean(point.client_point_id)).length;
+  // Live phone points carry a client_point_id too, so only the server's
+  // offline_synced flag says a point came from the offline buffer.
+  const offlinePointsSynced = points.filter((point) => point.offline_synced).length;
   const unsyncedPoints = sessions.reduce((total, sessionRow) => total + (sessionRow.client_pending_point_count ?? 0), 0);
   const syncFailureCount = sessions.reduce((total, sessionRow) => total + (sessionRow.sync_failure_count ?? 0), 0);
   const lastSuccessfulSync = sessions
@@ -5587,7 +5610,7 @@ function AdminMobileLocationProofPanel({
                 <td>{point.accuracy_meters === null ? "Not set" : point.accuracy_meters + " m"}</td>
                 <td>{point.speed === null ? "Not set" : point.speed}</td>
                 <td>Phone</td>
-                <td>{point.client_point_id ? "Synced from offline buffer" : "Saved"}</td>
+                <td>{point.offline_synced ? "Synced from offline buffer" : "Saved"}</td>
                 <td>{getLocationQualityLabel(point.quality)}</td>
                 {showTechnicalLocationValues && <td>{point.lat}, {point.lng}</td>}
               </tr>
@@ -6535,6 +6558,7 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
   const [enquiries, setEnquiries] = useState<EnquiryRecord[]>([]);
   const [adWorks, setAdWorks] = useState<AdWorkRecord[]>([]);
   const [adWorkDays, setAdWorkDays] = useState<AdWorkDayRecord[]>([]);
+  const [adWorkIdsWithProofWaiting, setAdWorkIdsWithProofWaiting] = useState<string[]>([]);
   const [cities, setCities] = useState<CityRecord[]>([]);
   const [areas, setAreas] = useState<AreaRecord[]>([]);
   const [filters, setFilters] = useState<AdminFilters>(emptyFilters);
@@ -6652,9 +6676,10 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
         fetchAdminAdWorks(activeConfig, activeSession),
         fetchAdminAdWorkDays(activeConfig, activeSession),
         fetchCities(activeConfig, activeSession),
-        fetchAreas(activeConfig, activeSession)
+        fetchAreas(activeConfig, activeSession),
+        fetchAdWorkIdsWithProofWaitingReview(activeConfig, activeSession)
       ]);
-      const [enquiryResult, adWorkResult, dayResult, cityResult, areaResult] = results;
+      const [enquiryResult, adWorkResult, dayResult, cityResult, areaResult, proofWaitingResult] = results;
 
       if (enquiryResult.status === "fulfilled") {
         setEnquiries(enquiryResult.value);
@@ -6667,8 +6692,9 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
       if (dayResult.status === "fulfilled") setAdWorkDays(dayResult.value);
       if (cityResult.status === "fulfilled") setCities(cityResult.value);
       if (areaResult.status === "fulfilled") setAreas(areaResult.value);
+      if (proofWaitingResult.status === "fulfilled") setAdWorkIdsWithProofWaiting(proofWaitingResult.value);
 
-      const failedSections = ["enquiries", "advertisement work", "work days", "cities", "areas"]
+      const failedSections = ["enquiries", "advertisement work", "work days", "cities", "areas", "proof waiting review"]
         .filter((_, index) => results[index]?.status === "rejected");
       if (failedSections.length > 0) {
         setLoadError("Could not load: " + failedSections.join(", ") + ". Refresh after checking the database setup.");
@@ -6694,6 +6720,7 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
     setEnquiries([]);
     setAdWorks([]);
     setAdWorkDays([]);
+    setAdWorkIdsWithProofWaiting([]);
     setSelectedEnquiryId(null);
     setSelectedAdWorkId(null);
     setDraft(null);
@@ -6950,6 +6977,7 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
             enquiries={enquiries}
             adWorks={adWorks}
             adWorkDays={adWorkDays}
+            adWorkIdsWithProofWaiting={adWorkIdsWithProofWaiting}
             onOpen={(view, step, adWorkId) => {
               setActiveView(view);
               if (step) setActiveAdWorkStep(step);
@@ -7368,6 +7396,20 @@ export function AdminLeadManagement({ productName }: { productName: string }) {
                         onChange={(event) => updateAdWorkDraft("advertisementDetails", event.target.value)}
                       />
                     </label>
+                    <label>
+                      Package
+                      <select
+                        value={adWorkDraft.packageInterest}
+                        onChange={(event) => updateAdWorkDraft("packageInterest", event.target.value as PackageInterest)}
+                      >
+                        {packageInterestOptions.map((option) => (
+                          <option key={option} value={option}>{packageInterestLabels[option]}</option>
+                        ))}
+                      </select>
+                    </label>
+                    {adWorkDraft.packageInterest === "not_sure" && (
+                      <p className="form-help">Choose a package before releasing this work to a driver.</p>
+                    )}
                     <fieldset className="delivery-method-fieldset">
                       <legend>How will this work be delivered?</legend>
                       <p>Choose the closest option. The campaign subject can be anything.</p>

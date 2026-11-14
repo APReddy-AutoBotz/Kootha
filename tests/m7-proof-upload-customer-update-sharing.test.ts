@@ -59,7 +59,7 @@ describe("M7 proof upload and customer update sharing", () => {
     expect(validatePhotoProofInput("ready", { note: "", areaPlaceName: "", mimeType: "image/png", fileSize: 100 })).toEqual([
       "Upload Photo Proof is allowed only when work is Running or On Break.",
       "Area or Place Name is required.",
-      "What happened? is required."
+      "Proof note is required. Write what was done."
     ]);
     expect(Object.values(businessLabels.driver)).toEqual(expect.arrayContaining([
       "Upload Photo Proof",

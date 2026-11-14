@@ -28,6 +28,19 @@ pnpm dev:driver
 
 For a development build or APK, AP must choose the build service and provide setup outside Git. Keep account tokens, credentials, keystores, and build artifacts out of this repository.
 
+### Local release APK on Windows
+
+This is how the 14 Nov 2026 phone test build was made. It needs the generated `apps/driver/android` folder (ignored by Git), Android Studio's JDK as `JAVA_HOME`, and `apps/driver/.env.local` holding the hosted URL, the public anon key and `EXPO_PUBLIC_ADMIN_PHONE`.
+
+```bash
+cd apps/driver/android
+export ANDROID_HOME="$LOCALAPPDATA\\Android\\Sdk" SENTRY_DISABLE_AUTO_UPLOAD=true NODE_ENV=production EXPO_NO_METRO_WORKSPACE_ROOT=1
+./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a
+adb install -r app/build/outputs/apk/release/app-release.apk
+```
+
+`EXPO_NO_METRO_WORKSPACE_ROOT=1` is needed on Windows: without it Metro roots itself at the workspace and cannot find `index.ts`. `metro.config.js` adds the workspace root to `watchFolders` so `@kootha/shared` still resolves. The release build is signed with the debug key, which is fine for a private test install only.
+
 ## Before Generating A Real-Device Build
 
 - Confirm `.env.example` contains placeholders only.

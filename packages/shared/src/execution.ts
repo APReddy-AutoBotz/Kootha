@@ -169,7 +169,7 @@ export function validatePhotoProofInput(
   }
 
   if (!input.note.trim()) {
-    errors.push("What happened? is required.");
+    errors.push("Proof note is required. Write what was done.");
   }
 
   return [...errors, ...validateProofPhotoFile(input)];

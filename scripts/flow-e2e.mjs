@@ -530,6 +530,13 @@ async function main() {
       ...driverAuth, p_tracking_session_id: session, p_points: buffered, p_client_pending_count: 0,
     });
     expect(resynced?.[0]?.point_count === synced[0].point_count, "Re-sending the same points created duplicates", JSON.stringify(resynced));
+
+    // Only points sent from the offline buffer may be marked offline_synced; the live point may not.
+    const sessionPoints = await mustCall("Read session points", "anon", adminToken, "GET",
+      "/rest/v1/location_points?select=client_point_id,offline_synced&tracking_session_id=eq." + session);
+    const bufferedIds = new Set(buffered.map((point) => point.client_point_id));
+    const wronglyFlagged = (sessionPoints ?? []).filter((point) => point.offline_synced !== bufferedIds.has(point.client_point_id));
+    expect(sessionPoints?.length === 3 && wronglyFlagged.length === 0, "offline_synced does not match how each point arrived", JSON.stringify(sessionPoints));
     note("Points after sync: " + synced[0].point_count + "; duplicate_count on retry: " + resynced?.[0]?.duplicate_count);
     return session;
   });
