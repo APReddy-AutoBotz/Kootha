@@ -76,7 +76,7 @@ Smaller fixes:
 - Finding 5: the dashboard counts work with any photo waiting review.
 - Smaller fixes: plain no-internet message, scroll to the registration confirmation, readable date and time, "Proof note is required" wording, and "Proof Sent" stays after an upload.
 
-Still open: finding 3 (rebuild the Netlify site with the current project's URL and public key), finding 6 (set `EXPO_PUBLIC_ADMIN_PHONE` for the driver build), applying the new migration to the hosted project, and a retest on the phone including row 8.
+Also done after the run: finding 3 (Netlify rebuilt from `main` with the current project's URL and publishable key; admin login works there), finding 6 (`EXPO_PUBLIC_ADMIN_PHONE` set for the driver build), and the new migration applied to the hosted project with the ledger matching the repo.
 
 ## Outcome
 
@@ -89,3 +89,33 @@ Still open: finding 3 (rebuild the Netlify site with the current project's URL a
 | Rows failed | None on final attempt; row 10 failed once |
 | Blocked rows and reason | 8: the deny tap granted instead, and adb cannot reset the permission on this phone |
 | Decision | Fix and retest |
+
+## Retest, same evening
+
+A fresh fake job ("Fake phone retest job"), released from the Netlify admin page, on a new APK built from `main` after PR #50 with the admin phone set.
+
+| # | Result | Note |
+| --- | --- | --- |
+| 1 | Pass | Offline shows "No internet connection. Check mobile data or Wi-Fi and try again." "Call Kootha admin" opens a phone app with the number. |
+| 2 | Pass | "Application Sent" is in view right after submit; saved once. |
+| 5 | Pass | Date shows "14 Nov 2026, 9:00 AM to 9:00 PM". |
+| 6 | Pass | |
+| 8 | Pass | AP set location to Ask every time and tapped Don't allow: app shows "Location Permission Needed"; server records `permission_missing`. |
+| 9 | Pass | Allowed while using the app; GPS fixes arrive and points reach admin. |
+| 10 | Fail, then pass after a further fix | First attempt: a request in flight when the network dropped never settled, holding the capture lock; no GPS request and nothing buffered for six minutes, until the network returned. Fixed (below) and rebuilt: offline, GPS fixes came every minute in about 25 s and the pending count rose 1, 2, 3, 4. |
+| 11 | Pass | Sync Now sent all 4; exactly those 4 are `offline_synced` on the server; admin shows Offline Points Synced 4 and labels only those rows "Synced from offline buffer". |
+| 14 | Pass | "Proof note is required. Write what was done." without a note; "Proof Sent." stays after upload. |
+| Dashboard | Pass | Proof to review counted the photo while the job was still running. |
+| 19 | Pass | End Work with note; Location Proof stopped. |
+
+Further fix from the retest (branch `claude/m30-retest-capture-fixes`):
+
+- `fetchDriverApi` now reads the response body inside the request time limit. Before, `fetch` was bounded but `response.json()` was not.
+- A capture attempt that holds the lock for more than 2 minutes is treated as stuck, and the next tick starts a fresh attempt, so capture and buffering resume even if some other call never settles.
+
+## Retest outcome
+
+| Field | Value |
+| --- | --- |
+| Rows passed | All retested rows, including row 8; row 10 after the capture fix |
+| Decision | Pass, once the capture fix is merged |
