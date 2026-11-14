@@ -88,7 +88,10 @@ const locationBufferStorageKey = "kootha-driver-location-buffer-v1";
 const applicationSubmissionAttemptStorageKey = "kootha-driver-application-attempt-v1";
 const proofSubmissionAttemptStorageKey = "kootha-driver-proof-attempt-v1";
 const proofUploadRequestTimeoutMs = 60_000;
-const locationFixUnavailableMessage = "Could not get this phone's location. Move to an open place and try again.";
+// Longer than the slowest legitimate capture: authorization check (15 s),
+// GPS fix (30 s), saving the point (15 s) and a buffered sync.
+const staleLocationCaptureMs = 120_000;
+const locationFixUnavailableMessage ="Could not get this phone's location. Move to an open place and try again.";
 const noInternetMessage = "No internet connection. Check mobile data or Wi-Fi and try again.";
 
 // fetch reports a dropped connection as a TypeError reading "Network request
@@ -188,7 +191,20 @@ function createPublicHeaders(config: { anonKey: string }, json = false) {
 
 function fetchDriverApi(url: string, init: RequestInit, timeoutMs?: number) {
   return withDriverApiTimeout(
-    (signal) => fetch(url, { ...init, signal }),
+    async (signal) => {
+      const response = await fetch(url, { ...init, signal });
+      // fetch resolves once headers arrive. Read the body inside the time
+      // limit too: a connection lost mid-body otherwise leaves
+      // response.json() waiting forever, which held the location capture
+      // lock and silently skipped every later capture (phone retest,
+      // 14 Nov 2026).
+      const body = await response.text();
+      return new Response(body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      });
+    },
     timeoutMs,
   );
 }
@@ -809,6 +825,8 @@ export function App() {
   const [isLocationBusy, setIsLocationBusy] = useState(false);
   const [isLocationSyncing, setIsLocationSyncing] = useState(false);
   const locationCaptureInFlight = useRef(false);
+  const locationCaptureStartedAt = useRef(0);
+  const locationCaptureAttempt = useRef(0);
   const locationCaptureGeneration = useRef(0);
   const locationSyncInFlight = useRef(false);
   const workActionInFlight = useRef(false);
@@ -1136,7 +1154,13 @@ export function App() {
     showMessage = true,
     trackingStatusOverride: TrackingSessionStatus = locationStatus,
   ): Promise<boolean> {
-    if (!currentWork || workActionInFlight.current || locationCaptureInFlight.current) {
+    // A capture that has held the lock for longer than any legitimate attempt
+    // is stuck on a call that never settled. Start a fresh attempt instead of
+    // skipping capture until the network returns: in the 14 Nov 2026 retest a
+    // stuck attempt silently blocked every capture for six minutes offline.
+    const captureLockIsStale = locationCaptureInFlight.current
+      && Date.now() - locationCaptureStartedAt.current > staleLocationCaptureMs;
+    if (!currentWork || workActionInFlight.current || (locationCaptureInFlight.current && !captureLockIsStale)) {
       return false;
     }
 
@@ -1152,6 +1176,8 @@ export function App() {
     }
 
     locationCaptureInFlight.current = true;
+    locationCaptureStartedAt.current = Date.now();
+    const captureAttempt = ++locationCaptureAttempt.current;
     const captureGeneration = locationCaptureGeneration.current;
     let activeWork = currentWork;
     let bufferedPoint: BufferedLocationPoint | null = null;
@@ -1327,7 +1353,11 @@ export function App() {
       }
       return true;
     } finally {
-      locationCaptureInFlight.current = false;
+      // A stuck attempt that settles after a fresh one took over must not
+      // release the newer attempt's lock.
+      if (captureAttempt === locationCaptureAttempt.current) {
+        locationCaptureInFlight.current = false;
+      }
     }
 
     return true;

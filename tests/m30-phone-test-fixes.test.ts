@@ -22,6 +22,22 @@ describe("M30 phone test fixes", () => {
     expect(driverAppSource).toContain("if (locationFix.timedOut || !bufferedPoint) {");
   });
 
+  it("bounds the whole server response by the request time limit", () => {
+    const fetchHelper = driverAppSource.slice(
+      driverAppSource.indexOf("function fetchDriverApi("),
+      driverAppSource.indexOf("function fetchDriverApi(") + 900
+    );
+    expect(fetchHelper).toContain("withDriverApiTimeout(");
+    expect(fetchHelper).toContain("const body = await response.text();");
+    expect(fetchHelper).toContain("return new Response(body,");
+  });
+
+  it("recovers from a capture attempt that never settles", () => {
+    expect(driverAppSource).toContain("const staleLocationCaptureMs = 120_000;");
+    expect(driverAppSource).toContain("(locationCaptureInFlight.current && !captureLockIsStale)");
+    expect(driverAppSource).toContain("if (captureAttempt === locationCaptureAttempt.current) {");
+  });
+
   it("marks only buffered points as offline synced", () => {
     expect(offlineSyncedMigration).toContain("create or replace function public.driver_sync_mobile_location_points(");
     expect(offlineSyncedMigration).toMatch(/quality,\s+offline_synced\s+\) values \(/);
@@ -38,7 +54,7 @@ describe("M30 phone test fixes", () => {
   it("shows drivers plain messages", () => {
     expect(driverAppSource).toContain("No internet connection. Check mobile data or Wi-Fi and try again.");
     expect(driverAppSource).not.toMatch(/error instanceof Error \? error\.message : "/);
-    expect(driverAppSource).toContain("await refreshAssignedWork().catch(() => undefined);\n      setWorkMessage(driverLabels.proofSent");
+    expect(driverAppSource).toMatch(/await refreshAssignedWork\(\)\.catch\(\(\) => undefined\);\r?\n\s*setWorkMessage\(driverLabels\.proofSent/);
   });
 
   it("names the proof note field in its error", () => {

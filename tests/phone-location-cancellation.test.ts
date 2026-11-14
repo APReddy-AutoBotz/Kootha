@@ -56,13 +56,18 @@ function harness() {
     locationUnderstanding: true, locationAgreement: true, canStartLocationProof: true,
     workActionInFlight: { current: false }, locationCaptureInFlight: { current: false },
     locationCaptureGeneration: { current: 1 },
+    locationCaptureStartedAt: { current: 0 }, locationCaptureAttempt: { current: 0 },
+    staleLocationCaptureMs: 120_000,
+    locationFixUnavailableMessage: "Could not get this phone's location. Move to an open place and try again.",
+    clearLocationFixWarning: vi.fn(),
+    toDriverErrorMessage: (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback,
     getForegroundLocationDecision, canStartMobileLocationProof, DriverApiError,
     maxLocationSyncRetries, shouldBufferLocationFailure,
     refreshActiveLocationAuthorization: vi.fn().mockResolvedValue(work),
     loadAssignedWork: vi.fn().mockResolvedValue([work]),
     startMobileTracking: vi.fn().mockResolvedValue({ tracking_session_id: "fake-session", status: "running" }),
     Location: {
-      Accuracy: { Balanced: 3 },
+      Accuracy: { Balanced: 3, High: 4 },
       getForegroundPermissionsAsync: vi.fn().mockResolvedValue({ granted: true }),
       requestForegroundPermissionsAsync: vi.fn().mockResolvedValue({ granted: true }),
       getCurrentPositionAsync: vi.fn().mockResolvedValue({
@@ -111,6 +116,33 @@ describe("phone capture cancellation across asynchronous storage", () => {
       expect(deps.locationCaptureInFlight.current).toBe(false);
     });
   }
+
+  it("starts a fresh capture when an earlier attempt has hung past the stale limit", async () => {
+    const { deps, run } = harness();
+    const nowSpy = vi.spyOn(Date, "now");
+    try {
+      nowSpy.mockReturnValue(1_000_000);
+      // The first attempt hangs forever on its authorization request.
+      deps.refreshActiveLocationAuthorization.mockImplementationOnce(() => new Promise(() => undefined));
+      void run.recordCurrentLocationPoint("fake-session");
+      await Promise.resolve();
+      expect(deps.locationCaptureInFlight.current).toBe(true);
+
+      // Within the limit, a new tick is skipped.
+      nowSpy.mockReturnValue(1_000_000 + 60_000);
+      expect(await run.recordCurrentLocationPoint("fake-session")).toBe(false);
+      expect(deps.refreshActiveLocationAuthorization).toHaveBeenCalledTimes(1);
+
+      // Past the limit, a fresh attempt runs and buffers its point offline.
+      nowSpy.mockReturnValue(1_000_000 + 121_000);
+      expect(await run.recordCurrentLocationPoint("fake-session")).toBe(true);
+      expect(deps.refreshActiveLocationAuthorization).toHaveBeenCalledTimes(2);
+      expect(deps.saveBufferedLocationPoint).toHaveBeenCalledOnce();
+      expect(deps.locationCaptureInFlight.current).toBe(false);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
 
   it("retains offline saving and pending counts for a still-authorized capture", async () => {
     const { deps, state, run } = harness();
